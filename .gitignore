@@ -2,5 +2,7 @@ ds-config.json
 parity-map.mjs
 structure-contract.mjs
 bound-tokens.json
+parity-history.json
+.parity-refs/
 node_modules/
 .DS_Store

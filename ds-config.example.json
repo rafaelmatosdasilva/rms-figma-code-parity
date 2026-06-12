@@ -10,9 +10,17 @@
   "figma": {
     "colorCollection": "Color",
     "sizingCollection": "Sizing",
-    "darkMode": "Dark",
-    "lightMode": "Light",
-    "primitivePrefix": "primitives/"
+    "primitivePrefix": "primitives/",
+
+    "_modes_note": "Define all your DS modes here. cssSelector values: 'root', 'dark-media', 'high-contrast-media', 'class:<name>', 'data:<attr>=<val>'",
+    "modes": [
+      { "name": "Light", "snapshotKey": "light", "cssSelector": "root" },
+      { "name": "Dark",  "snapshotKey": "dark",  "cssSelector": "dark-media" }
+    ],
+
+    "_legacy_note": "OR use the legacy two-mode shorthand (ignored when 'modes' is present):",
+    "_lightMode": "Light",
+    "_darkMode": "Dark"
   },
 
   "paths": {
@@ -23,6 +31,15 @@
       "src/ui.src.html"
     ],
     "plugins": []
+  },
+
+  "_visual_note": "Directory for stored reference screenshots. Commit this dir to track visual history.",
+  "visualRefs": ".parity-refs",
+
+  "_webhook_note": "Config for webhook-server.mjs. Run setup-webhook.mjs to register with Figma.",
+  "webhook": {
+    "port": 3456,
+    "secret": "YOUR_WEBHOOK_SECRET"
   },
 
   "knownUnusedVars": [],

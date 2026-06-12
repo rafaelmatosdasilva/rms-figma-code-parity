@@ -1,10 +1,11 @@
 // parity-map.mjs — Copy to your PROJECT ROOT and fill in your DS token mappings.
-// This file is consumed by parity-check.mjs and bound-check.mjs.
-// Do not commit ds-config.json / parity-map.mjs as submodule files —
-// they live at the project root and are project-specific.
+// Consumed by parity-check.mjs and bound-check.mjs.
+// Do not commit to the public scripts repo — project-specific, lives at project root.
 
 // ─── Primitive scale (for resolving alias chains in color tokens) ──────────────
-// Map your DS's primitive tokens so the resolver can follow alias chains to hex.
+// Two-mode setup (default): export NEUTRAL_LIGHT + NEUTRAL_DARK.
+// Three-or-more modes:      export NEUTRAL_MAPS instead (see below).
+//
 // Keys match the capture group in NEUTRAL_VAR_RE (default: --neutral-NNN).
 //
 // Example — numeric scale:
@@ -12,48 +13,70 @@
 //   export const NEUTRAL_DARK  = { 100: '#ededed', 200: '#d4d4d4', 900: '#212121' };
 //
 // Example — named scale with custom var pattern:
-//   export const NEUTRAL_LIGHT = { primary: '#000000', muted: '#595959' };
-//   export const NEUTRAL_DARK  = { primary: '#ffffff', muted: '#808080' };
+//   export const NEUTRAL_LIGHT  = { primary: '#000000', muted: '#595959' };
+//   export const NEUTRAL_DARK   = { primary: '#ffffff', muted: '#808080' };
 //   export const NEUTRAL_VAR_RE = /^--color-([a-z]+)$/;
 export const NEUTRAL_LIGHT = {};
 export const NEUTRAL_DARK  = {};
 // Uncomment and customize if your primitive vars don't follow --neutral-NNN:
 // export const NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 
-// ─── COLOR: Token path → CSS var name (when the naming convention doesn't produce the right var) ──
+// ─── Multi-mode primitive maps (3+ modes) ─────────────────────────────────────
+// Used instead of NEUTRAL_LIGHT / NEUTRAL_DARK when ds-config.json defines 3+ modes.
+// Can be an array (indexed by mode order) or an object keyed by mode name.
+//
+// Array form (matches order of figma.modes in ds-config.json):
+//   export const NEUTRAL_MAPS = [
+//     { 100: '#0a0a0a', 900: '#f7f7f7' },   // mode 0: Light
+//     { 100: '#ededed', 900: '#212121' },   // mode 1: Dark
+//     { 100: '#000000', 900: '#ffffff' },   // mode 2: High Contrast
+//   ];
+//
+// Object form (keyed by mode name):
+//   export const NEUTRAL_MAPS = {
+//     Light:          { 100: '#0a0a0a', ... },
+//     Dark:           { 100: '#ededed', ... },
+//     'High Contrast': { 100: '#000000', ... },
+//   };
+// export const NEUTRAL_MAPS = {};
+
+// ─── COLOR: Token path → CSS var name ──────────────────────────────────────────
 // Convention: token/path/default → --token-path  (drop /default, /color; / → -)
+// Only add entries where the naming convention doesn't produce the right var.
 // Example: 'button/iconText': '--button-text'
 export const EXPLICIT = {
   // Add your token→var exceptions here
 };
 
-// ─── Tokens that share a CSS var with another token (skip to avoid duplicate checking) ──
+// ─── Tokens that share a CSS var with another token ───────────────────────────
+// Avoids duplicate-check noise when two tokens intentionally map to the same var.
 // Example: 'radioButton/background/selected' shares --radioButton-background
 export const NULL_TOKENS = new Set([
   // Add tokens that deliberately share a CSS var
 ]);
 
-// ─── Tokens with no CSS implementation (Figma chrome, unbound nodes, rgba-only) ──
+// ─── Tokens with no CSS implementation ────────────────────────────────────────
+// Figma-native chrome, unbound nodes, rgba-only values, intentionally deferred.
 export const SKIP_TOKENS = new Set([
   // Add tokens that are permanently un-implementable or intentionally deferred
 ]);
 
-// ─── Tokens whose Figma value is legitimately null in the snapshot ──
+// ─── Tokens whose Figma value is legitimately null in the snapshot ────────────
 export const KNOWN_NULL = new Set([
   // Add tokens where the Figma value is expected to be null
 ]);
 
-// ─── SIZING: Token path → CSS var name (when convention doesn't apply) ──
+// ─── SIZING: Token path → CSS var name ────────────────────────────────────────
 export const EXPLICIT_SIZING = {
   // Example: 'radii/button': '--radius-full'
 };
 
-// ─── Sizing tokens with no CSS consumer — Map<token, reason> ──
+// ─── Sizing tokens with no CSS consumer — Map<token, reason> ──────────────────
 export const SIZING_SKIP = new Map([
   // ['general/window-radii', 'Figma window-chrome — not controlled by HTML/CSS'],
 ]);
 
-// ─── TYPOGRAPHY: CSS var → [scale, prop] snapshot path ──
+// ─── TYPOGRAPHY: CSS var → [scale, prop] snapshot path ────────────────────────
 // Only include vars that have a Figma text-style equivalent.
 // Example: '--m-size': ['m', 'size']
 export const TYPO = {
@@ -66,13 +89,13 @@ export const TYPO = {
   // '--l-size':   ['l', 'size'],
 };
 
-// ─── BOUND-TOKEN COVERAGE: Tokens not given a dedicated CSS var ──
+// ─── BOUND-TOKEN COVERAGE: Tokens not given a dedicated CSS var ───────────────
 // These are covered by semantic aliases, shared primitives, or are un-implementable.
 export const COVERED = new Set([
   // Add token paths that are intentionally deferred or covered by aliases
 ]);
 
-// ─── Token path prefixes that are always deferred ──
+// ─── Token path prefixes that are always deferred ─────────────────────────────
 export const COVERED_PREFIX = [
   // 'primitives/',
   // 'Settings/',

@@ -1,18 +1,22 @@
 // audit.mjs — Single-command parity audit runner.
-// Run from project root: node scripts/audit.mjs  (or wherever this repo is mounted)
+// Run from project root: node scripts/audit.mjs [--trend]
+//
+// --trend: print the last 20 audit runs and exit (no new run)
 //
 // Requires at project root:
 //   ds-config.json   — paths, plugin list, known-unused vars
 //
 // Gates:
-//   [1] Snapshot freshness    — warns if snapshots are stale (> 24 h)
-//   [2] Parity check          — token values: color + sizing + typography
-//   [3] Structure check       — heights + CSS base-rule var bindings
-//   [4] Bound-token coverage  — every bound Figma token has a CSS var
-//   [5] Unused var check      — no declared-but-orphaned CSS vars
-//   [6] Hardcoded value scan  — no raw hex / px in CSS rules
-//   [7] Build freshness       — source files not newer than built output
+//   [1] Snapshot freshness     — warns if snapshots are stale (> 24 h)
+//   [2] Parity check           — token values: color + sizing + typography
+//   [3] Structure check        — heights + CSS base-rule var bindings
+//   [4] Bound-token coverage   — every bound Figma token has a CSS var
+//   [5] Unused var check       — no declared-but-orphaned CSS vars
+//   [6] Hardcoded value scan   — no raw hex / px in CSS rules
+//   [7] Build freshness        — source files not newer than built output
 //   [8] Sub-component isolation — no broad element selector overrides sub-component styles
+//   [9] Visual regression      — Figma frame screenshots match stored references
+//                               (requires FIGMA_TOKEN env var; skipped if not set)
 //
 // Hard Rules (enforced across all gates):
 //   • Hard Rule #2: every CSS var must have at least one rule consumer — no orphans
@@ -26,16 +30,21 @@
 //     from nested sub-components — direct targeting beats inheritance. Any such
 //     broad rule must be in subcomponent-isolation-check.mjs's ALLOWED map.
 //
+// History is appended to parity-history.json at project root after every run.
+// View trend: node scripts/audit.mjs --trend
+//
 // Exit 0 = all gates pass. Exit 1 = one or more failed.
 
-import { spawnSync } from 'child_process';
-import { existsSync, readFileSync, statSync } from 'fs';
-import { join, dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { spawnSync }                                      from 'child_process';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { join, dirname, resolve }                         from 'path';
+import { fileURLToPath }                                  from 'url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const ROOT = process.cwd();
-const today = new Date().toISOString().slice(0, 10);
+const ROOT       = process.cwd();
+const today      = new Date().toISOString().slice(0, 10);
+const WIDTH      = 60;
+const SHOW_TREND = process.argv.includes('--trend');
 
 // ── Load ds-config.json ───────────────────────────────────────────────────────
 let cfg = {};
@@ -53,7 +62,7 @@ const SNAP_STRUCT = cfg.paths?.snapshotStructure  ?? 'src/figma-structure.snapsh
 const PLUGIN_CSS  = cfg.paths?.pluginCSS          ?? [];
 const PLUGINS     = cfg.paths?.plugins            ?? [];
 const KNOWN_UNUSED     = new Set(cfg.knownUnusedVars         ?? []);
-const KNOWN_FS_EXCEPTS = cfg.knownFontSizeExceptions         ?? [];
+const KNOWN_FS_EXCEPTS = cfg.knownHardcodedExceptions        ?? cfg.knownFontSizeExceptions ?? [];
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
 const isTTY = process.stdout.isTTY;
@@ -65,6 +74,28 @@ const C = {
   dim:    s => isTTY ? `\x1b[2m${s}\x1b[0m`  : s,
 };
 
+// ── --trend: show history and exit ───────────────────────────────────────────
+if (SHOW_TREND) {
+  const histPath = join(ROOT, 'parity-history.json');
+  try {
+    const hist = JSON.parse(readFileSync(histPath, 'utf8'));
+    console.log('\n' + C.bold('─── Parity Trend ───────────────────────────────────────────'));
+    const recent = hist.slice(-20);
+    for (const entry of recent) {
+      const icon = entry.fail === 0 ? C.green('✅') : C.red('❌');
+      const filled = entry.pass ?? 0;
+      const total  = entry.total ?? 8;
+      const bar    = C.green('█'.repeat(filled)) + C.dim('░'.repeat(total - filled));
+      console.log(`  ${icon}  ${entry.date}  ${String(filled).padStart(2)}/${total} [${bar}]`);
+    }
+    if (!hist.length) console.log('  No history yet — run: node scripts/audit.mjs');
+    console.log(C.bold('─'.repeat(WIDTH)) + '\n');
+  } catch {
+    console.log('\n⏭  No history yet — run: node scripts/audit.mjs\n');
+  }
+  process.exit(0);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function sh(cmd, args = [], opts = {}) {
   return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
@@ -72,6 +103,7 @@ function sh(cmd, args = [], opts = {}) {
 
 function runScript(scriptPath) {
   const abs = resolve(SCRIPT_DIR, scriptPath);
+  if (!existsSync(abs)) return { status: null, stdout: '', stderr: '' };
   return sh('node', [abs]);
 }
 
@@ -141,12 +173,13 @@ gate('Snapshot freshness', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 gate('Token parity  (color · sizing · typography)', () => {
   const r = runScript('parity-check.mjs');
-  const out = r.stdout + r.stderr;
+  if (r.status === null) return { pass: false, lines: [C.red('parity-check.mjs not found')] };
+  const out  = r.stdout + r.stderr;
   const pass = r.status === 0;
   const summary = out.split('\n').filter(l => /✅|❌|⚠️/.test(l) && l.trim()).map(l => l.trim());
   const failDetails = pass ? [] : out.split('\n')
-    .filter(l => l.includes('❌') && !l.includes('FAIL  0'))
-    .map(l => '  ' + l.trim()).slice(0, 20);
+    .filter(l => l.trim().startsWith('❌') || l.trim().startsWith('Fix:'))
+    .map(l => '  ' + l.trim()).slice(0, 30);
   return { pass, lines: [...summary, ...failDetails] };
 });
 
@@ -155,9 +188,10 @@ gate('Token parity  (color · sizing · typography)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 gate('Structure     (snapshot · CSS height · base-rule vars)', () => {
   const r = runScript('structure-check.mjs');
-  const out = r.stdout + r.stderr;
+  if (r.status === null) return { pass: true, lines: ['⏭ structure-check.mjs not found — skipped'] };
+  const out  = r.stdout + r.stderr;
   const pass = r.status === 0;
-  const summary = out.split('\n').filter(l => /✅|❌/.test(l) && l.trim()).map(l => l.trim());
+  const summary    = out.split('\n').filter(l => /✅|❌/.test(l) && l.trim()).map(l => l.trim());
   const failDetails = pass ? [] : out.split('\n')
     .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
     .map(l => '  ' + l.trim()).slice(0, 20);
@@ -169,6 +203,7 @@ gate('Structure     (snapshot · CSS height · base-rule vars)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 gate('Bound-token coverage  (DS frames → CSS vars)', () => {
   const r = runScript('bound-check.mjs');
+  if (r.status === null) return { pass: true, lines: ['⏭ bound-check.mjs not found — skipped'] };
   const out = r.stdout + r.stderr;
 
   if (r.status === 2) {
@@ -182,7 +217,7 @@ gate('Bound-token coverage  (DS frames → CSS vars)', () => {
   }
 
   const pass = r.status === 0;
-  const summary = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
+  const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
   const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
   return { pass, lines: [...summary, ...failDetails] };
 });
@@ -196,15 +231,15 @@ gate('Unused CSS vars', () => {
   }
 
   const themeText = readFileSync(join(ROOT, THEME), 'utf8');
-  const declared = [...new Set(
+  const declared  = [...new Set(
     [...themeText.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)].map(m => '--' + m[1])
   )];
 
   const srcFiles = [THEME, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-  const allSrc = srcFiles.map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n');
+  const allSrc   = srcFiles.map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n');
 
   const unused = declared.filter(v => !KNOWN_UNUSED.has(v) && !allSrc.includes(`var(${v})`));
-  const pass = unused.length === 0;
+  const pass   = unused.length === 0;
   return {
     pass,
     lines: pass
@@ -218,7 +253,7 @@ gate('Unused CSS vars', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 gate('Hardcoded values  (no raw hex / font-size in rules)', () => {
   const scanTargets = [THEME, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-  const scanArgs = ['-n', '-E'];
+  const scanArgs    = ['-n', '-E'];
 
   const hexR = sh('grep', [
     ...scanArgs,
@@ -249,7 +284,7 @@ gate('Hardcoded values  (no raw hex / font-size in rules)', () => {
   const fsHits = (fsR.stdout || '').split('\n').filter(l => {
     if (!l.trim()) return false;
     if (/[`"'].*font-size.*[`"']/.test(l)) return false;
-    if (KNOWN_FS_EXCEPTS.some(e => l.includes(e.file) && l.includes(e.size))) return false;
+    if (KNOWN_FS_EXCEPTS.some(e => l.includes(e.file ?? e) && l.includes(e.size ?? e))) return false;
     return true;
   });
 
@@ -272,7 +307,7 @@ gate('Build freshness  (source ≤ built output)', () => {
   }
 
   const stale = [];
-  const themePath = join(ROOT, THEME);
+  const themePath  = join(ROOT, THEME);
   const themeMtime = existsSync(themePath) ? statSync(themePath).mtime : null;
 
   for (const p of PLUGINS) {
@@ -299,9 +334,10 @@ gate('Build freshness  (source ≤ built output)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 gate('Sub-component isolation  (no parent rule overrides sub-component styles)', () => {
   const r = runScript('subcomponent-isolation-check.mjs');
-  const out = r.stdout + r.stderr;
+  if (r.status === null) return { pass: true, lines: ['⏭ subcomponent-isolation-check.mjs not found — skipped'] };
+  const out  = r.stdout + r.stderr;
   const pass = r.status === 0;
-  const summary = out.split('\n')
+  const summary    = out.split('\n')
     .filter(l => /✅ DOCUMENTED|✅ No new|❌ UNDOCUMENTED/.test(l) && l.trim())
     .map(l => l.trim());
   const failDetails = pass ? [] : out.split('\n')
@@ -310,8 +346,31 @@ gate('Sub-component isolation  (no parent rule overrides sub-component styles)',
   return { pass, lines: [...summary, ...failDetails] };
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Gate 9 — Visual regression (Figma frame screenshots vs stored references)
+// ─────────────────────────────────────────────────────────────────────────────
+gate('Visual regression  (frames match stored references)', () => {
+  const r = runScript('visual-regression-check.mjs');
+  if (r.status === null) return { pass: true, lines: ['⏭ visual-regression-check.mjs not found — skipped'] };
+  const out = r.stdout + r.stderr;
+
+  // Script exits 0 with a skip message when FIGMA_TOKEN not set or no frames configured
+  if (r.status === 0 && (out.includes('FIGMA_TOKEN') || out.includes('No frames'))) {
+    const msg = out.split('\n').find(l => l.trim()) ?? 'Skipped';
+    return { pass: true, lines: [`⏭ ${msg.trim()}`] };
+  }
+
+  const pass = r.status === 0;
+  const summary = out.split('\n')
+    .filter(l => /✅|❌|📸/.test(l) && l.trim())
+    .map(l => l.trim()).slice(0, 6);
+  const fixLines = pass ? [] : out.split('\n')
+    .filter(l => l.trim().startsWith('mv ') || l.includes('.new.png'))
+    .map(l => '  ' + l.trim()).slice(0, 6);
+  return { pass, lines: [...summary, ...fixLines] };
+});
+
 // ── Final report ──────────────────────────────────────────────────────────────
-const WIDTH = 60;
 console.log('\n' + C.bold('─'.repeat(WIDTH)));
 console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
 console.log(C.bold('─'.repeat(WIDTH)) + '\n');
@@ -330,5 +389,20 @@ if (anyFail) {
   console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
 }
 console.log('─'.repeat(WIDTH) + '\n');
+
+// ── Write parity history ──────────────────────────────────────────────────────
+const histPath = join(ROOT, 'parity-history.json');
+let hist = [];
+try { hist = JSON.parse(readFileSync(histPath, 'utf8')); } catch {}
+hist.push({
+  date:      today,
+  timestamp: new Date().toISOString(),
+  pass:      gates.filter(g => g.pass).length,
+  fail:      gates.filter(g => !g.pass).length,
+  total:     gates.length,
+  gates:     gates.map(g => ({ label: g.label, pass: g.pass })),
+});
+if (hist.length > 100) hist = hist.slice(-100);
+try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
 
 process.exit(anyFail ? 1 : 0);

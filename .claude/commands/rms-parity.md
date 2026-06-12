@@ -8,6 +8,13 @@ Full parity workflow in one command. Phase 1 (live Figma refresh) always runs be
 /rms-parity
 ```
 
+**Utility flags (no full audit — just run the script directly):**
+```bash
+node scripts/audit.mjs --trend          # show last 20 audit runs + pass/fail trend
+node scripts/parity-check.mjs --fix     # auto-fix sizing/typography divergences in theme.css
+node scripts/setup-webhook.mjs --list   # list registered Figma webhooks for this file
+```
+
 ---
 
 ## Project Config
@@ -19,8 +26,11 @@ Extract:
 - `frames` — array of `{ name, nodeId }` — the DS frame(s) to audit
 - `figma.colorCollection` — name of the color variable collection (e.g. `"Color"`)
 - `figma.sizingCollection` — name of the sizing collection, if any (e.g. `"Sizing"`)
-- `figma.darkMode` / `figma.lightMode` — mode names within the color collection
+- `figma.modes` — array of `{ name, snapshotKey, cssSelector }` defining all DS modes
+  - OR legacy: `figma.darkMode` / `figma.lightMode` (two-mode shorthand)
 - `figma.primitivePrefix` — token path prefix to exclude from component token walks (e.g. `"primitives/"`)
+- `visualRefs` — directory for stored reference screenshots (default: `.parity-refs`)
+- `webhook.port` / `webhook.secret` — webhook server config
 
 Use these throughout all Figma queries. Never hardcode collection or mode names.
 
@@ -28,12 +38,14 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 ## Key Architecture Assumptions
 
-- **CSS mode mapping:** how your DS maps Figma modes to CSS is defined in your project. Common patterns:
-  - Light/Dark via `@media (prefers-color-scheme: dark)` → `:root { }`
-  - Light/Dark via a `data-theme` attribute → `[data-theme="dark"] { }`
-  - Single mode (no theming)
-- **Token naming convention:** `token/path/default` → `--token-path` (drop `/default`, `/color`; `/` → `-`). Any additional shortenings specific to your DS are documented in `parity-map.mjs`.
-- **Primitive scale:** your DS's primitive tokens (colors, spacing, etc.) are defined by you. Document them in `parity-map.mjs` under `NEUTRAL_LIGHT` / `NEUTRAL_DARK` (or equivalent) so the resolver can follow alias chains.
+- **CSS mode mapping:** each mode's `cssSelector` in `ds-config.json` defines how it maps to CSS:
+  - `"root"` → `:root { }` (base/light)
+  - `"dark-media"` → `@media (prefers-color-scheme: dark) { :root { } }`
+  - `"high-contrast-media"` → `@media (prefers-contrast: more) { :root { } }`
+  - `"class:<name>"` → `.<name> :root { }`
+  - `"data:<attr>=<val>"` → `[data-theme="dark"] :root { }`
+- **Token naming convention:** `token/path/default` → `--token-path` (drop `/default`, `/color`; `/` → `-`). Any additional shortenings are documented in `parity-map.mjs`.
+- **Primitive scale:** document your DS's primitive tokens in `parity-map.mjs` under `NEUTRAL_LIGHT` / `NEUTRAL_DARK` (two modes) or `NEUTRAL_MAPS` (three or more modes) so the resolver can follow alias chains automatically.
 - **Snapshot files** at paths defined in `ds-config.json`.
 
 ---
@@ -43,7 +55,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 1. **Every Figma component token must have a dedicated CSS variable.** No token may be covered only by an inline value. `via` is acceptable only when a semantic alias is documented in `parity-map.mjs`.
 2. **Every CSS variable must be wired into at least one CSS rule.** A declared-but-unused var must be deleted. Variables are declared when the component exists in code, not before.
 3. **Naming convention must be followed exactly.** A correct value under a wrong name is still a divergence.
-4. **Both modes must match.** A token correct in dark but wrong in light is still a divergence.
+4. **All modes must match.** A token correct in dark but wrong in light is still a divergence.
 5. **Hardcoded values in CSS rules are always flagged.** Colors must use `var(--)`, font-sizes must use scale vars, border widths and radii must use your DS sizing tokens. Raw literal values in a CSS rule (not a `:root` declaration) are a divergence. Document intentional exceptions in `ds-config.json → knownHardcodedExceptions`.
 6. **New Figma component tokens detected during any audit step must be implemented in code before the audit closes.**
 7. **Hidden elements (visible=false) in Figma are flagged but never implemented in code.** A token bound only to a hidden layer is `⚠️ HIDDEN — not implemented`. Never add a CSS var for a token whose only binding is on a hidden node.
@@ -55,10 +67,12 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 | File | Contents | Path (from ds-config.json) |
 |---|---|---|
-| `figma-vars.snapshot.json` | color (both modes), sizing, typography | `paths.snapshotVars` |
+| `figma-vars.snapshot.json` | color (all modes), sizing, typography | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
 Both are machine-generated — never hand-edit. `bound-tokens.json` (project root, gitignored) is a transient capture of Phase 2 Step 1b.
+
+**Audit history** is appended to `parity-history.json` at project root after every run. View trend: `node scripts/audit.mjs --trend`.
 
 ---
 
@@ -68,9 +82,8 @@ Both are machine-generated — never hand-edit. `bound-tokens.json` (project roo
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
 | **2** | **Bound token walk** | **Walk all DS frames → save to `bound-tokens.json`** | **File written** |
-| **2** | **`node scripts/audit.mjs`** | **All 8 gates — Gate [1] always ✅ since Phase 1 just ran** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 9 gates — Gate [1] always ✅ since Phase 1 just ran** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
-| 2 | Screenshots | Visual regression against all DS frames | No visible regressions |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
 ---
@@ -81,7 +94,7 @@ Both are machine-generated — never hand-edit. `bound-tokens.json` (project roo
 
 ## Phase 1 — Step 1: Query live Figma values
 
-Use `figma.colorCollection`, `figma.darkMode`, `figma.lightMode`, `figma.sizingCollection`, and `figma.primitivePrefix` from `ds-config.json`.
+Use collection/mode names from `ds-config.json`. Build the color output for **every configured mode** (not just light/dark):
 
 ```js
 function toHex(c) {
@@ -104,22 +117,25 @@ function resolveInMode(varId, modeId, depth=0) {
   return { hex: String(val) };
 }
 
-// Use collection/mode names from ds-config.json
-const COLOR_COLLECTION = 'YOUR_COLOR_COLLECTION'; // e.g. "Color"
-const DARK_MODE        = 'YOUR_DARK_MODE';         // e.g. "Dark"
-const LIGHT_MODE       = 'YOUR_LIGHT_MODE';        // e.g. "Light"
-const SIZING_COLLECTION = 'YOUR_SIZING_COLLECTION'; // e.g. "Sizing", or null if not used
-const PRIMITIVE_PREFIX  = 'YOUR_PRIMITIVE_PREFIX';  // e.g. "primitives/"
+// Read from ds-config.json:
+const COLOR_COLLECTION  = 'YOUR_COLOR_COLLECTION';   // figma.colorCollection
+const SIZING_COLLECTION = 'YOUR_SIZING_COLLECTION';  // figma.sizingCollection (or null)
+const PRIMITIVE_PREFIX  = 'YOUR_PRIMITIVE_PREFIX';   // figma.primitivePrefix
+// figma.modes = [{ name, snapshotKey, cssSelector }]
+// Build mode lookup: snapshotKey → Figma modeId
+const MODES = [/* from ds-config.json figma.modes */];
 
 const col = collections.find(c => c.name === COLOR_COLLECTION);
-const darkId  = col.modes.find(m => m.name === DARK_MODE).modeId;
-const lightId = col.modes.find(m => m.name === LIGHT_MODE).modeId;
-const colorOut = { dark: {}, light: {} };
-for (const id of col.variableIds) {
-  const v = idToVar[id];
-  if (!v || v.resolvedType !== 'COLOR' || v.name.startsWith(PRIMITIVE_PREFIX)) continue;
-  colorOut.dark[v.name]  = resolveInMode(id, darkId).hex;
-  colorOut.light[v.name] = resolveInMode(id, lightId).hex;
+const colorOut = {};
+for (const m of MODES) {
+  const modeId = col.modes.find(fm => fm.name === m.name)?.modeId;
+  if (!modeId) continue;
+  colorOut[m.snapshotKey] = {};
+  for (const id of col.variableIds) {
+    const v = idToVar[id];
+    if (!v || v.resolvedType !== 'COLOR' || v.name.startsWith(PRIMITIVE_PREFIX)) continue;
+    colorOut[m.snapshotKey][v.name] = resolveInMode(id, modeId).hex;
+  }
 }
 
 const sizingOut = {};
@@ -149,7 +165,7 @@ for (const st of styles) {
 return { color: colorOut, sizing: sizingOut, typography: typo };
 ```
 
-> Fill in the four config constants at the top from `ds-config.json`. If your DS has no sizing collection or no text styles, those sections will be empty — that's fine.
+> Fill in the config constants from `ds-config.json`. The snapshot `color` object now has one key per mode (`snapshotKey`), e.g. `{ light: {...}, dark: {...}, "high-contrast": {...} }`.
 
 ---
 
@@ -172,7 +188,7 @@ Write the result in this shape:
   "_updated": "YYYY-MM-DD",
   "_note": "Auto-generated by /rms-parity. Do not edit manually.",
   "components": {
-    "button": { "h": 32, "paddingVar": { "tb": "padding/s", "lr": "padding/m" }, "gapVar": "gap/s", ... }
+    "button": { "h": 32, "paddingVar": { "tb": "padding/s", "lr": "padding/m" }, "gapVar": "gap/s" }
   }
 }
 ```
@@ -187,7 +203,7 @@ Read both snapshot files. Parse them. If either is missing, treat all live value
 
 ## Phase 1 — Step 3: Diff
 
-Compare live vs snapshot across all sections: `color` (both modes), `sizing`, `typography`, `structure`.
+Compare live vs snapshot across all sections: `color` (all modes), `sizing`, `typography`, `structure`.
 
 **Changed tokens** → ⚠️ value changed
 **New tokens** → 🆕 needs CSS var (Hard Rule #1)
@@ -271,7 +287,7 @@ for (const fid of frameIds) {
   }
   walk(frame);
 }
-if (Object.keys(hidden).length) console.log('⚠️ HIDDEN tokens (Hard Rule #7 — not implemented):', Object.keys(hidden));
+if (Object.keys(hidden).length) console.log('⚠️ HIDDEN tokens (Hard Rule #7):', Object.keys(hidden));
 return used;
 ```
 
@@ -279,24 +295,29 @@ return used;
 
 ---
 
-## Phase 2 — Step 2: Run all 8 audit gates
+## Phase 2 — Step 2: Run all 9 audit gates
 
 ```bash
 node scripts/audit.mjs
 ```
 
-All 8 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 9 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 | Gate | What it catches |
 |---|---|
 | [1] | Snapshot freshness — always ✅ after Phase 1 |
-| [2] | Token value parity — color + sizing + typography |
+| [2] | Token value parity — color (all modes) + sizing + typography |
 | [3] | Structural parity — height, padding/gap vars, fill structure, stroke |
 | [4] | Bound-token coverage — token used in Figma but no CSS var |
 | [5] | Unused CSS vars (Hard Rule #2) |
 | [6] | Hardcoded values in CSS rules (Hard Rule #5) |
 | [7] | Build freshness — source newer than built output |
 | [8] | Sub-component isolation (Hard Rule #8) |
+| [9] | Visual regression — Figma screenshots match stored references (requires FIGMA_TOKEN) |
+
+**Gate [2] fix mode:** if Gate [2] fails on sizing/typography values only, run `node scripts/parity-check.mjs --fix` to auto-apply the correct values to `theme.css`, then re-run the audit.
+
+**History:** every run appends to `parity-history.json`. View trend: `node scripts/audit.mjs --trend`.
 
 ---
 
@@ -362,13 +383,18 @@ For every DS component with multiple states, verify a corresponding CSS rule exi
 
 ## Phase 2 — Step 6: Mode override completeness
 
-Every token where the two modes have different values must have an explicit CSS override for the non-default mode (or use a self-resolving var that already carries both values). Gate [2] catches this automatically for all tokens in the snapshot.
+Every token where modes have different values must have an explicit CSS override for non-default modes (or use a self-resolving var that already carries both values). Gate [2] catches this automatically for all tokens in the snapshot.
 
 ---
 
 ## Phase 2 — Step 7: Screenshots
 
-Use `get_screenshot` with `figmaFileKey` and each `frames[].nodeId` from `ds-config.json`. Compare against prior screenshots. Flag any visible difference not already surfaced by the automated gates.
+Gate [9] handles this automatically if `FIGMA_TOKEN` is set. For manual review: use `get_screenshot` with `figmaFileKey` and each `frames[].nodeId` from `ds-config.json`. Compare against `.parity-refs/` reference images. Flag any visible difference not already surfaced by the automated gates.
+
+To accept a visual change after verifying it's intentional:
+```bash
+mv .parity-refs/<frame-id>.new.png .parity-refs/<frame-id>.png
+```
 
 ---
 
@@ -403,8 +429,6 @@ After the table: Divergence summary (❌ rows), Unused vars, New Figma tokens.
 
 ## Naming Convention
 
-The base rule for all DS token → CSS var mappings:
-
 | Rule | Notes |
 |---|---|
 | Token path → CSS var | `component/property/state` → `--component-property-state` |
@@ -414,7 +438,7 @@ The base rule for all DS token → CSS var mappings:
 | Preserve camelCase | Component names stay as-is |
 | State names verbatim | `active`, `selected`, `hover`, `disabled` — never substitute |
 
-Any DS-specific shortenings (e.g. a specific segment that maps to a different word) are documented in `parity-map.mjs` under `EXPLICIT`.
+Any DS-specific shortenings are documented in `parity-map.mjs` under `EXPLICIT`.
 
 ---
 
@@ -422,14 +446,34 @@ Any DS-specific shortenings (e.g. a specific segment that maps to a different wo
 
 If Figma aliases `component/background → primitives/SomeToken`, CSS must use `var(--some-token)` — never a hardcoded literal. The alias chain must be fully traceable through CSS `var()` references.
 
-Document your primitive → CSS var mapping in `parity-map.mjs` under `NEUTRAL_LIGHT` / `NEUTRAL_DARK` (or equivalent for your DS's primitive scale) so the resolver can follow chains automatically.
+Document your primitive → CSS var mapping in `parity-map.mjs` under `NEUTRAL_LIGHT` / `NEUTRAL_DARK` (two modes) or `NEUTRAL_MAPS` (three or more modes) so the resolver can follow chains automatically.
+
+---
+
+## Webhook Automation
+
+Once deployed, the webhook server auto-triggers parity checks on every DS change without manual invocation:
+
+```bash
+# Start the server (keep running)
+node scripts/webhook-server.mjs
+
+# Register with Figma once (public URL required)
+FIGMA_TOKEN=xxx node scripts/setup-webhook.mjs --url https://your-host.com/webhook
+
+# Manage webhooks
+node scripts/setup-webhook.mjs --list
+node scripts/setup-webhook.mjs --delete <id>
+```
+
+Configure `webhook.port` and `webhook.secret` in `ds-config.json`.
 
 ---
 
 ## Audit Rules
 
 - Never change source files to *hide* a divergence — report it.
-- Always compare **both** modes.
+- Always compare **all** configured modes.
 - Naming violations are flagged regardless of whether the value is correct.
 - When renaming: update declarations, all usages, then rebuild.
 - When adding a token group: add CSS var + rule consumer + update `parity-map.mjs` + rebuild.

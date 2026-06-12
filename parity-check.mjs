@@ -1,23 +1,29 @@
-// parity-check.mjs — Run from project root: node scripts/parity-check.mjs
-// Resolves every CSS var chain for both light and dark modes and diffs against
+// parity-check.mjs — Run from project root: node scripts/parity-check.mjs [--fix]
+//
+// --fix: auto-apply sizing/typography value fixes directly to theme.css.
+//        Color divergences are printed as actionable fix hints only —
+//        alias chains require manual review to avoid breaking other tokens.
+//
+// Resolves every CSS var chain for all configured modes and diffs against
 // the Figma snapshot across three dimensions:
-//   1. Color    — every component color token, both modes
-//   2. Sizing   — gap / padding / radii / thickness / min-height
+//   1. Color      — every component color token, all configured modes
+//   2. Sizing     — gap / padding / radii / thickness / min-height
 //   3. Typography — type scale (size, weight, line-height)
 //
 // Requires at project root:
-//   ds-config.json   — themeCSS + snapshotVars paths
+//   ds-config.json   — themeCSS + snapshotVars paths + figma.modes config
 //   parity-map.mjs   — EXPLICIT, SKIP_TOKENS, NULL_TOKENS, KNOWN_NULL,
-//                       EXPLICIT_SIZING, SIZING_SKIP, TYPO (optional, starts empty)
+//                       EXPLICIT_SIZING, SIZING_SKIP, TYPO,
+//                       NEUTRAL_LIGHT, NEUTRAL_DARK, NEUTRAL_VAR_RE,
+//                       NEUTRAL_MAPS (for 3+ modes — { modeName: {...} } or array)
 //
 // Exit 0 = full parity. Exit 1 = at least one FAIL or NEW SKIP.
 
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
 
-const ROOT = process.cwd();
+const ROOT     = process.cwd();
+const FIX_MODE = process.argv.includes('--fix');
 
 // ── Load ds-config.json ───────────────────────────────────────────────────────
 let cfg = {};
@@ -25,17 +31,41 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const THEME_PATH    = cfg.paths?.themeCSS       ?? 'src/theme.css';
-const SNAPSHOT_PATH = cfg.paths?.snapshotVars   ?? 'src/figma-vars.snapshot.json';
+const THEME_PATH    = cfg.paths?.themeCSS     ?? 'src/theme.css';
+const SNAPSHOT_PATH = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
+
+// ── Mode configuration ────────────────────────────────────────────────────────
+// New: cfg.figma.modes = [{ name, snapshotKey?, cssSelector }]
+//   cssSelector values:
+//     "root"                — :root { }
+//     "dark-media"          — @media (prefers-color-scheme: dark) { :root { } }
+//     "high-contrast-media" — @media (prefers-contrast: more) { :root { } }
+//     "class:<name>"        — .<name> :root { } or :root.<name> { }
+//     "data:<attr>=<val>"   — [data-theme="dark"] :root { }
+//
+// Legacy: cfg.figma.lightMode / cfg.figma.darkMode → synthesized to two-mode array
+const figmaCfg = cfg.figma ?? {};
+let MODES;
+if (figmaCfg.modes && Array.isArray(figmaCfg.modes) && figmaCfg.modes.length) {
+  MODES = figmaCfg.modes.map(m => ({
+    name:        m.name,
+    snapshotKey: (m.snapshotKey ?? m.name).toLowerCase().replace(/\s+/g, '-'),
+    cssSelector: m.cssSelector ?? 'root',
+  }));
+} else {
+  MODES = [
+    { name: figmaCfg.lightMode ?? 'Light', snapshotKey: 'light', cssSelector: 'root' },
+    { name: figmaCfg.darkMode  ?? 'Dark',  snapshotKey: 'dark',  cssSelector: 'dark-media' },
+  ];
+}
 
 // ── Load parity-map.mjs (project-specific token mappings) ────────────────────
 let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
     KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {};
-// Primitive scale — export NEUTRAL_LIGHT / NEUTRAL_DARK from parity-map.mjs.
-// Each is { key: '#hex' } where key matches the capture group in NEUTRAL_VAR_RE.
-// Export NEUTRAL_VAR_RE (RegExp with one capture group) to override the var pattern.
-// Default: matches --neutral-100, --neutral-200, etc.
-let N_L = {}, N_D = {}, NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
+let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
+// neutralMaps[i] = { key: '#hex' } for mode i — keys match NEUTRAL_VAR_RE capture group
+let neutralMaps = MODES.map(() => ({}));
+
 try {
   const map = await import(join(ROOT, 'parity-map.mjs'));
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
@@ -45,9 +75,19 @@ try {
   if (map.EXPLICIT_SIZING) EXPLICIT_SIZING = map.EXPLICIT_SIZING;
   if (map.SIZING_SKIP)     SIZING_SKIP     = map.SIZING_SKIP;
   if (map.TYPO)            TYPO            = map.TYPO;
-  if (map.NEUTRAL_LIGHT)   N_L             = map.NEUTRAL_LIGHT;
-  if (map.NEUTRAL_DARK)    N_D             = map.NEUTRAL_DARK;
   if (map.NEUTRAL_VAR_RE)  NEUTRAL_VAR_RE  = map.NEUTRAL_VAR_RE;
+  // Multi-mode: NEUTRAL_MAPS overrides NEUTRAL_LIGHT / NEUTRAL_DARK
+  if (map.NEUTRAL_MAPS) {
+    if (Array.isArray(map.NEUTRAL_MAPS)) {
+      map.NEUTRAL_MAPS.forEach((nm, i) => { if (nm && i < neutralMaps.length) neutralMaps[i] = nm; });
+    } else {
+      MODES.forEach((m, i) => { if (map.NEUTRAL_MAPS[m.name]) neutralMaps[i] = map.NEUTRAL_MAPS[m.name]; });
+    }
+  } else {
+    // Legacy two-mode fallback
+    if (map.NEUTRAL_LIGHT) neutralMaps[0] = map.NEUTRAL_LIGHT;
+    if (map.NEUTRAL_DARK && neutralMaps.length > 1) neutralMaps[1] = map.NEUTRAL_DARK;
+  }
 } catch { /* parity-map.mjs optional — runs with empty maps */ }
 
 // ── Parse theme.css ───────────────────────────────────────────────────────────
@@ -61,23 +101,55 @@ function parseVarBlock(block) {
   return vars;
 }
 
-const rootMatch = css.match(/:root\s*{([\s\S]*?)}/);
-const rootVars  = rootMatch ? parseVarBlock(rootMatch[1]) : {};
-const darkMatch = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
-const darkVars  = darkMatch ? parseVarBlock(darkMatch[1]) : {};
+function parseSelectorVars(css, selector) {
+  let m;
+  if (selector === 'root') {
+    m = css.match(/:root\s*\{([\s\S]*?)\}/);
+  } else if (selector === 'dark-media') {
+    m = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
+  } else if (selector === 'high-contrast-media') {
+    m = css.match(/@media\s*\(prefers-contrast:\s*(?:more|forced)\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
+  } else if (selector.startsWith('class:')) {
+    const cls = selector.slice(6).trim();
+    m = css.match(new RegExp(`\\.${cls}\\s+:root\\s*\\{([\\s\\S]*?)\\}|:root\\.${cls}\\s*\\{([\\s\\S]*?)\\}`));
+  } else if (selector.startsWith('data:')) {
+    const parts = selector.slice(5).split('=');
+    const attr = parts[0], val = parts.slice(1).join('=').replace(/^['"]|['"]$/g, '');
+    m = css.match(new RegExp(`\\[${attr}=['"]?${val}['"]?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}|:root\\[${attr}=['"]?${val}['"]?\\]\\s*\\{([\\s\\S]*?)\\}`));
+  } else {
+    try { m = css.match(new RegExp(selector)); } catch { return {}; }
+  }
+  return m ? parseVarBlock(m[1] ?? m[2] ?? '') : {};
+}
 
-// ── Color resolver (mode-aware) ───────────────────────────────────────────────
-function resolve(varName, mode, depth = 0) {
+// modeVars[0] = base (:root), modeVars[i] = override vars for mode i
+const modeVars = MODES.map(m => parseSelectorVars(css, m.cssSelector));
+
+// ── Line-number index (for fix hints) ─────────────────────────────────────────
+const rawLines = rawCss.split('\n');
+const varLineMap = {};
+for (let i = 0; i < rawLines.length; i++) {
+  const m = rawLines[i].match(/^\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/);
+  if (m) varLineMap[m[1]] = i + 1; // 1-indexed; keeps last occurrence
+}
+
+// ── Color resolver (multi-mode, index-based) ──────────────────────────────────
+// Mode 0 = base vars. Mode i > 0 = override vars + fallback to base.
+function resolve(varName, modeIdx, depth = 0) {
   if (depth > 8) return null;
   const nm = varName.match(NEUTRAL_VAR_RE);
-  if (nm) return mode === 'light' ? (N_L[nm[1]] ?? N_L[+nm[1]]) : (N_D[nm[1]] ?? N_D[+nm[1]]);
-  const raw = (mode === 'dark' && darkVars[varName]) ? darkVars[varName] : rootVars[varName];
+  if (nm) {
+    const nmap = neutralMaps[modeIdx] ?? {};
+    return nmap[nm[1]] ?? nmap[+nm[1]] ?? null;
+  }
+  const override = modeIdx > 0 ? modeVars[modeIdx]?.[varName] : undefined;
+  const raw = override ?? modeVars[0][varName];
   if (!raw) return null;
   const t = raw.trim();
   const vMatch  = t.match(/^var\((--.+?)\)$/);
-  if (vMatch)  return resolve(vMatch[1], mode, depth + 1);
+  if (vMatch)  return resolve(vMatch[1], modeIdx, depth + 1);
   const vfMatch = t.match(/^var\((--.+?),/);
-  if (vfMatch) return resolve(vfMatch[1], mode, depth + 1);
+  if (vfMatch) return resolve(vfMatch[1], modeIdx, depth + 1);
   if (/^#[0-9a-fA-F]{3,8}$/.test(t)) return t.toLowerCase();
   return null;
 }
@@ -85,14 +157,41 @@ function resolve(varName, mode, depth = 0) {
 // ── Scalar resolver (single-mode: sizing + typography) ───────────────────────
 function resolveScalar(varName, depth = 0) {
   if (depth > 8) return null;
-  const raw = rootVars[varName]; if (!raw) return null;
+  const raw = modeVars[0][varName]; if (!raw) return null;
   const t = raw.trim();
   const v  = t.match(/^var\((--.+?)\)$/);   if (v)  return resolveScalar(v[1],  depth + 1);
   const vf = t.match(/^var\((--.+?),/);      if (vf) return resolveScalar(vf[1], depth + 1);
   return t;
 }
 
-// ── Token → CSS var (convention: drop /default, /color; /iconText → /text; / → -) ──
+// ── Fix hint helpers ──────────────────────────────────────────────────────────
+// Reverse-lookup: given a target hex, find the matching neutral var name for a mode
+function hexToNeutralVar(hex, modeIdx) {
+  const nmap = neutralMaps[modeIdx] ?? {};
+  for (const [key, h] of Object.entries(nmap)) {
+    if (h && h.toLowerCase() === hex.toLowerCase()) return `var(--neutral-${key})`;
+  }
+  return null;
+}
+
+function colorFixHint(cssVar, figmaHex, modeIdx) {
+  const line    = varLineMap[cssVar];
+  const suggest = hexToNeutralVar(figmaHex, modeIdx);
+  const current = (modeIdx > 0 ? modeVars[modeIdx]?.[cssVar] : undefined) ?? modeVars[0][cssVar];
+  const loc     = line ? `${THEME_PATH}:${line}` : THEME_PATH;
+  if (suggest)
+    return `${loc} — ${cssVar}: ${current ?? '?'} should resolve to ${suggest} (${figmaHex})`;
+  return `${loc} — chain should resolve to ${figmaHex} (no matching neutral found)`;
+}
+
+function sizingFixHint(cssVar, figmaVal) {
+  const line    = varLineMap[cssVar];
+  const current = modeVars[0][cssVar];
+  if (!line) return `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}`;
+  return `${THEME_PATH}:${line} — change ${cssVar}: ${current ?? '?'} → ${figmaVal}`;
+}
+
+// ── Token → CSS var (convention) ─────────────────────────────────────────────
 function tokenToVar(token) {
   if (SKIP_TOKENS.has(token) || NULL_TOKENS.has(token)) return null;
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, token)) return EXPLICIT[token];
@@ -111,39 +210,51 @@ const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 
 // ── Accumulators ──────────────────────────────────────────────────────────────
 const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [];
+const autoFixes = []; // { cssVar, newVal, line } — applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
 const seen = new Set();
-for (const mode of ['light', 'dark']) {
-  for (const [tokenKey, figmaHex] of Object.entries(snap.color?.[mode] ?? {})) {
-    const token = tokenKey.replace(/\/color$/, '');
-    const dedupeKey = `${token}:${mode}`;
+for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
+  const modeMeta = MODES[modeIdx];
+  for (const [tokenKey, figmaHex] of Object.entries(snap.color?.[modeMeta.snapshotKey] ?? {})) {
+    const token     = tokenKey.replace(/\/color$/, '');
+    const dedupeKey = `${token}:${modeMeta.snapshotKey}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
     const cssVar = tokenToVar(token);
     if (cssVar === null) {
-      SKIP.push({ dimension: 'color', token, mode, reason: 'no dedicated CSS var (known skip / shared primitive / rgba)' });
+      SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'no dedicated CSS var (known skip / shared primitive / rgba)' });
       continue;
     }
     if (figmaHex === null) {
-      if (KNOWN_NULL.has(token)) SKIP.push({ dimension: 'color', token, mode, reason: 'Figma value null (known)' });
-      else NEW_SKIP.push({ dimension: 'color', token, mode, reason: 'Figma value is NEW null — add to KNOWN_NULL in parity-map.mjs' });
+      if (KNOWN_NULL.has(token))
+        SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'Figma value null (known)' });
+      else
+        NEW_SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'Figma value is NEW null — add to KNOWN_NULL in parity-map.mjs' });
       continue;
     }
-    if (!rootVars[cssVar] && !darkVars[cssVar]) {
-      FAIL.push({ dimension: 'color', token, cssVar, mode, issue: 'CSS var not declared in theme CSS' });
+    const inBase     = !!modeVars[0][cssVar];
+    const inOverride = modeIdx > 0 && !!modeVars[modeIdx]?.[cssVar];
+    if (!inBase && !inOverride) {
+      FAIL.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, issue: 'CSS var not declared in theme CSS', fixHint: `Add ${cssVar} to ${THEME_PATH}` });
       continue;
     }
-    const cssHex = resolve(cssVar, mode);
+    const cssHex = resolve(cssVar, modeIdx);
     if (cssHex === null) {
-      NEW_SKIP.push({ dimension: 'color', token, cssVar, mode, reason: 'CSS resolves to non-hex — add to SKIP_TOKENS in parity-map.mjs if intentional' });
+      NEW_SKIP.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, reason: 'CSS resolves to non-hex — add to SKIP_TOKENS in parity-map.mjs if intentional' });
       continue;
     }
-    if (figmaHex.toLowerCase() !== cssHex.toLowerCase())
-      FAIL.push({ dimension: 'color', token, cssVar, mode, figma: figmaHex, css: cssHex, hint: `CSS resolves ${cssVar} → ${cssHex} but Figma says ${figmaHex}` });
-    else
-      PASS.push(`color ${token}:${mode}`);
+    if (figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
+      FAIL.push({
+        dimension: 'color', token, cssVar, mode: modeMeta.name,
+        figma: figmaHex, css: cssHex,
+        hint:    `CSS resolves ${cssVar} → ${cssHex} but Figma says ${figmaHex}`,
+        fixHint: colorFixHint(cssVar, figmaHex, modeIdx),
+      });
+    } else {
+      PASS.push(`color ${token}:${modeMeta.snapshotKey}`);
+    }
   }
 }
 
@@ -154,8 +265,8 @@ for (const [token, figmaVal] of Object.entries(snap.sizing ?? {})) {
     SKIP.push({ dimension: 'sizing', token, mode: '-', reason: SIZING_SKIP.get(token) ?? 'no CSS var' });
     continue;
   }
-  if (!rootVars[cssVar]) {
-    FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', issue: 'CSS var not declared' });
+  if (!modeVars[0][cssVar]) {
+    FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}` });
     continue;
   }
   const cssVal = resolveScalar(cssVar);
@@ -163,10 +274,16 @@ for (const [token, figmaVal] of Object.entries(snap.sizing ?? {})) {
     NEW_SKIP.push({ dimension: 'sizing', token, cssVar, mode: '-', reason: 'CSS var did not resolve to a literal' });
     continue;
   }
-  if (String(figmaVal).trim() !== cssVal.trim())
-    FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${cssVar} → ${cssVal} but Figma says ${figmaVal}` });
-  else
+  if (String(figmaVal).trim() !== cssVal.trim()) {
+    const fixHint = sizingFixHint(cssVar, figmaVal);
+    FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${cssVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
+    if (FIX_MODE) {
+      const line = varLineMap[cssVar];
+      if (line) autoFixes.push({ cssVar, newVal: String(figmaVal).trim(), line });
+    }
+  } else {
     PASS.push(`sizing ${token}`);
+  }
 }
 
 // ── 3. TYPOGRAPHY ─────────────────────────────────────────────────────────────
@@ -177,8 +294,8 @@ if (snap.typography && Object.keys(TYPO).length) {
       SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, mode: '-', reason: 'no Figma value in snapshot' });
       continue;
     }
-    if (!rootVars[cssVar]) {
-      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', issue: 'CSS var not declared' });
+    if (!modeVars[0][cssVar]) {
+      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}` });
       continue;
     }
     const cssVal = resolveScalar(cssVar);
@@ -186,15 +303,41 @@ if (snap.typography && Object.keys(TYPO).length) {
       NEW_SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', reason: 'CSS var did not resolve' });
       continue;
     }
-    if (String(figmaVal).trim() !== cssVal.trim())
-      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${cssVar} → ${cssVal} but Figma says ${figmaVal}` });
-    else
+    if (String(figmaVal).trim() !== cssVal.trim()) {
+      const fixHint = sizingFixHint(cssVar, figmaVal);
+      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${cssVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
+      if (FIX_MODE) {
+        const line = varLineMap[cssVar];
+        if (line) autoFixes.push({ cssVar, newVal: String(figmaVal).trim(), line });
+      }
+    } else {
       PASS.push(`typography ${scale}/${prop}`);
+    }
   }
 } else if (!snap.typography) {
   SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'snapshot has no typography section — run /rms-parity Phase 1' });
 } else if (!Object.keys(TYPO).length) {
   SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'TYPO map empty in parity-map.mjs — add your type scale vars' });
+}
+
+// ── Auto-fix: apply sizing/typography fixes to theme.css ─────────────────────
+if (FIX_MODE && autoFixes.length > 0) {
+  let lines = rawCss.split('\n');
+  let fixedCount = 0;
+  for (const fix of autoFixes) {
+    const idx    = fix.line - 1;
+    const before = lines[idx];
+    lines[idx]   = lines[idx].replace(
+      new RegExp(`(${fix.cssVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*)[^;]+`),
+      `$1${fix.newVal}`
+    );
+    if (lines[idx] !== before) fixedCount++;
+  }
+  writeFileSync(join(ROOT, THEME_PATH), lines.join('\n'));
+  console.log(`\n🔧 Auto-fixed ${fixedCount} sizing/typography value(s) in ${THEME_PATH}`);
+  const colorFails = FAIL.filter(f => f.dimension === 'color').length;
+  if (colorFails > 0)
+    console.log(`   ℹ️  ${colorFails} color divergence(s) need manual review — see Fix hints below`);
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
@@ -214,8 +357,13 @@ if (NEW_SKIP.length) {
 if (FAIL.length) {
   console.log('\n─── Divergences ──────────────────────────────────────────────');
   for (const f of FAIL) {
-    if (f.issue) console.log(`  ❌ [${f.dimension}/${f.mode}] ${f.token} → ${f.cssVar}: ${f.issue}`);
-    else { console.log(`  ❌ [${f.dimension}/${f.mode}] ${f.token} → ${f.cssVar}`); console.log(`       Figma: ${f.figma}   CSS: ${f.css}`); }
+    if (f.issue) {
+      console.log(`  ❌ [${f.dimension}/${f.mode}] ${f.token} → ${f.cssVar}: ${f.issue}`);
+    } else {
+      console.log(`  ❌ [${f.dimension}/${f.mode}] ${f.token} → ${f.cssVar}`);
+      console.log(`       Figma: ${f.figma}   CSS: ${f.css}`);
+    }
+    if (f.fixHint) console.log(`       Fix:  ${f.fixHint}`);
   }
 }
 if (FAIL.length === 0 && NEW_SKIP.length === 0) {
