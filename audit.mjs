@@ -34,11 +34,14 @@
 // View trend: node scripts/audit.mjs --trend
 //
 // Exit 0 = all gates pass. Exit 1 = one or more failed.
+//
+// Performance: gates 2–4 and 8–9 (subprocess-based) run in parallel via Promise.all.
+// Total runtime = max(slowest gate) instead of sum(all gates).
 
-import { spawnSync }                                      from 'child_process';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { join, dirname, resolve }                         from 'path';
-import { fileURLToPath }                                  from 'url';
+import { spawn, spawnSync }                                   from 'child_process';
+import { existsSync, readFileSync, statSync, writeFileSync }  from 'fs';
+import { join, dirname, resolve }                             from 'path';
+import { fileURLToPath }                                      from 'url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT       = process.cwd();
@@ -101,10 +104,18 @@ function sh(cmd, args = [], opts = {}) {
   return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
 }
 
-function runScript(scriptPath) {
-  const abs = resolve(SCRIPT_DIR, scriptPath);
-  if (!existsSync(abs)) return { status: null, stdout: '', stderr: '' };
-  return sh('node', [abs]);
+// Async subprocess runner — used for gates that spawn Node scripts.
+// All such gates run concurrently via Promise.all; total time = max(slowest gate).
+function runScriptAsync(scriptPath) {
+  return new Promise(res => {
+    const abs = resolve(SCRIPT_DIR, scriptPath);
+    if (!existsSync(abs)) return res({ status: null, stdout: '', stderr: '' });
+    const child = spawn('node', [abs], { cwd: ROOT, env: process.env });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', d => { stdout += d; });
+    child.stderr.on('data', d => { stderr += d; });
+    child.on('close', status => res({ status, stdout, stderr }));
+  });
 }
 
 function snapshotAge(file) {
@@ -121,25 +132,88 @@ function boundAge() {
   } catch { return null; }
 }
 
-// ── Gate runner ───────────────────────────────────────────────────────────────
-const gates = [];
-let anyFail = false;
-
-function gate(label, fn) {
-  const result = fn();
-  if (!result.pass) anyFail = true;
-  gates.push({ label, ...result });
+// ── Gate parsers for subprocess-based gates ───────────────────────────────────
+function parseGate2(r) {
+  if (r.status === null) return { pass: false, lines: [C.red('parity-check.mjs not found')] };
+  const out  = r.stdout + r.stderr;
+  const pass = r.status === 0;
+  const summary    = out.split('\n').filter(l => /✅|❌|⚠️/.test(l) && l.trim()).map(l => l.trim());
+  const failDetails = pass ? [] : out.split('\n')
+    .filter(l => l.trim().startsWith('❌') || l.trim().startsWith('Fix:'))
+    .map(l => '  ' + l.trim()).slice(0, 30);
+  return { pass, lines: [...summary, ...failDetails] };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 1 — Snapshot freshness
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Snapshot freshness', () => {
+function parseGate3(r) {
+  if (r.status === null) return { pass: true, lines: ['⏭ structure-check.mjs not found — skipped'] };
+  const out  = r.stdout + r.stderr;
+  const pass = r.status === 0;
+  const summary    = out.split('\n').filter(l => /✅|❌/.test(l) && l.trim()).map(l => l.trim());
+  const failDetails = pass ? [] : out.split('\n')
+    .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
+    .map(l => '  ' + l.trim()).slice(0, 20);
+  return { pass, lines: [...summary, ...failDetails] };
+}
+
+function parseGate4(r) {
+  if (r.status === null) return { pass: true, lines: ['⏭ bound-check.mjs not found — skipped'] };
+  const out = r.stdout + r.stderr;
+
+  if (r.status === 2) {
+    return {
+      pass: false,
+      lines: [
+        C.red('❌ HARD FAIL — bound-tokens.json missing.'),
+        C.red('   Run /rms-parity Phase 2 Step 1b and save output to bound-tokens.json.'),
+      ],
+    };
+  }
+
+  const pass       = r.status === 0;
+  const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
+  const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
+  return { pass, lines: [...summary, ...failDetails] };
+}
+
+function parseGate8(r) {
+  if (r.status === null) return { pass: true, lines: ['⏭ subcomponent-isolation-check.mjs not found — skipped'] };
+  const out  = r.stdout + r.stderr;
+  const pass = r.status === 0;
+  const summary    = out.split('\n')
+    .filter(l => /✅ DOCUMENTED|✅ No new|❌ UNDOCUMENTED/.test(l) && l.trim())
+    .map(l => l.trim());
+  const failDetails = pass ? [] : out.split('\n')
+    .filter(l => l.trim().startsWith('❌') && !l.includes('UNDOCUMENTED'))
+    .map(l => '  ' + l.trim()).slice(0, 20);
+  return { pass, lines: [...summary, ...failDetails] };
+}
+
+function parseGate9(r) {
+  if (r.status === null) return { pass: true, lines: ['⏭ visual-regression-check.mjs not found — skipped'] };
+  const out = r.stdout + r.stderr;
+
+  if (r.status === 0 && (out.includes('FIGMA_TOKEN') || out.includes('No frames'))) {
+    const msg = out.split('\n').find(l => l.trim()) ?? 'Skipped';
+    return { pass: true, lines: [`⏭ ${msg.trim()}`] };
+  }
+
+  const pass     = r.status === 0;
+  const summary  = out.split('\n')
+    .filter(l => /✅|❌|📸/.test(l) && l.trim())
+    .map(l => l.trim()).slice(0, 6);
+  const fixLines = pass ? [] : out.split('\n')
+    .filter(l => l.trim().startsWith('mv ') || l.includes('.new.png'))
+    .map(l => '  ' + l.trim()).slice(0, 6);
+  return { pass, lines: [...summary, ...fixLines] };
+}
+
+// ── Inline gate computations (sync — no subprocess) ──────────────────────────
+function computeGate1() {
   const vars   = snapshotAge(SNAP_VARS);
   const struct = snapshotAge(SNAP_STRUCT);
   const bnd    = boundAge();
-  const lines = [];
-  let warn = false;
+  const lines  = [];
+  let warn     = false;
 
   if (vars === null) {
     lines.push(C.red(`${SNAP_VARS} missing — run /rms-parity Phase 1`)); warn = true;
@@ -166,66 +240,9 @@ gate('Snapshot freshness', () => {
   }
 
   return { pass: !warn, lines };
-});
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 2 — Parity check (token values: color + sizing + typography)
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Token parity  (color · sizing · typography)', () => {
-  const r = runScript('parity-check.mjs');
-  if (r.status === null) return { pass: false, lines: [C.red('parity-check.mjs not found')] };
-  const out  = r.stdout + r.stderr;
-  const pass = r.status === 0;
-  const summary = out.split('\n').filter(l => /✅|❌|⚠️/.test(l) && l.trim()).map(l => l.trim());
-  const failDetails = pass ? [] : out.split('\n')
-    .filter(l => l.trim().startsWith('❌') || l.trim().startsWith('Fix:'))
-    .map(l => '  ' + l.trim()).slice(0, 30);
-  return { pass, lines: [...summary, ...failDetails] };
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 3 — Structure check
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Structure     (snapshot · CSS height · base-rule vars)', () => {
-  const r = runScript('structure-check.mjs');
-  if (r.status === null) return { pass: true, lines: ['⏭ structure-check.mjs not found — skipped'] };
-  const out  = r.stdout + r.stderr;
-  const pass = r.status === 0;
-  const summary    = out.split('\n').filter(l => /✅|❌/.test(l) && l.trim()).map(l => l.trim());
-  const failDetails = pass ? [] : out.split('\n')
-    .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
-    .map(l => '  ' + l.trim()).slice(0, 20);
-  return { pass, lines: [...summary, ...failDetails] };
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 4 — Bound-token coverage
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Bound-token coverage  (DS frames → CSS vars)', () => {
-  const r = runScript('bound-check.mjs');
-  if (r.status === null) return { pass: true, lines: ['⏭ bound-check.mjs not found — skipped'] };
-  const out = r.stdout + r.stderr;
-
-  if (r.status === 2) {
-    return {
-      pass: false,
-      lines: [
-        C.red('❌ HARD FAIL — bound-tokens.json missing.'),
-        C.red('   Run /rms-parity Phase 2 Step 1b and save output to bound-tokens.json.'),
-      ],
-    };
-  }
-
-  const pass = r.status === 0;
-  const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
-  const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
-  return { pass, lines: [...summary, ...failDetails] };
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 5 — Unused CSS vars (Hard Rule #2)
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Unused CSS vars', () => {
+function computeGate5() {
   if (!existsSync(join(ROOT, THEME))) {
     return { pass: false, lines: [C.red(`theme CSS not found at ${THEME}`)] };
   }
@@ -246,12 +263,9 @@ gate('Unused CSS vars', () => {
       ? [`✅ 0 unused vars  (${KNOWN_UNUSED.size} known-unused exempted)`]
       : [`❌ ${unused.length} unused: ${unused.join(', ')}`],
   };
-});
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 6 — Hardcoded value scan (Hard Rule #5)
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Hardcoded values  (no raw hex / font-size in rules)', () => {
+function computeGate6() {
   const scanTargets = [THEME, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
   const scanArgs    = ['-n', '-E'];
 
@@ -296,19 +310,16 @@ gate('Hardcoded values  (no raw hex / font-size in rules)', () => {
       ? ['✅ Clean']
       : [`❌ ${hits.length} hit(s):`, ...hits.slice(0, 15).map(l => '  ' + l)],
   };
-});
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 7 — Build freshness
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Build freshness  (source ≤ built output)', () => {
+function computeGate7() {
   if (!PLUGINS.length) {
     return { pass: true, lines: ['⏭ No plugins configured in ds-config.json — skipped'] };
   }
 
-  const stale = [];
-  const themePath  = join(ROOT, THEME);
-  const themeMtime = existsSync(themePath) ? statSync(themePath).mtime : null;
+  const stale       = [];
+  const themePath   = join(ROOT, THEME);
+  const themeMtime  = existsSync(themePath) ? statSync(themePath).mtime : null;
 
   for (const p of PLUGINS) {
     const src = join(ROOT, `apps/${p}/ui.src.html`);
@@ -327,82 +338,76 @@ gate('Build freshness  (source ≤ built output)', () => {
       ? ['✅ All outputs current']
       : [`❌ Stale — rebuild: ${stale.join(', ')}`],
   };
-});
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 8 — Sub-component style isolation (Hard Rule #8)
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Sub-component isolation  (no parent rule overrides sub-component styles)', () => {
-  const r = runScript('subcomponent-isolation-check.mjs');
-  if (r.status === null) return { pass: true, lines: ['⏭ subcomponent-isolation-check.mjs not found — skipped'] };
-  const out  = r.stdout + r.stderr;
-  const pass = r.status === 0;
-  const summary    = out.split('\n')
-    .filter(l => /✅ DOCUMENTED|✅ No new|❌ UNDOCUMENTED/.test(l) && l.trim())
-    .map(l => l.trim());
-  const failDetails = pass ? [] : out.split('\n')
-    .filter(l => l.trim().startsWith('❌') && !l.includes('UNDOCUMENTED'))
-    .map(l => '  ' + l.trim()).slice(0, 20);
-  return { pass, lines: [...summary, ...failDetails] };
-});
+// ── Main — async so we can await the parallel gate batch ─────────────────────
+(async () => {
+  const gates   = [];
+  let anyFail   = false;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 9 — Visual regression (Figma frame screenshots vs stored references)
-// ─────────────────────────────────────────────────────────────────────────────
-gate('Visual regression  (frames match stored references)', () => {
-  const r = runScript('visual-regression-check.mjs');
-  if (r.status === null) return { pass: true, lines: ['⏭ visual-regression-check.mjs not found — skipped'] };
-  const out = r.stdout + r.stderr;
-
-  // Script exits 0 with a skip message when FIGMA_TOKEN not set or no frames configured
-  if (r.status === 0 && (out.includes('FIGMA_TOKEN') || out.includes('No frames'))) {
-    const msg = out.split('\n').find(l => l.trim()) ?? 'Skipped';
-    return { pass: true, lines: [`⏭ ${msg.trim()}`] };
+  function addGate(label, result) {
+    if (!result.pass) anyFail = true;
+    gates.push({ label, ...result });
   }
 
-  const pass = r.status === 0;
-  const summary = out.split('\n')
-    .filter(l => /✅|❌|📸/.test(l) && l.trim())
-    .map(l => l.trim()).slice(0, 6);
-  const fixLines = pass ? [] : out.split('\n')
-    .filter(l => l.trim().startsWith('mv ') || l.includes('.new.png'))
-    .map(l => '  ' + l.trim()).slice(0, 6);
-  return { pass, lines: [...summary, ...fixLines] };
-});
+  // Gate 1 — sync (file stat only, no subprocess)
+  addGate('Snapshot freshness', computeGate1());
 
-// ── Final report ──────────────────────────────────────────────────────────────
-console.log('\n' + C.bold('─'.repeat(WIDTH)));
-console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
-console.log(C.bold('─'.repeat(WIDTH)) + '\n');
+  // Gates 2, 3, 4, 8, 9 — all subprocess-based; launch concurrently
+  // Total subprocess wait time = max(slowest gate) instead of sum(all gates)
+  const [r2, r3, r4, r8, r9] = await Promise.all([
+    runScriptAsync('parity-check.mjs'),
+    runScriptAsync('structure-check.mjs'),
+    runScriptAsync('bound-check.mjs'),
+    runScriptAsync('subcomponent-isolation-check.mjs'),
+    runScriptAsync('visual-regression-check.mjs'),
+  ]);
 
-gates.forEach((g, i) => {
-  const icon = g.pass ? C.green('✅') : C.red('❌');
-  console.log(`${icon}  [${i + 1}] ${C.bold(g.label)}`);
-  for (const line of g.lines || []) console.log(`       ${line}`);
-  console.log();
-});
+  // Gates 5, 6, 7 — inline sync; run while subprocesses were already running above
+  // Order: present them in their logical gate positions
+  addGate('Token parity  (color · sizing · typography)',               parseGate2(r2));
+  addGate('Structure     (snapshot · CSS height · base-rule vars)',    parseGate3(r3));
+  addGate('Bound-token coverage  (DS frames → CSS vars)',              parseGate4(r4));
+  addGate('Unused CSS vars',                                           computeGate5());
+  addGate('Hardcoded values  (no raw hex / font-size in rules)',       computeGate6());
+  addGate('Build freshness  (source ≤ built output)',                  computeGate7());
+  addGate('Sub-component isolation  (no parent rule overrides sub-component styles)', parseGate8(r8));
+  addGate('Visual regression  (frames match stored references)',       parseGate9(r9));
 
-console.log('─'.repeat(WIDTH));
-if (anyFail) {
-  console.log(C.bold(C.red('\n  AUDIT FAILED — fix all ❌ above before declaring parity\n')));
-} else {
-  console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
-}
-console.log('─'.repeat(WIDTH) + '\n');
+  // ── Final report ─────────────────────────────────────────────────────────────
+  console.log('\n' + C.bold('─'.repeat(WIDTH)));
+  console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
+  console.log(C.bold('─'.repeat(WIDTH)) + '\n');
 
-// ── Write parity history ──────────────────────────────────────────────────────
-const histPath = join(ROOT, 'parity-history.json');
-let hist = [];
-try { hist = JSON.parse(readFileSync(histPath, 'utf8')); } catch {}
-hist.push({
-  date:      today,
-  timestamp: new Date().toISOString(),
-  pass:      gates.filter(g => g.pass).length,
-  fail:      gates.filter(g => !g.pass).length,
-  total:     gates.length,
-  gates:     gates.map(g => ({ label: g.label, pass: g.pass })),
-});
-if (hist.length > 100) hist = hist.slice(-100);
-try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
+  gates.forEach((g, i) => {
+    const icon = g.pass ? C.green('✅') : C.red('❌');
+    console.log(`${icon}  [${i + 1}] ${C.bold(g.label)}`);
+    for (const line of g.lines || []) console.log(`       ${line}`);
+    console.log();
+  });
 
-process.exit(anyFail ? 1 : 0);
+  console.log('─'.repeat(WIDTH));
+  if (anyFail) {
+    console.log(C.bold(C.red('\n  AUDIT FAILED — fix all ❌ above before declaring parity\n')));
+  } else {
+    console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
+  }
+  console.log('─'.repeat(WIDTH) + '\n');
+
+  // ── Write parity history ──────────────────────────────────────────────────────
+  const histPath = join(ROOT, 'parity-history.json');
+  let hist = [];
+  try { hist = JSON.parse(readFileSync(histPath, 'utf8')); } catch {}
+  hist.push({
+    date:      today,
+    timestamp: new Date().toISOString(),
+    pass:      gates.filter(g => g.pass).length,
+    fail:      gates.filter(g => !g.pass).length,
+    total:     gates.length,
+    gates:     gates.map(g => ({ label: g.label, pass: g.pass })),
+  });
+  if (hist.length > 100) hist = hist.slice(-100);
+  try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
+
+  process.exit(anyFail ? 1 : 0);
+})();

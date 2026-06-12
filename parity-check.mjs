@@ -133,34 +133,52 @@ for (let i = 0; i < rawLines.length; i++) {
   if (m) varLineMap[m[1]] = i + 1; // 1-indexed; keeps last occurrence
 }
 
+// ── Resolver caches — one Map per mode for color, one for scalar ─────────────
+// Keyed by var name; populated on first resolve, returned instantly on repeat.
+// Cuts redundant chain-walks when many tokens alias through the same primitives.
+const resolveCache  = MODES.map(() => new Map());
+const scalarCache   = new Map();
+
 // ── Color resolver (multi-mode, index-based) ──────────────────────────────────
 // Mode 0 = base vars. Mode i > 0 = override vars + fallback to base.
 function resolve(varName, modeIdx, depth = 0) {
   if (depth > 8) return null;
+  const cache = resolveCache[modeIdx];
+  if (cache.has(varName)) return cache.get(varName);
+
   const nm = varName.match(NEUTRAL_VAR_RE);
   if (nm) {
-    const nmap = neutralMaps[modeIdx] ?? {};
-    return nmap[nm[1]] ?? nmap[+nm[1]] ?? null;
+    const nmap   = neutralMaps[modeIdx] ?? {};
+    const result = nmap[nm[1]] ?? nmap[+nm[1]] ?? null;
+    cache.set(varName, result);
+    return result;
   }
   const override = modeIdx > 0 ? modeVars[modeIdx]?.[varName] : undefined;
   const raw = override ?? modeVars[0][varName];
-  if (!raw) return null;
+  if (!raw) { cache.set(varName, null); return null; }
   const t = raw.trim();
   const vMatch  = t.match(/^var\((--.+?)\)$/);
-  if (vMatch)  return resolve(vMatch[1], modeIdx, depth + 1);
+  if (vMatch)  { const r = resolve(vMatch[1],  modeIdx, depth + 1); cache.set(varName, r); return r; }
   const vfMatch = t.match(/^var\((--.+?),/);
-  if (vfMatch) return resolve(vfMatch[1], modeIdx, depth + 1);
-  if (/^#[0-9a-fA-F]{3,8}$/.test(t)) return t.toLowerCase();
+  if (vfMatch) { const r = resolve(vfMatch[1], modeIdx, depth + 1); cache.set(varName, r); return r; }
+  if (/^#[0-9a-fA-F]{3,8}$/.test(t)) {
+    const r = t.toLowerCase();
+    cache.set(varName, r);
+    return r;
+  }
+  cache.set(varName, null);
   return null;
 }
 
 // ── Scalar resolver (single-mode: sizing + typography) ───────────────────────
 function resolveScalar(varName, depth = 0) {
   if (depth > 8) return null;
+  if (depth === 0 && scalarCache.has(varName)) return scalarCache.get(varName);
   const raw = modeVars[0][varName]; if (!raw) return null;
   const t = raw.trim();
-  const v  = t.match(/^var\((--.+?)\)$/);   if (v)  return resolveScalar(v[1],  depth + 1);
-  const vf = t.match(/^var\((--.+?),/);      if (vf) return resolveScalar(vf[1], depth + 1);
+  const v  = t.match(/^var\((--.+?)\)$/);   if (v)  { const r = resolveScalar(v[1],  depth + 1); if (depth === 0) scalarCache.set(varName, r); return r; }
+  const vf = t.match(/^var\((--.+?),/);      if (vf) { const r = resolveScalar(vf[1], depth + 1); if (depth === 0) scalarCache.set(varName, r); return r; }
+  if (depth === 0) scalarCache.set(varName, t);
   return t;
 }
 

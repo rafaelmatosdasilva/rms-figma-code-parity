@@ -62,17 +62,45 @@ if (!Object.keys(CONTRACT).length && !STATE_SELECTORS.length) {
 let themeCSS = null;
 try { themeCSS = readFileSync(join(ROOT, THEME_PATH), 'utf8'); } catch {}
 
-const cssFiles = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-const allCss   = cssFiles.map(f => readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')).join('\n');
+const cssFiles  = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
+const allCss    = cssFiles.map(f => readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')).join('\n');
+
+// Build block indexes once — findBlock() uses these for O(1) lookups
+const themeIndex = themeCSS ? buildBlockIndex(themeCSS) : null;
+const allIndex   = buildBlockIndex(allCss);
 
 // ── CSS utility helpers ───────────────────────────────────────────────────────
 // Both helpers take an explicit css string so they work on themeCSS or allCss.
 
-function findBlock(css, selector) {
-  const lines = css.split('\n');
+// buildBlockIndex — parse CSS once into Map<normalizedSelector → blockContent>.
+// Handles flat rules only (no nested braces). Called once per CSS source on load;
+// subsequent findBlock calls hit the Map in O(1) instead of scanning all lines.
+function buildBlockIndex(css) {
+  const index = new Map();
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(css)) !== null) {
+    const sel = m[1].trim().replace(/\s+/g, ' ');
+    if (sel) index.set(sel, m[2]);
+  }
+  return index;
+}
+
+// findBlock — O(1) index lookup with linear-scan fallback for complex selectors.
+function findBlock(css, selector, index) {
+  if (index) {
+    // Exact match
+    if (index.has(selector)) return index.get(selector);
+    // Normalised-whitespace match (handles extra spaces in source)
+    const norm = selector.replace(/\s+/g, ' ').trim();
+    if (index.has(norm)) return index.get(norm);
+  }
+  // Fallback: original line-scan for selectors not found in the index
+  // (e.g. multi-selector rules `.a, .b { }`, or selectors with combinators)
+  const lines   = css.split('\n');
   const escaped = selector.split(/\s+/).map(p => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
-  const pat = new RegExp('^\\s*' + escaped + '(?![.\\w-])\\s*\\{');
-  const start = lines.findIndex(l => pat.test(l));
+  const pat     = new RegExp('^\\s*' + escaped + '(?![.\\w-])\\s*\\{');
+  const start   = lines.findIndex(l => pat.test(l));
   if (start < 0) return null;
   if (/\}/.test(lines[start])) { const m = lines[start].match(/\{([^}]*)\}/); return m ? m[1] : ''; }
   const block = [];
@@ -147,7 +175,7 @@ if (themeCSS) {
   for (const [comp, rule] of Object.entries(CSS_HEIGHT_RULES)) {
     const contractH = CONTRACT[comp]?.h;
     if (contractH === undefined || contractH === 'auto') { CSS_PASS.push(comp); continue; }
-    const block = findBlock(themeCSS, rule.selector);
+    const block = findBlock(themeCSS, rule.selector, themeIndex);
     if (!block) { CSS_FAIL.push(`${comp}: selector "${rule.selector}" not found in theme CSS`); continue; }
     const propPattern = rule.prop === 'height' ? '(?<!-)height' : 'min-height';
     const hMatch = block.match(new RegExp(propPattern + '\\s*:\\s*([^;\\n]+)'));
@@ -164,7 +192,7 @@ const VAR_FAIL = [], VAR_PASS = [];
 
 if (themeCSS) {
   for (const rule of CSS_BASE_RULE_VARS) {
-    const block = findBlock(themeCSS, rule.selector);
+    const block = findBlock(themeCSS, rule.selector, themeIndex);
     if (!block) { VAR_FAIL.push(`${rule.key}: selector "${rule.selector}" not found`); continue; }
     const usedVar = extractPropVar(block, rule.prop);
     if (!usedVar) VAR_FAIL.push(`${rule.key}: "${rule.prop}" not set in "${rule.selector}"`);
@@ -196,7 +224,7 @@ for (const entry of STATE_SELECTORS) {
     continue;
   }
 
-  const block = findBlock(allCss, entry.selector);
+  const block = findBlock(allCss, entry.selector, allIndex);
   if (!block) {
     SELECTOR_FAIL.push({ label, issue: 'selector found but rule block could not be parsed' });
     continue;
