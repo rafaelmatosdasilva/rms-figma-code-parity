@@ -23,11 +23,12 @@ node scripts/setup-webhook.mjs --list   # list registered Figma webhooks for thi
 
 At the start of every run, read `./ds-config.json` from the project root.
 
-**If it doesn't exist**, ask the user for exactly three things — nothing else:
+**If it doesn't exist**, ask the user for exactly four things — nothing else:
 
 1. **Figma file URL** — the full browser URL of the Figma file (e.g. `https://www.figma.com/design/abc123/My-DS`). Extract the file key from the URL: it's the path segment after `/design/` or `/file/`. Never ask for the raw key — accept the URL and parse it.
 2. **Theme CSS path** — the path to `theme.css` relative to the project root (e.g. `packages/ui/src/theme.css`). If you can find exactly one `theme.css` in the project by scanning common locations (`packages/`, `src/`, `app/`), show it as the default and let the user confirm with Enter.
-3. **DS frame node IDs** *(optional but recommended)* — the Figma node IDs of the top-level plugin/screen frames that are the live DS designs (e.g. `308-10425`). Find them from the frame's Figma URL (`node-id=308-10425`). Ask for each frame's name and ID. If the user skips this, set `frames: []` and warn after writing the config: **⚠️ Gates [4] and [9] will not run until frame IDs are added to `ds-config.json → frames`.**
+3. **DS frame node IDs** *(optional but recommended)* — the Figma node IDs of the top-level plugin/screen frames that are the live DS designs (e.g. `308-10425`). Find them from the frame's Figma URL (`node-id=308-10425`). Ask for each frame's name and ID. If the user skips this, set `frames: []` and warn: **⚠️ Gates [4] and [9] will not run until frame IDs are added to `ds-config.json → frames`.**
+4. **Figma personal access token** *(optional)* — needed for Gate [9] visual regression screenshots. Get it from Figma → Account settings → Personal access tokens → Generate new token (requires "File content" read scope). If the user skips this, warn: **⚠️ Gate [9] will not run until `FIGMA_TOKEN` is set in `.env`.** Never store the token in `ds-config.json` — write it to `.env` at the project root instead.
 
 Then auto-detect and write `ds-config.json`:
 - `snapshotVars` / `snapshotStructure` → sibling files next to theme CSS
@@ -39,7 +40,9 @@ Then auto-detect and write `ds-config.json`:
 - `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default)
 - `frames` → from user input, or `[]` if skipped
 
-Write `ds-config.json` to the project root. Also append `ds-config.json`, `parity-map.mjs`, `structure-contract.mjs` to `.gitignore` if not already present. Then continue the audit immediately — do not stop.
+If the user provided a token, write `FIGMA_TOKEN=<token>` to `.env` at the project root.
+
+Write `ds-config.json` to the project root. Also append `ds-config.json`, `parity-map.mjs`, `structure-contract.mjs`, `.env` to `.gitignore` if not already present. Then continue the audit immediately — do not stop.
 
 Once `ds-config.json` exists, extract:
 - `figmaFileKey` — Figma file key
