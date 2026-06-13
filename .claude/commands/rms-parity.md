@@ -232,6 +232,13 @@ Read both snapshot files. Parse them. If either is missing, treat all live value
 
 Compare live vs snapshot across all sections: `color` (all modes), `sizing`, `typography`, `structure`.
 
+**Lead with the name-set diff** before comparing values — print these two lines first:
+```
+Token names added   (+N): foo/background/hover/color, …
+Token names removed (−N): foo/background/color, …
+```
+A rename shows as both added and removed. A pure addition shows only as added. This makes renames and new state tokens visible even when no values change.
+
 **Changed tokens** → ⚠️ value changed
 **New tokens** → 🆕 needs CSS var (Hard Rule #1)
 **Removed tokens** → 🗑 check if CSS var can be removed:
@@ -240,6 +247,8 @@ Compare live vs snapshot across all sections: `color` (all modes), `sizing`, `ty
   - Never leave a dangling `var(--deleted-name)` reference in a rule.
 
 **Rename pattern** (REMOVED + NEW pair with same value) → A token rename adds a `/default/` or other state segment (e.g. `foo/background/color` → `foo/background/default/color`). Check whether the new name maps to the same CSS var via convention — if dropping `/default` produces the same var name, no CSS var change is needed, only a snapshot and comment update. **Also check if sibling state tokens were added alongside the rename** (e.g. `foo/background/hover/color`) — those are genuine new tokens requiring their own CSS vars and rule wiring.
+
+After any token rename, **re-run the bound walk** before Gate [4] — `bound-tokens.json` still has old names and may diverge from what Figma currently binds in the frames. Also update any matching entries in the `EXPLICIT` map in `parity-check.mjs` and the `EXPLICIT`/`COVERED` sets in `bound-check.mjs` — these two files maintain independent maps that can silently diverge after a rename.
 
 If diff is empty: print `✅ No DS changes since last snapshot (YYYY-MM-DD).`
 
@@ -269,7 +278,9 @@ node scripts/parity-check.mjs
 node scripts/structure-check.mjs
 ```
 
-If either reports FAIL/NEW SKIP, reconcile CSS before Phase 2.
+If either reports FAIL, reconcile CSS before Phase 2.
+
+**NEW SKIP = missing CSS var.** A NEW SKIP in Gate [2] means a token is in the snapshot but has no CSS var and no explicit exemption. Treat it exactly like a NEW token from Phase 1 — implement the CSS var before proceeding. Do not accept a passing Gate [2] that has non-zero NEW SKIPs for non-exempt tokens.
 
 ---
 
@@ -300,7 +311,8 @@ const PRIMITIVE_PREFIX = 'YOUR_PRIMITIVE_PREFIX'; // from ds-config.json
 const frameIds = ['YOUR_FRAME_NODE_ID_1', 'YOUR_FRAME_NODE_ID_2'];
 const used = {}, hidden = {};
 for (const fid of frameIds) {
-  const frame = figma.currentPage.findOne(n => n.id === fid); if (!frame) continue;
+  const frame = figma.currentPage.findOne(n => n.id === fid);
+  if (!frame) { console.error(`❌ Frame not found: ${fid} — check ds-config.json → frames and ensure you are on the correct Figma page`); continue; }
   function walk(node, ancestorStaticHidden = false) {
     // Hard Rule #7: hidden WITH a boolean variable → implement (boolean can be toggled).
     //               hidden WITHOUT a boolean variable → statically hidden → flag, don't implement.
@@ -354,7 +366,7 @@ All 9 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 | Gate | What it catches |
 |---|---|
 | [1] | Snapshot freshness — always ✅ after Phase 1 |
-| [2] | Token value parity — color (all modes) + sizing + typography |
+| [2] | Token value parity — color (all modes) + sizing + typography. NEW SKIP = missing CSS var — treat as ❌ |
 | [3] | Structural parity — height, padding/gap vars, fill structure, stroke |
 | [4] | Bound-token coverage — token used in Figma but no CSS var |
 | [5] | Unused CSS vars (Hard Rule #2) |
@@ -541,9 +553,10 @@ Configure `webhook.port` and `webhook.secret` in `ds-config.json`.
 - Never change source files to *hide* a divergence — report it.
 - Always compare **all** configured modes.
 - Naming violations are flagged regardless of whether the value is correct.
-- When renaming: update declarations, all usages, then rebuild.
+- When renaming: update declarations, all usages, then rebuild. Update `EXPLICIT` in both `parity-check.mjs` and `bound-check.mjs` if the old name had an explicit entry.
 - When adding a token group: add CSS var + rule consumer + update `parity-map.mjs` + rebuild.
-- When removing from DS: remove CSS var, remove from `parity-map.mjs`, run unused-var check.
+- When removing a token from DS: remove CSS var if unused (Gate [5] catches it), replace in rules if used, remove from `parity-map.mjs`, remove from `EXPLICIT`/`COVERED` if present.
+- When removing an entire component from DS: Phase 1 shows many REMOVED tokens for that component. Remove all its CSS vars (Gate [5] flags any that remain). Remove all its CSS rules. Remove from `parity-map.mjs`, `EXPLICIT`, `COVERED`, and `figma-structure.snapshot.json`. Re-run bound walk to purge it from `bound-tokens.json`. Rebuild.
 
 ---
 
