@@ -40,6 +40,62 @@ export const CSS_BASE_RULE_VARS = [
   // { key: 'node/label', selector: '.node', prop: 'color', expectedVar: '--node-label-unselected' },
 ];
 
+// ─── Figma layout token → CSS var mapping ────────────────────────────────────
+// Maps Figma sizing token paths to the CSS var that must appear in the rule.
+// Used by structure-check.mjs property binding checks (Gate [3]).
+// Only add entries for tokens that have a dedicated CSS var in your system.
+export const FIGMA_LAYOUT_TO_CSS = {
+  // 'gap/xs':      '--gap-xs',
+  // 'gap/s':       '--gap-s',
+  // 'gap/m':       '--gap-m',
+  // 'gap/l':       '--gap-l',
+  // 'gap/xl':      '--gap-xl',
+  // 'padding/xxs': '--padding-xxs',
+  // 'padding/xs':  '--padding-xs',
+  // 'padding/s':   '--padding-s',
+  // 'padding/m':   '--padding-m',
+  // 'padding/l':   '--padding-l',
+  // 'radii/button':  '--radius-full',
+  // 'radii/tooltip': '--radius-tooltip',
+};
+
+// ─── Font scale key → CSS var mapping ────────────────────────────────────────
+// Keys match the fontSizeVar / fontWeightVar values in CONTRACT above.
+export const FONT_SCALE_TO_CSS = {
+  // 'm': { size: '--m-size', weight: '--m-weight' },
+  // 's': { size: '--s-size', weight: '--s-weight' },
+  // 'l': { size: '--l-size', weight: '--l-weight' },
+};
+
+// ─── Per-component CSS selector config ───────────────────────────────────────
+// Used by the property binding checks in Gate [3].
+//   main        — selector for gap, padding, font, radius (default)
+//   gapSel      — override for gap (e.g. gap only in a state sub-rule)
+//   fontSel     — override for font-size/weight (e.g. font on a child element)
+//   radiusSel   — override for border-radius (e.g. on ::before pseudo-element)
+//   skipTBPadding — omit top/bottom padding check (height-based layout, no tb padding in CSS)
+export const COMPONENT_CSS_SELECTORS = {
+  // button: { main: '.button' },
+  // input:  { main: '.inputWrap', fontSel: '.inputField', skipTBPadding: true },
+  // card:   { main: '.card', radiusSel: '.card::before' },
+};
+
+// ─── Sub-component isolation: documented broad rules ────────────────────────
+// Consumed by subcomponent-isolation-check.mjs (Gate [8]).
+// Key   = normalized CSS selector (single spaces, no leading/trailing whitespace).
+// Value = isolation proof category:
+//   LEAF             — no DS sub-component ever nests inside this component
+//   ISOLATED         — explicit sub-component overrides appear later in the cascade
+//   NON-VISUAL       — rule sets only layout/motion properties (no color/fill/stroke)
+//   OWNED CHILDREN   — children are native HTML elements, not DS sub-components
+//   ISOLATION FIX    — this rule IS the isolation override for a parent's broad rule
+//   PLUGIN-SPECIFIC  — product-level wrapper; children are not DS components
+//   DECORATIVE       — icon/illustration slot with no DS sub-components
+export const ALLOWED_BROAD_RULES = {
+  // '.buttonTertiary svg': 'LEAF — leaf component; no nested DS sub-component',
+  // '.node svg': 'ISOLATED — sub-component override rules appear later in cascade',
+};
+
 // ─── Figma state/variant → CSS selector + var binding mapping ─────────────────
 // Full verification chain per state (Gate [3]):
 //   1. The CSS selector exists in your source files (theme CSS or plugin CSS)

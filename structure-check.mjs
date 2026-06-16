@@ -31,12 +31,16 @@ const PLUGIN_CSS    = cfg.paths?.pluginCSS          ?? [];
 
 // ── Load structure-contract.mjs ───────────────────────────────────────────────
 let CONTRACT = {}, CSS_HEIGHT_RULES = {}, CSS_BASE_RULE_VARS = [], STATE_SELECTORS = [];
+let FIGMA_LAYOUT_TO_CSS = {}, FONT_SCALE_TO_CSS = {}, COMPONENT_CSS_SELECTORS = {};
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
-  if (m.CONTRACT)           CONTRACT           = m.CONTRACT;
-  if (m.CSS_HEIGHT_RULES)   CSS_HEIGHT_RULES   = m.CSS_HEIGHT_RULES;
-  if (m.CSS_BASE_RULE_VARS) CSS_BASE_RULE_VARS = m.CSS_BASE_RULE_VARS;
-  if (m.STATE_SELECTORS)    STATE_SELECTORS    = m.STATE_SELECTORS;
+  if (m.CONTRACT)                CONTRACT                = m.CONTRACT;
+  if (m.CSS_HEIGHT_RULES)        CSS_HEIGHT_RULES        = m.CSS_HEIGHT_RULES;
+  if (m.CSS_BASE_RULE_VARS)      CSS_BASE_RULE_VARS      = m.CSS_BASE_RULE_VARS;
+  if (m.STATE_SELECTORS)         STATE_SELECTORS         = m.STATE_SELECTORS;
+  if (m.FIGMA_LAYOUT_TO_CSS)     FIGMA_LAYOUT_TO_CSS     = m.FIGMA_LAYOUT_TO_CSS;
+  if (m.FONT_SCALE_TO_CSS)       FONT_SCALE_TO_CSS       = m.FONT_SCALE_TO_CSS;
+  if (m.COMPONENT_CSS_SELECTORS) COMPONENT_CSS_SELECTORS = m.COMPONENT_CSS_SELECTORS;
 } catch { /* optional — runs with empty contract */ }
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
@@ -244,6 +248,67 @@ for (const entry of STATE_SELECTORS) {
   if (allVarsPass) SELECTOR_PASS.push(label);
 }
 
+// ── 5. CSS property binding checks ───────────────────────────────────────────
+// Verifies each component's CSS rule uses the Figma-bound CSS var for key layout
+// properties. Catches right-value-wrong-var bugs (e.g. gap: var(--padding-m) when
+// gap/m and padding/m have the same px but differ by DS spec).
+// Only runs when COMPONENT_CSS_SELECTORS is exported from structure-contract.mjs.
+const PROP_FAIL = [], PROP_PASS = [];
+
+if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
+  function propHasVar(block, prop, expectedVar) {
+    if (!block || !expectedVar) return false;
+    const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
+    const m  = block.match(re);
+    return m ? m[1].includes(`var(${expectedVar})`) : false;
+  }
+
+  function propActual(block, prop) {
+    if (!block) return '(not set)';
+    const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
+    const m  = block?.match(re);
+    return m ? m[1].trim().slice(0, 60) : '(not set)';
+  }
+
+  for (const [comp, contract] of Object.entries(CONTRACT)) {
+    const selCfg = COMPONENT_CSS_SELECTORS[comp];
+    if (!selCfg) continue;
+
+    const mainBlock   = findBlock(themeCSS, selCfg.main, themeIndex);
+    const gapBlock    = selCfg.gapSel    ? findBlock(themeCSS, selCfg.gapSel,    themeIndex) : mainBlock;
+    const fontBlock   = selCfg.fontSel   ? findBlock(themeCSS, selCfg.fontSel,   themeIndex) : mainBlock;
+    const radiusBlock = selCfg.radiusSel ? findBlock(themeCSS, selCfg.radiusSel, themeIndex) : mainBlock;
+
+    if (!mainBlock) {
+      PROP_FAIL.push(`${comp}: selector "${selCfg.main}" not found in theme CSS`);
+      continue;
+    }
+
+    const check = (label, block, prop, expectedVar, sel) => {
+      if (!expectedVar) return;
+      if (!block) { PROP_FAIL.push(`${comp}/${label}: selector "${sel}" not found`); return; }
+      if (propHasVar(block, prop, expectedVar)) {
+        PROP_PASS.push(`${comp}/${label}`);
+      } else {
+        PROP_FAIL.push(`${comp}/${label}: expected var(${expectedVar}) in "${prop}" — got: ${propActual(block, prop)}`);
+      }
+    };
+
+    if (contract.gapVar)
+      check('gap', gapBlock, 'gap', FIGMA_LAYOUT_TO_CSS[contract.gapVar], selCfg.gapSel ?? selCfg.main);
+    if (contract.paddingVar?.tb && !selCfg.skipTBPadding)
+      check('padding-tb', mainBlock, 'padding', FIGMA_LAYOUT_TO_CSS[contract.paddingVar.tb], selCfg.main);
+    if (contract.paddingVar?.lr)
+      check('padding-lr', mainBlock, 'padding', FIGMA_LAYOUT_TO_CSS[contract.paddingVar.lr], selCfg.main);
+    if (contract.fontSizeVar)
+      check('font-size', fontBlock, 'font-size', FONT_SCALE_TO_CSS[contract.fontSizeVar]?.size, selCfg.fontSel ?? selCfg.main);
+    if (contract.fontWeightVar)
+      check('font-weight', fontBlock, 'font-weight', FONT_SCALE_TO_CSS[contract.fontWeightVar]?.weight, selCfg.fontSel ?? selCfg.main);
+    if (contract.innerRadiusVar)
+      check('radius', radiusBlock, 'border-radius', FIGMA_LAYOUT_TO_CSS[contract.innerRadiusVar], selCfg.radiusSel ?? selCfg.main);
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -264,6 +329,16 @@ if (themeCSS) {
   console.log(`\n✅ PASS  ${VAR_PASS.length}/${CSS_BASE_RULE_VARS.length} CSS base-rule var bindings`);
   console.log(`❌ FAIL  ${VAR_FAIL.length}`);
   if (VAR_FAIL.length) for (const f of VAR_FAIL) console.log(`  ❌ ${f}`);
+
+  if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
+    const propTotal = PROP_PASS.length + PROP_FAIL.length;
+    console.log(`\n✅ PASS  ${PROP_PASS.length}/${propTotal} CSS property bindings`);
+    console.log(`❌ FAIL  ${PROP_FAIL.length}`);
+    if (PROP_FAIL.length) {
+      console.log('\n─── Wrong var in property binding (Figma-bound token, wrong CSS var in rule) ──');
+      for (const f of PROP_FAIL) console.log(`  ❌ ${f}`);
+    }
+  }
 } else {
   console.log('\n⚠️  theme CSS not found — height and base-rule var checks skipped');
 }
@@ -285,7 +360,7 @@ if (STATE_SELECTORS.length) {
 }
 
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
-             || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0;
+             || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }

@@ -43,25 +43,18 @@ const THEME_PATH = cfg.paths?.themeCSS  ?? 'src/theme.css';
 const PLUGIN_CSS = cfg.paths?.pluginCSS ?? [];
 const SOURCES = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
 
-// ─── ALLOWED broad rules ──────────────────────────────────────────────────────
+// ── Load project-specific ALLOWED broad rules from structure-contract.mjs ──────
+// Export ALLOWED_BROAD_RULES from structure-contract.mjs at the project root.
 // Key   = normalized selector (single spaces, no leading/trailing whitespace).
 // Value = isolation proof (LEAF / ISOLATED / NON-VISUAL / OWNED CHILDREN /
 //         ISOLATION FIX / PLUGIN-SPECIFIC / DECORATIVE).
-//
-// Add a rule here when you have verified it is safe:
-//   • Leaf component: no DS sub-component ever nests inside it.
-//   • Isolated: explicit .<subComponent> <elementTag> { } override rules appear
-//     LATER in the cascade (same specificity, later wins).
-//   • Non-visual: the rule only sets layout/motion (no color, fill, stroke).
-//   • Owned children: the children are native HTML elements, not DS components.
-//
-// A rule NOT in ALLOWED = gate failure.
-const ALLOWED = {
-  // ── Add your documented broad rules here ──
-  // Example:
-  // '.buttonTertiary svg': 'LEAF — no DS sub-component nests inside buttonTertiary',
-  // '.node svg': 'ISOLATED — .node-focus-btn svg / .node-goto-btn svg overrides later in cascade',
-};
+let ALLOWED = {};
+try {
+  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  if (m.ALLOWED_BROAD_RULES && typeof m.ALLOWED_BROAD_RULES === 'object') {
+    ALLOWED = m.ALLOWED_BROAD_RULES;
+  }
+} catch { /* structure-contract.mjs optional */ }
 
 // ── Visual properties that trigger the isolation check ───────────────────────
 const VISUAL_RE = /\b(color|background|fill|stroke|border(-color)?)\s*:/;

@@ -60,6 +60,8 @@ if (figmaCfg.modes && Array.isArray(figmaCfg.modes) && figmaCfg.modes.length) {
 }
 
 // ── Load parity-map.mjs (project-specific token mappings) ────────────────────
+const PRIMITIVE_PREFIX = cfg.figma?.primitivePrefix ?? 'primitives/';
+
 let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
     KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {};
 let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
@@ -182,6 +184,21 @@ function resolveScalar(varName, depth = 0) {
   return t;
 }
 
+// ── Alias chain helpers ────────────────────────────────────────────────────────
+// Returns the immediate var() target (one hop), or null if the value is a literal.
+function resolveCSSAlias(varName, modeIdx) {
+  const raw = (modeIdx > 0 ? modeVars[modeIdx]?.[varName] : undefined) ?? modeVars[0][varName];
+  if (!raw) return null;
+  const vm = raw.trim().match(/^var\((--.+?)\)$/);
+  return vm ? vm[1] : null;
+}
+
+// 'primitives/Neutral 300' → '--neutral-300'
+function figmaAliasToCSSVar(alias) {
+  const bare = alias.startsWith(PRIMITIVE_PREFIX) ? alias.slice(PRIMITIVE_PREFIX.length) : alias;
+  return '--' + bare.toLowerCase().replace(/\s+/g, '-').replace(/\//g, '-');
+}
+
 // ── Fix hint helpers ──────────────────────────────────────────────────────────
 // Reverse-lookup: given a target hex, find the matching neutral var name for a mode
 function hexToNeutralVar(hex, modeIdx) {
@@ -227,7 +244,7 @@ function sizingTokenToVar(token) {
 const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 
 // ── Accumulators ──────────────────────────────────────────────────────────────
-const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [];
+const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [];
 const autoFixes = []; // { cssVar, newVal, line } — applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
@@ -272,6 +289,24 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
       });
     } else {
       PASS.push(`color ${token}:${modeMeta.snapshotKey}`);
+
+      // Alias chain check — CSS var() chain must route through same primitive as Figma.
+      // Same hex can pass value check while chain goes through a different primitive — still wrong.
+      const figmaRaw = snap.aliases?.[modeMeta.snapshotKey]?.[tokenKey]
+                    ?? snap.aliases?.[modeMeta.snapshotKey]?.[token] ?? null;
+      if (figmaRaw) {
+        const chain = Array.isArray(figmaRaw) ? figmaRaw : [figmaRaw];
+        const finalFigmaHop = chain[chain.length - 1];
+        if (finalFigmaHop.startsWith(PRIMITIVE_PREFIX)) {
+          const expectedFinalCSSVar = figmaAliasToCSSVar(finalFigmaHop);
+          let cur = cssVar, hops = 0;
+          while (hops++ < 10) { const next = resolveCSSAlias(cur, modeIdx); if (!next) break; cur = next; }
+          const actualFinalCSSVar = cur === cssVar ? null : cur;
+          if (actualFinalCSSVar !== expectedFinalCSSVar) {
+            ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain: chain, expectedFinalCSSVar, actualFinalCSSVar });
+          }
+        }
+      }
     }
   }
 }
@@ -363,6 +398,7 @@ console.log(`\n✅ PASS  ${PASS.length}   (color + sizing + typography)`);
 console.log(`⏭  SKIP  ${SKIP.length}`);
 console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
+if (snap.aliases) console.log(`🔗 ALIAS FAIL  ${ALIAS_FAIL.length}  (same hex, wrong primitive chain)`);
 
 if (SKIP.length) {
   console.log('\n─── Skipped (expected — each has a documented reason) ─────────');
@@ -384,7 +420,17 @@ if (FAIL.length) {
     if (f.fixHint) console.log(`       Fix:  ${f.fixHint}`);
   }
 }
-if (FAIL.length === 0 && NEW_SKIP.length === 0) {
+if (ALIAS_FAIL.length) {
+  console.log('\n─── 🔗 Alias mismatches (same hex, wrong primitive chain) ─────');
+  for (const a of ALIAS_FAIL) {
+    console.log(`  🔗 [color/${a.mode}] ${a.token} → ${a.cssVar}`);
+    console.log(`       Figma chain:      ${a.figmaChain.join(' → ')}`);
+    console.log(`       Expected CSS end: ${a.expectedFinalCSSVar}`);
+    console.log(`       Actual CSS end:   ${a.actualFinalCSSVar ?? '(no CSS alias chain — hardcoded hex)'}`);
+  }
+}
+
+if (FAIL.length === 0 && NEW_SKIP.length === 0 && ALIAS_FAIL.length === 0) {
   console.log('\nAll resolved CSS values match Figma snapshot. ✓\n');
   process.exit(0);
 } else { console.log(''); process.exit(1); }
