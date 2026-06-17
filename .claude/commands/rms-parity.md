@@ -4,22 +4,6 @@ Full parity workflow in one command. Phase 1 (live Figma refresh) always runs be
 
 > **Phase 1 is never skipped** — unless you ran `/rms-parity` earlier in this same conversation and the snapshot was updated then. A same-day snapshot from a *prior session or context window* is not safe — renames and additions since that run would be invisible without a fresh query. If you are resuming after a context summary, compaction, or a new conversation, always re-query.
 
-## Auto-Fix Protocol
-
-**Whenever you find and fix a bug during a parity audit — do all of this automatically, without waiting to be asked:**
-
-1. Apply the fix (CSS, HTML, snapshot, contract, parity-map — wherever it belongs)
-2. Before fixing, grep ALL usages of the affected selector/pattern to catch every instance (e.g. if `.buttonTertiary` needs a `<span>`, search all `ui.src.html` files for bare-text `buttonTertiary` buttons)
-3. Run `pnpm build` from the project root to rebuild all plugins
-4. Run `pnpm parity` (or the equivalent audit command) to verify the fix is clean
-5. If Gate [9] (visual regression) shows a new baseline needed, accept it: `mv .parity-refs/<frameId>.new.png .parity-refs/<frameId>.png`
-6. Stage and commit all affected files with a descriptive message: `feat(parity): <what was fixed>`
-7. Push: `git push`
-
-**Never stop between these steps to ask for permission.** The user should not have to say "now push it."
-
----
-
 ## Usage
 
 ```
@@ -630,8 +614,7 @@ For each component that has `childFramePadding` entries:
 1. Extract the `cssSelector` for each entry (e.g. `.buttonTertiary span` → child tag = `span`, parent class = `buttonTertiary`)
 2. Grep every file in `ds-config.json → paths.pluginCSS` for the parent class
 3. For every match that is a **text-bearing button** (i.e. the button content is visible text, not a pure SVG icon), verify the text is wrapped in the required child element
-4. Flag any bare-text instance as ❌ and fix immediately: wrap the text in `<span>...</span>` (or whichever element the `cssSelector` requires)
-5. Run `pnpm build` → `pnpm parity` → commit → push per the Auto-Fix Protocol
+4. Flag any bare-text instance as ❌ with the file path, line number, and the required fix (wrap text in `<span>...</span>` or whichever element the `cssSelector` requires)
 
 **What counts as "text-bearing":** the button innerHTML contains a text node or interpolated string literal that is not an SVG — e.g. `>Cancel<`, `>${text}<`, `>${label}<`. Icon-only buttons (SVG-only content) do not need the child wrapper.
 
