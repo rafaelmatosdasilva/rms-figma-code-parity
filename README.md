@@ -2,7 +2,7 @@
 
 A Claude Code skill + automated scripts for continuous Figma DS ↔ CSS code parity auditing.
 
-Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshes the live Figma snapshot, Phase 2 runs 9 automated gates and a manual component walk. You can never accidentally audit against a stale snapshot.
+Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshes the live Figma snapshot, Phase 2 runs 13 automated gates. You can never accidentally audit against a stale snapshot.
 
 ---
 
@@ -11,21 +11,25 @@ Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshe
 | Phase | What happens |
 |---|---|
 | **1 — Figma Refresh** | Queries live Figma (color, sizing, typography, component structure), diffs against stored snapshots, reports changes, writes updated snapshots, verifies resolvers pass |
-| **2 — Code Parity** | Runs all 9 automated gates, component deep-walk, Master Token Table |
+| **2 — Code Parity** | Runs all 13 automated gates, component deep-walk, Master Token Table |
 
-**9 automated gates:**
+**13 automated gates:**
 
-| Gate | Catches |
-|---|---|
-| [1] Snapshot freshness | Stale snapshot (always ✅ after Phase 1) |
-| [2] Token parity | Wrong color/sizing/typography value |
-| [3] Structure | Wrong height, padding var, fill structure, stroke presence; [3b] border-sides (`strokeSides`); [3c] phantom borders; [3d] hover pill geometry (`hoverPill.insetH`); [3e] CSS property assertions (`CSS_PROPERTY_ASSERTIONS`) |
-| [4] Bound-token coverage | Token used in Figma but no CSS var in code |
-| [5] Unused CSS vars | Declared-but-orphaned vars (Hard Rule #2) |
-| [6] Hardcoded values | Raw hex/px in CSS rules (Hard Rule #5) |
-| [7] Build freshness | Source newer than built output |
-| [8] Sub-component isolation | Parent rule overrides nested sub-component styles (Hard Rule #8) |
-| [9] Visual regression | Figma screenshots changed vs stored references (requires `FIGMA_TOKEN`) |
+| Gate | Script | Catches |
+|---|---|---|
+| [1]  | inline | Snapshot freshness — stale snapshot warns (always ✅ after Phase 1) |
+| [2]  | `parity-check.mjs` | Token value parity — color (all modes) + sizing + typography + alias chain. NEW SKIP = missing CSS var. `⏳ PENDING FIGMA SYNC` when consumer file lags behind DS source. |
+| [3]  | `structure-check.mjs` | Structural parity — height, padding/gap/font/radius per-rule var bindings, fill structure, stroke presence, property assertions |
+| [4]  | `bound-check.mjs` | Bound-token coverage — token bound in Figma frame but no CSS var in code |
+| [5]  | inline | Unused CSS vars — declared-but-orphaned vars (Hard Rule #2) |
+| [6]  | inline | Hardcoded values — raw hex or font-size px in CSS rules (Hard Rule #5) |
+| [7]  | inline | Build freshness — source newer than built output (skips if no plugins configured) |
+| [8]  | `subcomponent-isolation-check.mjs` | Sub-component isolation — parent rule overrides nested DS sub-component styles (Hard Rule #8) |
+| [9]  | `visual-regression-check.mjs` | Visual regression — Figma frame screenshots vs stored references (skips if `FIGMA_TOKEN` not set) |
+| [10] | `state-check.mjs` | State completeness — all COMPONENT_SET state tokens covered (skips if no state data) |
+| [11] | `exemption-check.mjs` | Exemption validity — `EXPLICIT`/`SKIP_TOKENS`/`COVERED` entries not stale in snapshot |
+| [12] | `dark-mode-check.mjs` | Dark mode completeness — all mode-variant tokens adapt between modes in CSS |
+| [13] | `naming-check.mjs` | CSS naming round-trip — every `theme.css` var traces back to a Figma token or `SYSTEM_VARS` |
 
 **Everything is read-only.** No source file is ever modified automatically. The only exception is `node scripts/parity-check.mjs --fix`, which must be invoked explicitly and only rewrites sizing/typography literal values.
 
@@ -35,7 +39,7 @@ Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshe
 
 ```
 ────────────────────────────────────────────────────────────
-  PARITY AUDIT  ·  2026-06-12
+  PARITY AUDIT  ·  2026-06-17
 ────────────────────────────────────────────────────────────
 
 ✅  [1] Snapshot freshness
@@ -74,6 +78,18 @@ Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshe
 ⏭  [9] Visual regression  (frames match stored references)
        ⏭ FIGMA_TOKEN not set — skipped (set env var to enable)
 
+✅  [10] State completeness  (all COMPONENT_SET states covered)
+       ✅ COVERED 12   UNCOVERED 0
+
+✅  [11] Exemption validity  (EXPLICIT · SKIP_TOKENS · COVERED not stale)
+       ✅ VALID 8   STALE 0
+
+✅  [12] Dark mode completeness  (all mode-variant tokens adapt)
+       ✅ ADAPTS 31   STATIC 0
+
+✅  [13] CSS naming round-trip  (every var traceable to a Figma token)
+       ✅ TRACEABLE 90   UNINVENTED 0
+
 ────────────────────────────────────────────────────────────
 
   AUDIT FAILED — fix all ❌ above before declaring parity
@@ -95,9 +111,9 @@ When all gates pass:
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-10   9/9 [█████████]
-  ❌  2026-06-11   7/9 [███████░░]
-  ✅  2026-06-12   9/9 [█████████]
+  ✅  2026-06-15  13/13 [█████████████]
+  ❌  2026-06-16  11/13 [███████████░░]
+  ✅  2026-06-17  13/13 [█████████████]
 ────────────────────────────────────────────────────────────
 ```
 
@@ -106,6 +122,7 @@ When all gates pass:
 ## Utility flags
 
 ```bash
+node scripts/audit.mjs --init            # first-time setup only: scaffold config files, then exit
 node scripts/audit.mjs --trend           # show last 20 audit runs + trend bar
 node scripts/parity-check.mjs --fix      # auto-fix sizing/typography divergences in theme.css
 node scripts/setup-webhook.mjs --list    # list registered Figma webhooks for this file
@@ -124,62 +141,29 @@ git submodule add https://github.com/rafaelmatosds/rms-parity scripts
 
 This mounts the scripts at `scripts/` so `node scripts/audit.mjs` works as expected.
 
-### 2. Configure your project
-
-Copy the example files to your project root and fill them in:
+### 2. Run --init (or just run the audit)
 
 ```bash
-cp scripts/ds-config.example.json ds-config.json
-cp scripts/parity-map.example.mjs parity-map.mjs
-cp scripts/structure-contract.example.mjs structure-contract.mjs
+node scripts/audit.mjs --init
 ```
 
-**`ds-config.json`** — paths + Figma identifiers:
-```json
-{
-  "figmaFileKey": "your-figma-file-key",
-  "frames": [
-    { "name": "My Component Frame", "nodeId": "123-456" }
-  ],
-  "figma": {
-    "colorCollection": "Color",
-    "sizingCollection": "Sizing",
-    "primitivePrefix": "primitives/",
-    "modes": [
-      { "name": "Light", "snapshotKey": "light", "cssSelector": "root" },
-      { "name": "Dark",  "snapshotKey": "dark",  "cssSelector": "dark-media" }
-    ]
-  },
-  "paths": {
-    "themeCSS": "src/theme.css",
-    "snapshotVars": "src/figma-vars.snapshot.json",
-    "snapshotStructure": "src/figma-structure.snapshot.json",
-    "pluginCSS": ["src/ui.src.html"],
-    "plugins": []
-  },
-  "visualRefs": ".parity-refs",
-  "knownUnusedVars": [],
-  "knownHardcodedExceptions": []
-}
-```
+This asks 4 questions, then auto-detects everything else:
 
-**`parity-map.mjs`** — token→var mappings, skip lists, primitive scale. Start with the example file and add entries as you run the audit.
+1. **Figma file URL** — paste the browser URL; file key is parsed automatically
+2. **Token CSS path** — auto-detected if exactly one file found; confirm or override
+3. **Figma personal access token** *(optional)* — used to query Figma collections automatically and for Gate [9] visual regression; saved to `.env`
+4. **Consumer file?** *(optional)* — if this Figma file uses an external DS library, provide the DS source URL to enable `⏳ PENDING FIGMA SYNC` cross-check in Gate [2]
 
-**`structure-contract.mjs`** — component structure contracts. Populated from live Figma queries during Phase 1.
+What gets created automatically:
+- `ds-config.json` — with Figma collection names detected via API (no manual lookup needed)
+- `parity-map.mjs` — scaffolded from example with commented instructions
+- `structure-contract.mjs` — scaffolded from example with commented instructions
+- `.env` — FIGMA_TOKEN written if provided
+- `.gitignore` entries added for all of the above
 
-### 3. Gitignore the project config
+Then fill in what the checklist tells you (frame node IDs, primitive scale, component contracts) and run `/rms-parity` Phase 1.
 
-Add to your project's `.gitignore`:
-```
-ds-config.json
-parity-map.mjs
-structure-contract.mjs
-bound-tokens.json
-```
-
-`parity-history.json` and `.parity-refs/` should be **committed** — they're your audit trail and visual baseline.
-
-### 4. Set up the global skill
+### 3. Set up the global skill
 
 ```bash
 mkdir -p ~/.claude/commands
@@ -187,6 +171,12 @@ ln -sf ~/path/to/rms-parity/.claude/commands/rms-parity.md ~/.claude/commands/rm
 ```
 
 Now `/rms-parity` is available in every project.
+
+---
+
+## Consumer file support
+
+When your project Figma file uses a DS library (and may lag behind the latest library updates), set `figmaSourceKey` in `ds-config.json` to the DS library file key. Phase 1 queries both files. Any token where CSS matches the DS source but not the consumer is classified as `⏳ PENDING FIGMA SYNC` instead of `❌ FAIL` — it's not a code bug, it's a pending Figma library update.
 
 ---
 
@@ -210,30 +200,14 @@ Configure `webhook.port` and `webhook.secret` in `ds-config.json`. The server ne
 
 Gate [9] compares live Figma frame screenshots against stored references.
 
-**Required when `frames` are configured in `ds-config.json`.** If `frames` is empty or absent, Gate [9] skips silently (pass). If frames are configured and `FIGMA_TOKEN` is missing, Gate [9] hard-fails — the audit cannot pass without it.
-
-Add your token to `.env` at the project root (already gitignored):
-
-```
-FIGMA_TOKEN=your_figma_personal_access_token
-```
+Requires `FIGMA_TOKEN` in `.env` and at least one entry in `ds-config.json → frames`. Skips silently if either is absent.
 
 Get a token: Figma → Account Settings → Personal access tokens → Generate (File content: read scope).
 
-The audit loads `.env` automatically — no shell export needed. First run saves references to `.parity-refs/`. Subsequent runs diff against them. To accept a change:
+To accept a visual change as the new baseline:
 
 ```bash
 mv .parity-refs/<frame-id>.new.png .parity-refs/<frame-id>.png
-```
-
----
-
-## Usage
-
-In any project with `scripts/` mounted and `ds-config.json` at root:
-
-```
-/rms-parity
 ```
 
 ---
@@ -258,5 +232,6 @@ Project-specific data (`ds-config.json`, `parity-map.mjs`, `structure-contract.m
 4. All configured modes must match
 5. No hardcoded hex/px in CSS rules (declarations OK)
 6. New Figma tokens detected → implemented before audit closes
-7. Hidden node WITH a boolean visibility variable → implement its tokens (the boolean can be toggled; tokens are real). Hidden node with NO boolean variable → flag, never implement
+7. Hidden node WITH a boolean visibility variable → implement its tokens. Hidden node with NO boolean variable → flag, never implement
 8. DS sub-components nested inside parent components → always retain their own styles
+9. CSS alias chains must mirror Figma exactly — same primitive, same order
