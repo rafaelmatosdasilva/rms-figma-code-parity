@@ -526,7 +526,7 @@ return used;
 
 ---
 
-## Phase 2 — Step 2: Run all 13 audit gates
+## Phase 2 — Step 2: Run all 14 audit gates
 
 ```bash
 node scripts/audit.mjs
@@ -541,7 +541,7 @@ All 13 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 | [3]  | `structure-check.mjs` | Structural parity — height · padding/gap/font/radius per-rule var bindings · fill structure · stroke on default · property assertions from `CSS_PROPERTY_ASSERTIONS` |
 | [4]  | `bound-check.mjs` | Bound-token coverage — token bound in Figma frame but no CSS var |
 | [5]  | inline | Unused CSS vars (Hard Rule #2) — scans entire repo (`.vue`, `.jsx`, `.tsx`, `.html`, `.css`, `.scss`, `.js`, `.ts`) |
-| [6]  | inline | Hardcoded values in CSS rules (Hard Rule #5) — raw hex or font-size px in rules, not `:root` declarations |
+| [6]  | inline | Hardcoded values in CSS rules (Hard Rule #5) — **all properties** scanned: hex colors, padding, margin, width, height, border-radius, gap, font-size, line-height, etc. Any literal value with a unit (`px`, `rem`, `em`, `%`, `vh`…) in a rule is a violation. Document intentional layout math (`100%`, `50%`, positioning zeros) in `ds-config.json → knownHardcodedExceptions` as `{ file, pattern }` objects. |
 | [7]  | inline | Build freshness — source files newer than built output (skips if no `plugins` configured) |
 | [8]  | `subcomponent-isolation-check.mjs` | Sub-component isolation (Hard Rule #8) — broad element selectors that override nested DS sub-component styles |
 | [9]  | `visual-regression-check.mjs` | Visual regression — Figma frame screenshots vs stored references (skips if `FIGMA_TOKEN` not set or `frames` empty) |

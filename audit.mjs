@@ -24,8 +24,9 @@
 //   [11] Exemption validity     — EXPLICIT/SKIP_TOKENS/COVERED entries not stale in snapshot
 //   [12] Dark mode completeness — all mode-variant tokens adapt between light and dark CSS
 //   [13] CSS naming round-trip  — every theme.css var traces back to a Figma token
+//   [14] Pseudo-element audit   — every ::before/::after with content declared in contract
 //
-// Performance: gates 2–4, 8–13 (subprocess-based) run in parallel via Promise.all.
+// Performance: gates 2–4, 8–14 (subprocess-based) run in parallel via Promise.all.
 
 import readline                                                  from 'readline';
 import { spawn, spawnSync }                                      from 'child_process';
@@ -618,47 +619,57 @@ async function bootstrapConfig() {
   }
 
   function computeGate6() {
-    // Scan all source files — not just token CSS — so Vue/JSX inline styles are caught too
+    // Scan all source files for hardcoded literal values in CSS rules — property-agnostic.
+    // Any numeric (px/rem/em/vh/vw/%) or hex value outside a :root/var declaration is a violation.
+    // Use var() for every DS-token-backed value. Document intentional layout math
+    // (100%, 50%, positioning zeros) in ds-config.json → knownHardcodedExceptions
+    // as { file, pattern } objects or plain substring strings.
     const scanTargets = allSourceFiles();
     const scanArgs    = ['-n', '-E'];
 
-    const hexR = sh('grep', [
-      ...scanArgs,
-      '(background|color|border|fill|stroke)\\s*:[^;]*#[0-9a-fA-F]{3,8}\\b',
-      ...scanTargets,
-    ]);
-    const KNOWN_HEX_VARS = ['--swatch-stripe', '--semantic-positive', '--semantic-negative',
-      '--semantic-warning', '--input-auto-border', '--overlay-bg', '--scrollbar-thumb', '--neutral-'];
-    const hexHits = (hexR.stdout || '').split('\n').filter(l => {
-      if (!l.trim()) return false;
-      const codePart = l.replace(/^[^:]+:\d+:\s*/, '');
-      if (/^\s*--[a-zA-Z]/.test(codePart)) return false;
+    // Shared legitimacy filter
+    function isLegitimate(line) {
+      const codePart = line.replace(/^[^:]+:\d+:\s*/, '');
+      // CSS variable declarations (--name: value) are always OK
+      if (/^\s*--[a-zA-Z]/.test(codePart)) return true;
       const stripped = codePart.replace(/\/\*[^*]*\*\//g, '');
-      if (!/#[0-9a-fA-F]{3,8}\b/.test(stripped)) return false;
-      if (KNOWN_HEX_VARS.some(k => l.includes(k))) return false;
-      if (/color\s*:\s*['"]#[0-9a-fA-F]{3,8}['"]/i.test(codePart)) return false;
-      return true;
+      // Value wrapped in quotes/backticks → JS/Vue string, not a real CSS rule
+      if (/[`"'][^`"']*:\s*[^`"']*[`"']/.test(codePart)) return true;
+      // Known exceptions from ds-config.json
+      if (KNOWN_FS_EXCEPTS.some(e => {
+        if (typeof e === 'string') return line.includes(e);
+        return (!e.file || line.includes(e.file)) &&
+               (!e.pattern || new RegExp(e.pattern).test(stripped));
+      })) return true;
+      return false;
+    }
+
+    // Pass 1 — hex colors (any property, any file)
+    const hexR    = sh('grep', [...scanArgs, '#[0-9a-fA-F]{3,8}\\b', ...scanTargets]);
+    const hexHits = (hexR.stdout || '').split('\n').filter(l => {
+      if (!l.trim() || isLegitimate(l)) return false;
+      const code = l.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '');
+      return /#[0-9a-fA-F]{3,8}\b/.test(code);
     });
 
-    const fsR = sh('grep', [
-      ...scanArgs,
-      'font-size\\s*:\\s*[0-9]+(\\.[0-9]+)?(px|rem|em)',
+    // Pass 2 — numeric literals with units (all properties: padding, radius, height, gap, etc.)
+    const numR    = sh('grep', [...scanArgs,
+      ':\\s*-?[0-9]+(\\.[0-9]+)?(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\\b',
       ...scanTargets,
     ]);
-    const fsHits = (fsR.stdout || '').split('\n').filter(l => {
-      if (!l.trim()) return false;
-      if (/[`"'].*font-size.*[`"']/.test(l)) return false;
-      if (KNOWN_FS_EXCEPTS.some(e => l.includes(e.file ?? e) && l.includes(e.size ?? e))) return false;
-      return true;
+    const numHits = (numR.stdout || '').split('\n').filter(l => {
+      if (!l.trim() || isLegitimate(l)) return false;
+      const code = l.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '');
+      return /:\s*-?[0-9]+(\.[0-9]+)?(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\b/.test(code);
     });
 
-    const hits = [...hexHits, ...fsHits];
-    const pass = hits.length === 0;
+    const hits = [...new Set([...hexHits, ...numHits])];
+    const pass  = hits.length === 0;
     return {
       pass,
       lines: pass
         ? ['✅ Clean']
-        : [`❌ ${hits.length} hit(s):`, ...hits.slice(0, 15).map(l => '  ' + l)],
+        : [`❌ ${hits.length} hit(s):`, ...hits.slice(0, 20).map(l => '  ' + l)],
     };
   }
 
@@ -701,7 +712,7 @@ async function bootstrapConfig() {
   addGate('Snapshot freshness', computeGate1());
 
   // Gates 2–4, 8–13 — all subprocess-based; launch concurrently
-  const [r2, r3, r4, r8, r9, r10, r11, r12, r13] = await Promise.all([
+  const [r2, r3, r4, r8, r9, r10, r11, r12, r13, r14] = await Promise.all([
     runScriptAsync('parity-check.mjs'),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -711,13 +722,14 @@ async function bootstrapConfig() {
     runScriptAsync('exemption-check.mjs'),
     runScriptAsync('dark-mode-check.mjs'),
     runScriptAsync('naming-check.mjs'),
+    runScriptAsync('pseudo-element-check.mjs'),
   ]);
 
   addGate('Token parity  (color · sizing · typography)',               parseGate2(r2));
   addGate('Structure     (snapshot · CSS height · base-rule vars)',    parseGate3(r3));
   addGate('Bound-token coverage  (DS frames → CSS vars)',              parseGate4(r4));
   addGate('Unused CSS vars',                                           computeGate5());
-  addGate('Hardcoded values  (no raw hex / font-size in rules)',       computeGate6());
+  addGate('Hardcoded values  (no raw literals in rules — use var())', computeGate6());
   addGate('Build freshness  (source ≤ built output)',                  computeGate7());
   addGate('Sub-component isolation  (no parent rule overrides sub-component styles)', parseGate8(r8));
   addGate('Visual regression  (frames match stored references)',       parseGate9(r9));
@@ -725,6 +737,7 @@ async function bootstrapConfig() {
   addGate('Exemption validity  (EXPLICIT · SKIP_TOKENS · COVERED not stale)', parseGeneric(r11, /VALID|STALE|BROKEN/));
   addGate('Dark mode completeness  (all mode-variant tokens adapt)',   parseGeneric(r12, /ADAPTS|STATIC|SKIPPED/));
   addGate('CSS naming round-trip  (every var traceable to a Figma token)', parseGeneric(r13, /TRACEABLE|UNINVENTED/));
+  addGate('Pseudo-element audit  (::before/::after content declared in contract)', parseGeneric(r14, /DOCUMENTED|UNDOCUMENTED/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));

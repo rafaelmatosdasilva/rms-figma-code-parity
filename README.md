@@ -2,7 +2,7 @@
 
 A Claude Code skill + automated scripts for continuous Figma DS ↔ CSS code parity auditing.
 
-Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshes the live Figma snapshot, Phase 2 runs 13 automated gates. You can never accidentally audit against a stale snapshot.
+Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshes the live Figma snapshot, Phase 2 runs 14 automated gates. You can never accidentally audit against a stale snapshot.
 
 ---
 
@@ -11,9 +11,9 @@ Invoke `/rms-parity` in any project to run a full parity check: Phase 1 refreshe
 | Phase | What happens |
 |---|---|
 | **1 — Figma Refresh** | Queries live Figma (color, sizing, typography, component structure), diffs against stored snapshots, reports changes, writes updated snapshots, verifies resolvers pass |
-| **2 — Code Parity** | Runs all 13 automated gates, component deep-walk, Master Token Table |
+| **2 — Code Parity** | Runs all 14 automated gates, component deep-walk, Master Token Table |
 
-**13 automated gates:**
+**14 automated gates:**
 
 | Gate | Script | Catches |
 |---|---|---|
@@ -111,9 +111,9 @@ When all gates pass:
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  13/13 [█████████████]
-  ❌  2026-06-16  11/13 [███████████░░]
-  ✅  2026-06-17  13/13 [█████████████]
+  ✅  2026-06-15  14/14 [██████████████]
+  ❌  2026-06-16  11/13 [████████████░░]
+  ✅  2026-06-17  14/14 [██████████████]
 ────────────────────────────────────────────────────────────
 ```
 
