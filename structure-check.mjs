@@ -149,33 +149,35 @@ for (const [name, expect] of Object.entries(CONTRACT)) {
 
 const extra = Object.keys(components).filter(c => !CONTRACT[c]);
 
-// ── 2. CSS height cross-check ─────────────────────────────────────────────────
-const CSS_FAIL = [], CSS_PASS = [];
-
+// ── CSS var resolver (shared by height checks and pill geometry checks) ───────
+const cssVars = {};
 if (themeCSS) {
-  const cssVars = {};
-  let inRoot = false, depth = 0, rootContent = '';
+  let inRoot = false, rootDepth = 0, rootContent = '';
   for (const line of themeCSS.split('\n')) {
-    if (!inRoot && /:root\s*\{/.test(line)) { inRoot = true; depth = 1; continue; }
+    if (!inRoot && /:root\s*\{/.test(line)) { inRoot = true; rootDepth = 1; continue; }
     if (inRoot) {
-      depth += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
-      if (depth <= 0) { inRoot = false; continue; }
+      rootDepth += (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
+      if (rootDepth <= 0) { inRoot = false; continue; }
       rootContent += line + '\n';
     }
   }
   for (const m of rootContent.matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) cssVars[`--${m[1]}`] = m[2].trim();
+}
+function resolveVar(val, d = 0) {
+  if (d > 8) return val;
+  const m = String(val).match(/^var\((--[\w-]+)\)/);
+  if (m && cssVars[m[1]]) return resolveVar(cssVars[m[1]], d + 1);
+  return val;
+}
+function toPx(val) {
+  const r = resolveVar(val.trim()), m = String(r).match(/^(\d+(?:\.\d+)?)px/);
+  return m ? Math.round(parseFloat(m[1])) : null;
+}
 
-  function resolveVar(val, depth = 0) {
-    if (depth > 8) return val;
-    const m = String(val).match(/^var\((--[\w-]+)\)/);
-    if (m && cssVars[m[1]]) return resolveVar(cssVars[m[1]], depth + 1);
-    return val;
-  }
-  function toPx(val) {
-    const r = resolveVar(val.trim()), m = String(r).match(/^(\d+(?:\.\d+)?)px/);
-    return m ? Math.round(parseFloat(m[1])) : null;
-  }
+// ── 2. CSS height cross-check ─────────────────────────────────────────────────
+const CSS_FAIL = [], CSS_PASS = [];
 
+if (themeCSS) {
   for (const [comp, rule] of Object.entries(CSS_HEIGHT_RULES)) {
     const contractH = CONTRACT[comp]?.h;
     if (contractH === undefined || contractH === 'auto') { CSS_PASS.push(comp); continue; }
@@ -368,6 +370,63 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).lengt
   }
 }
 
+// ── 6. Hover/Selected pill geometry checks ────────────────────────────────────
+// Components that implement hover/selected backgrounds via a positioned ::before
+// element (a "pill") need two geometry checks the default-state snapshot misses:
+//   (a) inset — must equal (outer_h - inner_h) / 2 so the pill fills the inner frame
+//   (b) border-radius — must use the DS var from hoverPill.radiusVar in the contract
+//
+// To enable: add hoverPill: { innerH, radiusVar } to the component in CONTRACT
+// and beforeSel: '.<comp>::before' to COMPONENT_CSS_SELECTORS.
+// capture innerH from the hover/selected variant's Content child frame in Figma.
+const PILL_FAIL = [], PILL_PASS = [];
+
+if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
+  for (const [comp, contract] of Object.entries(CONTRACT)) {
+    const pill = contract.hoverPill;
+    if (!pill) continue;
+    const selCfg = COMPONENT_CSS_SELECTORS[comp];
+    if (!selCfg?.beforeSel) continue;
+
+    const beforeBlock = findBlock(themeCSS, selCfg.beforeSel, themeIndex);
+    if (!beforeBlock) {
+      PILL_FAIL.push(`${comp}: "${selCfg.beforeSel}" not found in theme CSS`);
+      continue;
+    }
+
+    // (a) inset: (outer_h − inner_h) / 2
+    const expectedInset = (contract.h - pill.innerH) / 2;
+    const insetMatch = beforeBlock.match(/\binset\s*:\s*([^;]+)/);
+    if (!insetMatch) {
+      PILL_FAIL.push(`${comp}/pill-inset: "inset" not set in "${selCfg.beforeSel}" — expected ${expectedInset}px`);
+    } else {
+      const actualPx = toPx(insetMatch[1]);
+      if (actualPx === null) {
+        PILL_FAIL.push(`${comp}/pill-inset: could not resolve "${insetMatch[1].trim()}" to px`);
+      } else if (actualPx !== expectedInset) {
+        PILL_FAIL.push(`${comp}/pill-inset: inset is ${actualPx}px — expected ${expectedInset}px  (outer ${contract.h}px − inner ${pill.innerH}px) / 2`);
+      } else {
+        PILL_PASS.push(`${comp}/pill-inset`);
+      }
+    }
+
+    // (b) border-radius must use the mapped DS var
+    if (pill.radiusVar) {
+      const expectedRadiusVar = FIGMA_LAYOUT_TO_CSS[pill.radiusVar];
+      if (expectedRadiusVar) {
+        const usedVar = extractPropVar(beforeBlock, 'border-radius');
+        if (!usedVar) {
+          PILL_FAIL.push(`${comp}/pill-radius: "border-radius" not set in "${selCfg.beforeSel}"`);
+        } else if (usedVar !== expectedRadiusVar) {
+          PILL_FAIL.push(`${comp}/pill-radius: border-radius uses ${usedVar} — expected var(${expectedRadiusVar}) [${pill.radiusVar}]`);
+        } else {
+          PILL_PASS.push(`${comp}/pill-radius`);
+        }
+      }
+    }
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -427,11 +486,23 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
     console.log('   Fix: remove the border/outline from CSS, or add the stroke to Figma.');
     console.log('   Exemptions: add the selector string to ds-config.json → knownPhantomBorderExceptions');
   }
+
+  const pillTotal = PILL_PASS.length + PILL_FAIL.length;
+  if (pillTotal > 0) {
+    console.log(`\n✅ PASS  ${PILL_PASS.length}/${pillTotal} hover/selected pill geometry checks`);
+    console.log(`❌ FAIL  ${PILL_FAIL.length}`);
+    if (PILL_FAIL.length) {
+      console.log('\n─── Gate [3d] — ::before pill inset or border-radius wrong ──────────');
+      for (const f of PILL_FAIL) console.log(`  ❌ ${f}`);
+      console.log('   Fix: set inset to (outer_h − inner_h)/2 px; border-radius to the DS radius var.');
+      console.log('   Contract: add hoverPill: { innerH, radiusVar } to structure-contract.mjs.');
+    }
+  }
 }
 
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
              || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
-             || PHANTOM_FAIL.length > 0;
+             || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
