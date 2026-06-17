@@ -252,6 +252,7 @@ async function bootstrapConfig() {
   const SCAN_EXCLUDE_DIRS = new Set([
     'node_modules', '.git', 'dist', 'build', '.nuxt', '.next', '.output',
     'coverage', '.cache', 'public', 'static',
+    ...(cfg.scanExcludeDirs ?? []),
   ]);
   // Only scan files that can realistically contain CSS var() references.
   const SCAN_EXTENSIONS = new Set([
