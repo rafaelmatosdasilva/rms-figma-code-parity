@@ -19,7 +19,7 @@
 //
 // Exit 0 = full parity. Exit 1 = at least one FAIL or NEW SKIP.
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 const ROOT     = process.cwd();
