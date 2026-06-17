@@ -309,6 +309,65 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
   }
 }
 
+// ── Gate [3c]: Phantom CSS borders ───────────────────────────────────────────
+// Scans EVERY CSS rule whose selector contains a component's base class and flags
+// any `border` or `outline` property when Figma has no stroke on any variant.
+//
+// Uses snapshot.strokeOnAnyState (walk all COMPONENT_SET children) when present;
+// falls back to strokeOnDefault (default-variant only) when the field is absent.
+//
+// Exceptions: add selector strings to ds-config.json → knownPhantomBorderExceptions.
+// Example: [".badge:focus-visible"] to allow focus rings.
+const PHANTOM_FAIL = [], PHANTOM_PASS = [];
+const PHANTOM_SKIP = new Set(cfg.knownPhantomBorderExceptions ?? []);
+
+// Matches border/outline properties but NOT border-radius or border-spacing.
+const BORDER_PROP_RE = /\b(border(?:-(?:top|right|bottom|left|color|width|style))?|outline(?:-(?:color|width|style))?)\s*:/;
+// Values that represent no visible stroke — don't flag these.
+// Catches: "none", "0", "0px", "transparent", "1px solid transparent", "var(--x) solid transparent"
+const TRANSPARENT_VAL_RE = /\btransparent\b|^\s*(?:none|0(?:px)?)\s*(?:!important)?\s*$/i;
+
+if (Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).length) {
+  // Build flat list of (selector, block) from allIndex once, reuse per component.
+  const allRules = [...allIndex.entries()]; // [selector, blockContent]
+
+  for (const [comp, selCfg] of Object.entries(COMPONENT_CSS_SELECTORS)) {
+    const snapComp = components[comp];
+    if (!snapComp) continue;
+
+    // strokeOnAnyState = explicit field when available; fallback to strokeOnDefault.
+    const hasAnyStroke = snapComp.strokeOnAnyState ?? snapComp.strokeOnDefault ?? false;
+    if (hasAnyStroke) {
+      PHANTOM_PASS.push(`${comp} (Figma has stroke — CSS borders permitted)`);
+      continue;
+    }
+
+    // Extract the root CSS class from the main selector (e.g. ".badge" from ".badge").
+    const baseClass = selCfg.main.match(/(\.[a-zA-Z][\w-]*)/)?.[1];
+    if (!baseClass) continue;
+
+    for (const [sel, block] of allRules) {
+      // Only rules whose selector contains the component's base class.
+      if (!sel.includes(baseClass)) continue;
+      // Skip known exceptions.
+      if (PHANTOM_SKIP.has(sel)) { PHANTOM_PASS.push(`${comp}: "${sel}" (exempted)`); continue; }
+
+      const propMatch = block.match(BORDER_PROP_RE);
+      if (!propMatch) continue;
+
+      // Extract the value and skip transparent/none/0 declarations.
+      const prop = propMatch[1];
+      const valMatch = block.match(new RegExp('\\b' + prop.replace(/-/g, '\\-') + '\\s*:\\s*([^;]+)'));
+      const val = valMatch?.[1] ?? '';
+      if (TRANSPARENT_VAL_RE.test(val)) continue;
+
+      PHANTOM_FAIL.push(`${comp}: "${sel}" has \`${prop}: ${val.trim().slice(0, 60)}\` — Figma has no stroke on any variant (strokeOnAnyState=false)`);
+    }
+
+    if (!PHANTOM_FAIL.some(f => f.startsWith(`${comp}:`))) PHANTOM_PASS.push(`${comp} (no phantom borders)`);
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -359,8 +418,20 @@ if (STATE_SELECTORS.length) {
   console.log('\n⏭  STATE_SELECTORS empty in structure-contract.mjs — state/variant check skipped');
 }
 
+if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
+  console.log(`\n✅ PASS  ${PHANTOM_PASS.length} component(s) — no phantom CSS borders`);
+  console.log(`❌ FAIL  ${PHANTOM_FAIL.length} phantom border(s)`);
+  if (PHANTOM_FAIL.length) {
+    console.log('\n─── Gate [3c] — CSS has border/outline but Figma has no stroke ──────');
+    for (const f of PHANTOM_FAIL) console.log(`  ❌ ${f}`);
+    console.log('   Fix: remove the border/outline from CSS, or add the stroke to Figma.');
+    console.log('   Exemptions: add the selector string to ds-config.json → knownPhantomBorderExceptions');
+  }
+}
+
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
-             || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0;
+             || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
+             || PHANTOM_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
