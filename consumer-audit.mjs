@@ -681,10 +681,10 @@ tr.hidden{display:none}
     <div class="meta">DS snapshot: ${snapDate} &nbsp;·&nbsp; Generated: ${new Date().toISOString().slice(0,10)} &nbsp;·&nbsp; ${hRows.length} tokens · ${collectionOrder.length} collections</div>
   </div>
   <div class="sum">
-    <div class="stat s"><div class="n">${nS}</div><div class="l">✅ Synced</div><div class="d">In DS and consumer library</div></div>
-    <div class="stat p"><div class="n">${nP}</div><div class="l">⏳ Pending</div><div class="d">In DS — accept library update to get these</div></div>
-    <div class="stat st"><div class="n">${nT}</div><div class="l">🗑 Stale</div><div class="d">Removed from DS, clears on update</div></div>
-    <div class="stat lo"><div class="n">${nL}</div><div class="l">📁 Local</div><div class="d">Consumer's own brand overrides</div></div>
+    <div class="stat s"><div class="n">${nS}</div><div class="l">✅ Synced</div><div class="d">In DS and consumer file</div></div>
+    <div class="stat p"><div class="n">${nP}</div><div class="l">⏳ Pending</div><div class="d">In DS, accept library update to get these</div></div>
+    <div class="stat st"><div class="n">${nT}</div><div class="l">🗑 Stale</div><div class="d">Removed from DS, will be removed if library is updated</div></div>
+    <div class="stat lo"><div class="n">${nL}</div><div class="l">📁 Local</div><div class="d">Consumer's local overrides</div></div>
     <div class="stat tot"><div class="n">${hRows.length}</div><div class="l">Total</div><div class="d">Across all collections</div></div>
   </div>
 </div>
