@@ -628,11 +628,6 @@ if (REPORT_HTML) {
 
     sections += `
 <div class="col-section" data-col="${colName}">
-  <div class="col-meta">
-    <span class="col-tag${isRemote?'':' local'}">${colTag}</span>
-    <span><b>${colName}</b> &nbsp;·&nbsp; ${colRows.length} tokens${isLinked&&localOverrideCol?` &nbsp;·&nbsp; <span style="color:#7c3aed">includes ${localOverrideCol}</span>`:''}</span>
-    <span>${modeLabel}</span>
-  </div>
   <div class="tw"><table>
     ${theadHtml}
     <tbody>${tbody2}</tbody>
@@ -657,12 +652,6 @@ if (REPORT_HTML) {
   const tabsHtml = collectionOrder.map((n,i) => {
     const st = colStats[n];
     // mini status dots: only show statuses that have tokens
-    const dots = [
-      st.s ? `<span class="tdot s" title="${st.s} synced"></span>` : '',
-      st.p ? `<span class="tdot p" title="${st.p} pending"></span>` : '',
-      st.t ? `<span class="tdot t" title="${st.t} stale"></span>` : '',
-      st.l ? `<span class="tdot l" title="${st.l} local"></span>` : '',
-    ].filter(Boolean).join('');
     const label = n === '—' ? 'DS Pending' : n;
     const isLocal = st.l === st.total;
     return `<button class="tab${i===0?' active':''}" data-col="${n}" onclick="switchTab('${n}',this)">
@@ -670,7 +659,7 @@ if (REPORT_HTML) {
     <span class="tab-name">${label}</span>
     <span class="tab-count">${st.total}</span>
   </div>
-  <div class="tab-bottom">${dots}${isLocal?'<span class="tab-loc">Local</span>':''}</div>
+  ${isLocal?'<div class="tab-bottom"><span class="tab-loc">Local</span></div>':''}
 </button>`;
   }).join('');
 
@@ -708,7 +697,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .tdot.s{background:#22c55e}.tdot.p{background:#eab308}.tdot.t{background:#ef4444}.tdot.l{background:#a855f7}
 .tab-loc{font-size:10px;color:#9ca3af;font-style:italic}
 /* ── Toolbar ── */
-.toolbar{display:flex;gap:8px;align-items:center;padding:8px 20px;border-bottom:1px solid #e4e7ec;background:#fff;flex-shrink:0;flex-wrap:wrap}
+.toolbar{display:flex;gap:8px;align-items:center;padding:8px 20px;border-bottom:1px solid #e4e7ec;background:#fff;flex-shrink:0;flex-wrap:wrap;position:sticky;top:0;z-index:15}
 .fbtn{padding:3px 10px;border:1px solid #d1d5db;border-radius:14px;background:#fff;cursor:pointer;font-size:11px;color:#374151;white-space:nowrap}
 .fbtn:hover{background:#f3f4f6}.fbtn.on{background:#4f46e5;color:#fff;border-color:#4f46e5}
 input{border:1px solid #d1d5db;border-radius:6px;padding:4px 10px;font-size:11px;width:200px;outline:none;margin-left:auto}
