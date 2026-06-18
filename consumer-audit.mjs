@@ -459,17 +459,21 @@ if (REPORT_HTML) {
   }
 
   // Add PENDING rows (in DS snapshot, not in consumer at all)
+  // Assign to the linked DS collection so they appear under the correct tab (e.g. Theme)
+  const pendingColName = linkedDSCollection.name;
+  const pendingModes   = linkedDSCollection.modes ?? [];
   for (const name of pendingNames) {
     const modeVals = {};
     for (const m of MODES) {
       const hex = snap.color?.[m.snapshotKey]?.[name];
-      // Use a fake modeId key for pending rows
-      modeVals[`ds_${m.snapshotKey}`] = {
-        modeName: m.name, colName: 'DS (not in consumer)',
+      const matchingMode = pendingModes.find(pm => pm.name === m.name) ?? pendingModes[0];
+      if (!matchingMode) continue;
+      modeVals[matchingMode.modeId] = {
+        modeName: matchingMode.name, colName: pendingColName,
         display: hex ?? '(new in DS)', hex: hex??null, fromDS: true,
       };
     }
-    hRows.push({ name, colName:'—', remote:true, type:'COLOR', modeVals, status:'PENDING', group: name.split('/').slice(0,2).join('/') });
+    hRows.push({ name, colName: pendingColName, remote:true, type:'COLOR', modeVals, status:'PENDING', group: name.split('/').slice(0,2).join('/') });
   }
 
   hRows.sort((a,b) => a.name.localeCompare(b.name) || a.colName.localeCompare(b.colName));
