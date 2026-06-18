@@ -537,20 +537,65 @@ if (REPORT_HTML) {
     return `<td class="val"${colspan}>${inner}</td>`;
   }
 
-  // One tab per collection — exact names from Figma, no merging
-  const collectionOrder = [...colMap.keys()];
+  // Detect the local override collection (PB Theme) — largest LOCAL collection
+  // It is Figma's child of the linked DS collection and should be shown within that tab.
+  const localOverrideCol = [...colMap.keys()]
+    .filter(n => !colIsRemote.get(n))
+    .sort((a,b) => colRowCount.get(b) - colRowCount.get(a))[0] ?? null;
+
+  // Build collectionOrder: DS collections first, local override absorbed into linked DS col tab
+  const collectionOrder = [...colMap.keys()].filter(n => n !== localOverrideCol);
+
+  // Build lookup: token name → PB Theme row (for merged columns)
+  const overrideByName = new Map();
+  if (localOverrideCol) {
+    for (const r of hRows.filter(r => r.colName === localOverrideCol))
+      overrideByName.set(r.name, r);
+  }
+  const overrideModes = localOverrideCol ? [...(colMap.get(localOverrideCol)?.entries() ?? [])] : [];
 
   // Build per-collection section tables
   let sections = '';
   for (const colName of collectionOrder) {
-    const colModes = [...colMap.get(colName).entries()]; // [[modeId, modeName], ...]
-    const colRows  = hRows.filter(r => r.colName === colName);
+    const colModes  = [...colMap.get(colName).entries()]; // [[modeId, modeName], ...]
+    // For the linked DS collection, append PB Theme modes as extra columns
+    const isLinked  = colName === linkedDSCollection.name;
+    const extraModes = isLinked ? overrideModes : [];
+    const allModes  = [...colModes, ...extraModes];
+    const colRows   = hRows.filter(r => r.colName === colName);
     if (!colRows.length) continue;
 
     const isRemote = colRows[0].remote;
     const colTag   = isRemote ? '🔗 Library' : '📁 Local';
-    const modeThs  = colModes.map(([,mn])=>`<th class="th-mode">${mn}</th>`).join('');
-    const nCols    = 2 + colModes.length + 1; // token + type + modes + status
+    const nCols    = 2 + allModes.length + 1;
+
+    // Build thead: group headers for DS vs PB Theme columns
+    let modeThs;
+    if (isLinked && extraModes.length) {
+      const dsSpan   = colModes.length;
+      const pbSpan   = extraModes.length;
+      modeThs = `<th colspan="${dsSpan}" class="th-group">${colName}</th><th colspan="${pbSpan}" class="th-group th-group-pb">${localOverrideCol}</th>`;
+      const modeRow  = [...colModes,...extraModes].map(([,mn])=>`<th class="th-mode">${mn}</th>`).join('');
+      modeThs = `</tr><tr class="mode-header-row"><th></th><th></th>${modeRow}<th></th>`;
+      // We'll build a two-row thead
+    } else {
+      modeThs = allModes.map(([,mn])=>`<th class="th-mode">${mn}</th>`).join('');
+    }
+
+    let theadHtml;
+    if (isLinked && extraModes.length) {
+      theadHtml = `<thead>
+        <tr>
+          <th rowspan="2">Token</th><th rowspan="2">Type</th>
+          <th colspan="${colModes.length}" class="th-group">${colName}</th>
+          <th colspan="${extraModes.length}" class="th-group th-group-pb">${localOverrideCol}</th>
+          <th rowspan="2">Status</th>
+        </tr>
+        <tr>${[...colModes,...extraModes].map(([,mn])=>`<th class="th-mode">${mn}</th>`).join('')}</tr>
+      </thead>`;
+    } else {
+      theadHtml = `<thead><tr><th>Token</th><th>Type</th>${allModes.map(([,mn])=>`<th class="th-mode">${mn}</th>`).join('')}<th>Status</th></tr></thead>`;
+    }
 
     let tbody2 = '';
     let lastGroup = '';
@@ -565,24 +610,31 @@ if (REPORT_HTML) {
         const pills=[gs?`<span class="gp s">✅ ${gs}</span>`:'',gp?`<span class="gp p">⏳ ${gp}</span>`:'',gt?`<span class="gp t">🗑 ${gt}</span>`:'',gl?`<span class="gp l">📁 ${gl}</span>`:''].filter(Boolean).join('');
         tbody2 += `<tr class="gr"><td colspan="${nCols}"><span class="gname">${r.group}</span>${pills}</td></tr>`;
       }
-      const mCells = colModes.map(([mid])=>valCell(r.modeVals[mid])).join('');
+      const dsCells    = colModes.map(([mid])=>valCell(r.modeVals[mid])).join('');
+      const overrideRow = overrideByName.get(r.name);
+      const pbCells    = extraModes.map(([mid])=>valCell(overrideRow?.modeVals[mid])).join('');
       tbody2 += `<tr class="tr s-${r.status}" data-status="${r.status}" data-col="${colName}">
         <td class="tname"><code>${r.name}</code></td>
         <td class="ttype">${typePill(r.type)}</td>
-        ${mCells}
+        ${dsCells}${pbCells}
         <td class="tst">${badge(r.status)}</td>
       </tr>`;
     }
+
+    const totalShown = colRows.length + (isLinked ? overrideByName.size : 0);
+    const modeLabel  = isLinked && extraModes.length
+      ? `${colName}: ${colModes.map(([,n])=>n).join(', ')} · ${localOverrideCol}: ${extraModes.map(([,n])=>n).join(', ')}`
+      : allModes.map(([,n])=>n).join(', ');
 
     sections += `
 <div class="col-section" data-col="${colName}">
   <div class="col-meta">
     <span class="col-tag${isRemote?'':' local'}">${colTag}</span>
-    <span><b>${colName === '—' ? 'DS Pending' : colName}</b> &nbsp;·&nbsp; ${colRows.length} tokens</span>
-    <span>Modes: ${colModes.map(([,n])=>n).join(', ')}</span>
+    <span><b>${colName}</b> &nbsp;·&nbsp; ${colRows.length} tokens${isLinked&&localOverrideCol?` &nbsp;·&nbsp; <span style="color:#7c3aed">includes ${localOverrideCol}</span>`:''}</span>
+    <span>${modeLabel}</span>
   </div>
   <div class="tw"><table>
-    <thead><tr><th>Token</th><th>Type</th>${modeThs}<th>Status</th></tr></thead>
+    ${theadHtml}
     <tbody>${tbody2}</tbody>
   </table></div>
 </div>`;
@@ -670,8 +722,12 @@ input:focus{border-color:#6366f1}
 .col-tag.local{background:#ede9fe;color:#5b21b6}
 .tw{overflow:auto;flex:1}
 table{width:100%;border-collapse:collapse}
-thead th{background:#1e1e2e;color:#e2e8f0;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:7px 10px;text-align:left;white-space:nowrap;position:sticky;top:0;z-index:5}
-th.th-mode{min-width:200px}
+thead th{background:#1e1e2e;color:#e2e8f0;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:7px 10px;text-align:left;white-space:nowrap;position:sticky;z-index:5}
+thead tr:first-child th{top:0}
+thead tr:nth-child(2) th{top:30px}
+th.th-group{background:#2d2d44;color:#a5b4fc;font-size:10px;font-weight:700;letter-spacing:.6px;text-align:center;border-bottom:1px solid #3d3d5c}
+th.th-group-pb{background:#312e3f;color:#c4b5fd}
+th.th-mode{min-width:180px}
 th:first-child{min-width:280px}
 tr.tr{border-bottom:1px solid #f0f2f5}
 tr.tr:hover{background:#fafbff}
