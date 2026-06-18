@@ -610,6 +610,19 @@ if (REPORT_HTML) {
   }
   const overrideModes = localOverrideCol ? [...(colMap.get(localOverrideCol)?.entries() ?? [])] : [];
 
+  // Build per-collection status counts (used in tab badges + data-counts attribute)
+  const colStats = {};
+  for (const n of collectionOrder) {
+    const rows = hRows.filter(r=>r.colName===n);
+    colStats[n] = {
+      total: rows.length,
+      s: rows.filter(r=>r.status==='SYNCED').length,
+      p: rows.filter(r=>r.status==='PENDING').length,
+      t: rows.filter(r=>r.status==='STALE').length,
+      l: rows.filter(r=>r.status==='LOCAL').length,
+    };
+  }
+
   // Build per-collection section tables
   let sections = '';
   for (const colName of collectionOrder) {
@@ -690,19 +703,6 @@ if (REPORT_HTML) {
     <tbody>${tbody2}</tbody>
   </table></div>
 </div>`;
-  }
-
-  // Build per-collection status counts for tab badges
-  const colStats = {};
-  for (const n of collectionOrder) {
-    const rows = hRows.filter(r=>r.colName===n);
-    colStats[n] = {
-      total: rows.length,
-      s: rows.filter(r=>r.status==='SYNCED').length,
-      p: rows.filter(r=>r.status==='PENDING').length,
-      t: rows.filter(r=>r.status==='STALE').length,
-      l: rows.filter(r=>r.status==='LOCAL').length,
-    };
   }
 
   const firstCol = collectionOrder[0] ?? '';
