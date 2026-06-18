@@ -436,10 +436,11 @@ if (REPORT_HTML) {
     const inDS = dsTokenNames.has(v.name);
 
     let status;
-    if      (inDS && inDSLinked) status = 'SYNCED';
-    else if (inDS)               status = 'PENDING';
-    else if (!col.remote)        status = 'LOCAL';
-    else                         status = 'STALE';
+    if      (!col.remote)                                               status = 'LOCAL';
+    else if (!inDSLinked && !inDS)                                      status = 'SYNCED';  // non-main remote collection (Breakpoint, Language, etc.)
+    else if (inDSLinked && !inDS && v.resolvedType === 'COLOR')         status = 'STALE';   // color token removed from DS
+    else if (inDSLinked)                                                status = 'SYNCED';
+    else /* !inDSLinked && inDS */                                      status = 'PENDING';
 
     const modeVals = {};
     for (const mode of (col.modes??[])) {
@@ -690,8 +691,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .stat.st{background:#fee2e2;color:#991b1b}
 .stat.lo{background:#ede9fe;color:#5b21b6}
 .stat.tot{background:#e5e7eb;color:#374151}
-/* ── Tab bar ── */
-.tabs{display:flex;gap:6px;padding:10px 20px;border-bottom:1px solid #e4e7ec;background:#f8f9fc;flex-shrink:0;overflow-x:auto}
+/* ── Nav (tabs + toolbar) ── */
+.nav{position:sticky;top:0;z-index:20;background:#f8f9fc;flex-shrink:0}
+.tabs-hdr{padding:8px 20px 0;font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#9ca3af}
+.tabs{display:flex;gap:6px;padding:6px 20px 10px;overflow-x:auto}
 .tab{display:flex;flex-direction:column;gap:6px;padding:10px 14px;border:1.5px solid #e4e7ec;border-radius:10px;background:#fff;cursor:pointer;flex-shrink:0;transition:border-color .15s,box-shadow .15s;text-align:left}
 .tab:hover{border-color:#c7d2fe;box-shadow:0 1px 4px rgba(99,102,241,.08)}
 .tab.active{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.12);background:#fff}
@@ -706,13 +709,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .tab-loc{font-size:10px;color:#9ca3af;font-style:italic}
 .tab-warn{font-size:12px;margin-left:2px;cursor:default}
 /* ── Toolbar ── */
-.toolbar{display:flex;gap:8px;align-items:center;padding:8px 20px;border-bottom:1px solid #e4e7ec;background:#fff;flex-shrink:0;flex-wrap:wrap;position:sticky;top:0;z-index:15}
+.toolbar{display:flex;gap:8px;align-items:center;padding:8px 20px;border-bottom:1px solid #e4e7ec;background:#fff;flex-wrap:wrap}
 .fbtn{padding:3px 10px;border:1px solid #d1d5db;border-radius:14px;background:#fff;cursor:pointer;font-size:11px;color:#374151;white-space:nowrap}
 .fbtn:hover{background:#f3f4f6}.fbtn.on{background:#4f46e5;color:#fff;border-color:#4f46e5}
 input{border:1px solid #d1d5db;border-radius:6px;padding:4px 10px;font-size:11px;width:200px;outline:none;margin-left:auto}
 input:focus{border-color:#6366f1}
 .col-info{font-size:10px;color:#888;margin-left:4px}
 /* ── Collection panel ── */
+#main{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .col-section{display:none;flex-direction:column;overflow:hidden;flex:1}
 .col-section.active{display:flex}
 .col-meta{padding:6px 20px;background:#f8f9fc;border-bottom:1px solid #e4e7ec;font-size:10px;color:#666;display:flex;gap:14px;flex-shrink:0}
@@ -757,22 +761,25 @@ tr.hidden{display:none}
     <div class="meta">DS Figma file: ${snapDate} &nbsp;·&nbsp; Consumer Figma file: ${new Date().toISOString().slice(0,10)} &nbsp;·&nbsp; ${hRows.length} tokens · ${collectionOrder.length} collections</div>
   </div>
   <div class="sum">
-    <div class="stat s"><div class="n">${nS}</div><div class="l">✅ Synced</div><div class="d">In DS and consumer file</div></div>
-    <div class="stat p"><div class="n">${nP}</div><div class="l">⏳ Pending</div><div class="d">In DS, accept library update to get these</div></div>
-    <div class="stat st"><div class="n">${nT}</div><div class="l">🗑 Stale</div><div class="d">Removed from DS, will be removed if library is updated</div></div>
-    <div class="stat lo"><div class="n">${nL}</div><div class="l">📁 Local</div><div class="d">Consumer's local overrides</div></div>
-    <div class="stat tot"><div class="n">${hRows.length}</div><div class="l">Total</div><div class="d">Across all collections</div></div>
+    <div class="stat s"><div class="n">${nS}</div><div class="l">✅ Synced</div><div class="d">In DS & consumer</div></div>
+    <div class="stat p"><div class="n">${nP}</div><div class="l">⏳ Pending</div><div class="d">Update library to sync</div></div>
+    <div class="stat st"><div class="n">${nT}</div><div class="l">🗑 Stale</div><div class="d">Removed from DS</div></div>
+    <div class="stat lo"><div class="n">${nL}</div><div class="l">📁 Local</div><div class="d">Consumer override</div></div>
+    <div class="stat tot"><div class="n">${hRows.length}</div><div class="l">Total</div><div class="d">Across collections</div></div>
   </div>
 </div>
-<div class="tabs">${tabsHtml}</div>
-<div class="toolbar">
-  <button class="fbtn on" onclick="setF('ALL',this)">All</button>
-  <button class="fbtn" onclick="setF('SYNCED',this)">✅ Synced</button>
-  <button class="fbtn" onclick="setF('PENDING',this)">⏳ Pending</button>
-  <button class="fbtn" onclick="setF('STALE',this)">🗑 Stale</button>
-  <button class="fbtn" onclick="setF('LOCAL',this)">📁 Local</button>
-  <span class="col-info" id="col-info"></span>
-  <input type="text" id="q" placeholder="Search token…" oninput="apply()">
+<div class="nav">
+  <div class="tabs-hdr">Collections</div>
+  <div class="tabs">${tabsHtml}</div>
+  <div class="toolbar">
+    <button class="fbtn on" onclick="setF('ALL',this)">All</button>
+    <button class="fbtn" onclick="setF('SYNCED',this)">✅ Synced</button>
+    <button class="fbtn" onclick="setF('PENDING',this)">⏳ Pending</button>
+    <button class="fbtn" onclick="setF('STALE',this)">🗑 Stale</button>
+    <button class="fbtn" onclick="setF('LOCAL',this)">📁 Local</button>
+    <span class="col-info" id="col-info"></span>
+    <input type="text" id="q" placeholder="Search token…" oninput="apply()">
+  </div>
 </div>
 <div id="main">${sections}</div>
 <script>
