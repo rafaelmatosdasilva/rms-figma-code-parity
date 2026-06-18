@@ -475,8 +475,17 @@ if (REPORT_HTML) {
   hRows.sort((a,b) => a.name.localeCompare(b.name) || a.colName.localeCompare(b.colName));
 
   // Collect all unique collections (for per-collection mode columns)
+  // Filter out internal library fragments: remote collections with ≤ 5 tokens
+  // are not shown in Figma's Collections panel and are irrelevant to the user.
+  const colRowCount = new Map();
+  for (const r of hRows) colRowCount.set(r.colName, (colRowCount.get(r.colName)??0)+1);
+
+  const colIsRemote = new Map();
+  for (const r of hRows) if (!colIsRemote.has(r.colName)) colIsRemote.set(r.colName, r.remote);
+
   const colMap = new Map(); // colName → [unique modes {modeId, modeName}]
   for (const r of hRows) {
+    if (colIsRemote.get(r.colName) && colRowCount.get(r.colName) <= 5) continue;
     if (!colMap.has(r.colName)) colMap.set(r.colName, new Map());
     for (const [mid, mv] of Object.entries(r.modeVals))
       colMap.get(r.colName).set(mid, mv.modeName);
