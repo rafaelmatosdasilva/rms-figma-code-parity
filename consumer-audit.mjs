@@ -603,9 +603,19 @@ if (REPORT_HTML) {
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#111;background:#fff;height:100vh;display:flex;flex-direction:column}
-.top{padding:16px 28px 12px;border-bottom:1px solid #e4e7ec;flex-shrink:0}
-h1{font-size:17px;font-weight:700;margin-bottom:3px}
-.meta{font-size:11px;color:#777}
+.top{padding:16px 28px 10px;border-bottom:1px solid #e4e7ec;flex-shrink:0;display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap}
+.top-title h1{font-size:17px;font-weight:700;margin-bottom:3px}
+.top-title .meta{font-size:11px;color:#777}
+.sum{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.stat{padding:10px 16px;border-radius:10px;min-width:100px;cursor:default}
+.stat .n{font-size:22px;font-weight:800;line-height:1}
+.stat .l{font-size:11px;font-weight:600;margin:2px 0 4px}
+.stat .d{font-size:10px;opacity:.75;line-height:1.3}
+.stat.s{background:#dcfce7;color:#166534}
+.stat.p{background:#fef9c3;color:#854d0e}
+.stat.st{background:#fee2e2;color:#991b1b}
+.stat.lo{background:#ede9fe;color:#5b21b6}
+.stat.tot{background:#e5e7eb;color:#374151}
 /* ── Tab bar ── */
 .tabs{display:flex;gap:0;border-bottom:2px solid #e4e7ec;background:#f8f9fc;flex-shrink:0;overflow-x:auto}
 .tab{display:flex;flex-direction:column;align-items:flex-start;padding:10px 18px 8px;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;background:none;cursor:pointer;min-width:0;flex-shrink:0;transition:border-color .15s}
@@ -659,8 +669,17 @@ tr.hidden{display:none}
 .empty-msg{padding:40px;text-align:center;color:#aaa;font-size:13px}
 </style></head><body>
 <div class="top">
-  <h1>Token Parity — BancoBAI × INNOVA DS</h1>
-  <div class="meta">DS snapshot: ${snapDate} &nbsp;·&nbsp; Generated: ${new Date().toISOString().slice(0,10)} &nbsp;·&nbsp; ${hRows.length} tokens across ${collectionOrder.length} collections</div>
+  <div class="top-title">
+    <h1>Token Parity — BancoBAI × INNOVA DS</h1>
+    <div class="meta">DS snapshot: ${snapDate} &nbsp;·&nbsp; Generated: ${new Date().toISOString().slice(0,10)} &nbsp;·&nbsp; ${hRows.length} tokens · ${collectionOrder.length} collections</div>
+  </div>
+  <div class="sum">
+    <div class="stat s"><div class="n">${nS}</div><div class="l">✅ Synced</div><div class="d">In DS and consumer library</div></div>
+    <div class="stat p"><div class="n">${nP}</div><div class="l">⏳ Pending</div><div class="d">In DS — accept library update to get these</div></div>
+    <div class="stat st"><div class="n">${nT}</div><div class="l">🗑 Stale</div><div class="d">Removed from DS, clears on update</div></div>
+    <div class="stat lo"><div class="n">${nL}</div><div class="l">📁 Local</div><div class="d">Consumer's own brand overrides</div></div>
+    <div class="stat tot"><div class="n">${hRows.length}</div><div class="l">Total</div><div class="d">Across all collections</div></div>
+  </div>
 </div>
 <div class="tabs">${tabsHtml}</div>
 <div class="toolbar">
