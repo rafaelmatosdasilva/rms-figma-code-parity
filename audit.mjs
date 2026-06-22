@@ -34,6 +34,7 @@ import { existsSync, readdirSync, readFileSync, statSync,
          writeFileSync, copyFileSync }                           from 'fs';
 import { join, dirname, resolve, relative }                     from 'path';
 import { fileURLToPath }                                        from 'url';
+import { buildReport }                                          from './report-html.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT       = process.cwd();
@@ -454,11 +455,11 @@ async function bootstrapConfig() {
     return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
   }
 
-  function runScriptAsync(scriptPath) {
+  function runScriptAsync(scriptPath, args = []) {
     return new Promise(res => {
       const abs = resolve(SCRIPT_DIR, scriptPath);
       if (!existsSync(abs)) return res({ status: null, stdout: '', stderr: '' });
-      const child = spawn('node', [abs], { cwd: ROOT, env: process.env });
+      const child = spawn('node', [abs, ...args], { cwd: ROOT, env: process.env });
       let stdout = '', stderr = '';
       child.stdout.on('data', d => { stdout += d; });
       child.stderr.on('data', d => { stderr += d; });
@@ -731,7 +732,7 @@ async function bootstrapConfig() {
 
   // Gates 2–4, 8–13 — all subprocess-based; launch concurrently
   const [r2, r3, r4, r8, r9, r10, r11, r12, r13, r14] = await Promise.all([
-    runScriptAsync('parity-check.mjs'),
+    runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
     runScriptAsync('subcomponent-isolation-check.mjs'),
@@ -791,6 +792,107 @@ async function bootstrapConfig() {
   });
   if (hist.length > 100) hist = hist.slice(-100);
   try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
+
+  // ── HTML report ───────────────────────────────────────────────────────────────
+  const htmlArgIdx = process.argv.indexOf('--report-html');
+  if (htmlArgIdx !== -1 && process.argv[htmlArgIdx + 1]) {
+    const REPORT_HTML = process.argv[htmlArgIdx + 1];
+    let pcResult = { fail: [], aliasFail: [], newSkip: [], skip: [], passList: [], pendingFigmaSync: [] };
+    try { pcResult = JSON.parse(readFileSync(join(ROOT, 'parity-check-result.json'), 'utf8')); } catch {}
+
+    const allRows = [
+      ...pcResult.fail.map(f         => ({ ...f, status: 'FAIL'       })),
+      ...(pcResult.aliasFail || []).map(f => ({ ...f, status: 'ALIAS_FAIL' })),
+      ...(pcResult.newSkip   || []).map(f => ({ ...f, status: 'NEW_SKIP'   })),
+      ...(pcResult.skip      || []).map(f => ({ ...f, status: 'SKIP'       })),
+    ];
+
+    const dims     = ['color', 'sizing', 'typography'];
+    const dimLabel = { color: 'Color', sizing: 'Sizing', typography: 'Typography' };
+    const colStats = {};
+    for (const dim of dims) {
+      const rows = allRows.filter(r => r.dimension === dim);
+      colStats[dim] = {
+        ALL:        rows.length,
+        FAIL:       rows.filter(r => r.status === 'FAIL').length,
+        ALIAS_FAIL: rows.filter(r => r.status === 'ALIAS_FAIL').length,
+        NEW_SKIP:   rows.filter(r => r.status === 'NEW_SKIP').length,
+        SKIP:       rows.filter(r => r.status === 'SKIP').length,
+      };
+    }
+
+    const swatchCell = val => {
+      if (!val) return `<td class="empty">—</td>`;
+      return val.startsWith('#')
+        ? `<td class="val"><span class="sw" style="background:${val}"></span><code class="hex">${val}</code></td>`
+        : `<td class="val"><code class="noncolor">${val}</code></td>`;
+    };
+
+    let sections = '';
+    for (const dim of dims) {
+      const rows = allRows.filter(r => r.dimension === dim);
+      if (!rows.length) continue;
+      const counts = colStats[dim];
+      const theadHtml = `<thead><tr><th>Token</th><th>CSS Var</th><th>Mode</th><th>Figma</th><th>CSS / Issue</th><th>Status</th></tr></thead>`;
+      let tbody = '';
+      for (const r of rows) {
+        const badgeCls = r.status === 'FAIL' ? 'missing' : r.status === 'ALIAS_FAIL' ? 'alias-fail' : r.status === 'NEW_SKIP' ? 'new-skip' : '';
+        const badgeLabel = { FAIL: 'Fail', ALIAS_FAIL: 'Alias Fail', NEW_SKIP: 'New Skip', SKIP: 'Skip' }[r.status] ?? r.status;
+        const issueCell = r.css
+          ? swatchCell(r.css)
+          : `<td class="empty" style="font-size:10px;color:#888;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.issue||r.reason||'').replace(/"/g,'&quot;')}">${r.issue || r.reason || '—'}</td>`;
+        tbody += `<tr class="tr s-${r.status}" data-status="${r.status}">
+        <td class="tname"><code>${r.token ?? ''}</code></td>
+        <td class="tname" style="font-size:10px;color:#5b21b6"><code>${r.cssVar ?? '—'}</code></td>
+        <td style="font-size:10px;color:#6b7280">${r.mode ?? '—'}</td>
+        ${swatchCell(r.figma)}${issueCell}
+        <td class="tst"><span class="badge ${badgeCls}">${badgeLabel}</span></td>
+      </tr>`;
+      }
+      sections += `\n<div class="col-section" data-col="${dim}" data-counts="${encodeURIComponent(JSON.stringify(counts))}">
+  <div class="tw"><table>${theadHtml}<tbody>${tbody}</tbody></table></div>
+</div>`;
+    }
+
+    const firstDim = dims.find(d => (colStats[d]?.ALL ?? 0) > 0) ?? '';
+    const tabsHtml = dims.filter(d => (colStats[d]?.ALL ?? 0) > 0).map((d, i) =>
+      `<button class="tab${i===0?' active':''}" data-col="${d}" onclick="switchTab('${d}',this)">
+  <div class="tab-top"><span class="tab-name">${dimLabel[d]}</span><span class="tab-count">${colStats[d].ALL}</span></div>
+</button>`).join('');
+
+    const gateCardsHtml = `<div style="padding:12px 28px;display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid #e4e7ec;background:#fafafa">
+${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;background:${g.pass?'#dcfce7':'#fee2e2'};color:${g.pass?'#166534':'#991b1b'}" title="${(g.lines||[]).join('&#10;').replace(/"/g,'&quot;')}">${g.pass?'✅':'❌'} [${i+1}] ${g.label}</div>`).join('\n')}
+</div>`;
+
+    const nFail = pcResult.fail.length;
+    const nAlias = (pcResult.aliasFail || []).length;
+    const nNewSkip = (pcResult.newSkip || []).length;
+    const nPass = (pcResult.passList || []).length;
+    const html = buildReport({
+      title: `Code Parity — ${today}`,
+      metaHtml: `${nPass + nFail} tokens checked · ${today} · ${gates.filter(g => g.pass).length}/${gates.length} gates pass`,
+      statCards: [
+        { n: nPass,    label: 'Match',     desc: 'CSS matches Figma',     cls: 's'   },
+        { n: nFail,    label: 'Fail',      desc: 'Value divergence',      cls: 'st'  },
+        { n: nAlias,   label: 'Alias Fail', desc: 'Wrong primitive chain', cls: 'lo'  },
+        { n: nNewSkip, label: 'New Skip',  desc: 'Needs sign-off',        cls: 'p'   },
+      ],
+      filterDefs: [
+        { filter: 'ALL',        label: 'All',        dot: null, color: '#111'    },
+        { filter: 'FAIL',       label: 'Fail',       dot: 'st', color: '#dc2626' },
+        { filter: 'ALIAS_FAIL', label: 'Alias Fail', dot: 'lo', color: '#9333ea' },
+        { filter: 'NEW_SKIP',   label: 'New Skip',   dot: 'p',  color: '#ca8a04' },
+        { filter: 'SKIP',       label: 'Skip',       dot: null, color: '#6b7280' },
+      ],
+      tabsHtml,
+      sections,
+      firstCol: firstDim,
+      extraHeadHtml: gateCardsHtml,
+    });
+    const htmlPath = REPORT_HTML.startsWith('/') ? REPORT_HTML : join(ROOT, REPORT_HTML);
+    writeFileSync(htmlPath, html);
+    console.log(`\n🌐 HTML parity report → ${REPORT_HTML}`);
+  }
 
   process.exit(anyFail ? 1 : 0);
 })();

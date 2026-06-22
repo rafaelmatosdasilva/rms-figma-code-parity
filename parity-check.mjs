@@ -23,7 +23,8 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
 const ROOT     = process.cwd();
-const FIX_MODE = process.argv.includes('--fix');
+const FIX_MODE  = process.argv.includes('--fix');
+const JSON_MODE = process.argv.includes('--json');
 
 // ── Load ds-config.json ───────────────────────────────────────────────────────
 let cfg = {};
@@ -465,6 +466,15 @@ if (PENDING_FIGMA_SYNC.length) {
     console.log(`  ⏳ [color/${p.mode}] ${p.token} → ${p.cssVar}`);
     console.log(`       CSS (matches source): ${p.css}   Consumer Figma: ${p.consumerFigma}`);
   }
+}
+
+if (JSON_MODE) {
+  writeFileSync(join(ROOT, 'parity-check-result.json'), JSON.stringify({
+    pass: FAIL.length === 0 && NEW_SKIP.length === 0 && ALIAS_FAIL.length === 0,
+    fail: FAIL, aliasFail: ALIAS_FAIL, newSkip: NEW_SKIP, skip: SKIP,
+    pendingFigmaSync: PENDING_FIGMA_SYNC,
+    passList: PASS,
+  }, null, 2));
 }
 
 if (FAIL.length === 0 && NEW_SKIP.length === 0 && ALIAS_FAIL.length === 0) {
