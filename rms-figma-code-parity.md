@@ -110,7 +110,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 | `figma-vars.snapshot.json` | color (all modes), sizing, typography | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
-Both are machine-generated — never hand-edit. `bound-tokens.json` (project root, gitignored) is a transient capture of Phase 2 Step 1b.
+Both are machine-generated — never hand-edit. `bound-tokens.json` and `component-state-tokens.json` (project root, gitignored) are auto-generated on every `pnpm parity` run when `FIGMA_TOKEN` is set — no manual step needed.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `node scripts/audit.mjs --trend`.
 
@@ -121,8 +121,7 @@ Both are machine-generated — never hand-edit. `bound-tokens.json` (project roo
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **Bound token walk** | **Walk all DS frames → save to `bound-tokens.json`** | **File written** |
-| **2** | **`node scripts/audit.mjs`** | **All 13 gates — Gate [1] always ✅ since Phase 1 just ran** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 14 gates — snapshot + bound tokens auto-refreshed via REST API** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -518,64 +517,16 @@ Print tokens changed/added/removed per section, which CSS vars need updating, co
 
 ---
 
-## Phase 2 — Step 1b: Bound token walk → `bound-tokens.json`
+## Phase 2 — Bound token walk (auto)
 
-Walk all DS frames and capture every token bound to a node (Hard Rule #7 split: boolean-hidden → implement; statically hidden → flag only). Use frame IDs from `ds-config.json → frames`.
+**No manual step needed.** `audit.mjs` auto-generates `bound-tokens.json` on every run by calling:
 
-```js
-const collections = await figma.variables.getLocalVariableCollectionsAsync();
-const idToVar = {};
-for (const col of collections) {
-  for (const id of col.variableIds) {
-    const v = await figma.variables.getVariableByIdAsync(id); if (v) idToVar[id] = v;
-  }
-}
-const PRIMITIVE_PREFIX = 'YOUR_PRIMITIVE_PREFIX'; // from ds-config.json
-// frameIds from ds-config.json → frames[].nodeId
-const frameIds = ['YOUR_FRAME_NODE_ID_1', 'YOUR_FRAME_NODE_ID_2'];
-const used = {}, hidden = {};
-for (const fid of frameIds) {
-  const frame = figma.currentPage.findOne(n => n.id === fid);
-  if (!frame) { console.error(`❌ Frame not found: ${fid} — check ds-config.json → frames and ensure you are on the correct Figma page`); continue; }
-  function walk(node, ancestorStaticHidden = false) {
-    // Hard Rule #7: hidden WITH a boolean variable → implement (boolean can be toggled).
-    //               hidden WITHOUT a boolean variable → statically hidden → flag, don't implement.
-    const hasBoolVar       = !!node.boundVariables?.visible;
-    const selfStaticHidden = node.visible === false && !hasBoolVar;
-    const isStaticHidden   = ancestorStaticHidden || selfStaticHidden;
+1. `GET /v1/files/{key}/variables/local` → builds variable ID → name map
+2. For each frame in `ds-config.json frames[]`, `GET /v1/files/{key}/nodes?ids={nodeId}` → walks the full subtree, collecting every `boundVariables` reference
 
-    if (node.boundVariables) {
-      for (const [prop, binding] of Object.entries(node.boundVariables)) {
-        for (const b of (Array.isArray(binding) ? binding : [binding])) {
-          if (!b?.id) continue;
-          const v = idToVar[b.id];
-          if (!v || v.name.startsWith(PRIMITIVE_PREFIX)) continue;
-          const bucket = isStaticHidden ? hidden : used;
-          if (!bucket[v.name]) bucket[v.name] = [];
-          bucket[v.name].push({ frame: fid, nodeId: node.id, nodeName: node.name, prop, hasBoolVar });
-        }
-      }
-    }
-    if ('children' in node) node.children.forEach(c => walk(c, isStaticHidden));
-  }
-  walk(frame);
-}
-if (Object.keys(hidden).length)
-  console.log('⚠️ STATICALLY HIDDEN — no boolean var, do not implement:', Object.keys(hidden));
-return used;
-```
+This replaces the previous Plugin API walk. Gate [4] (`bound-check.mjs`) reads `bound-tokens.json` as before — format is unchanged.
 
-**Save output to `bound-tokens.json` at project root.**
-
-> **Output truncation fallback:** the Figma MCP tool may truncate large responses. If the walk output is cut off mid-JSON, run a compact second pass that returns only the keys — `bound-check.mjs` accepts either shape:
-> ```js
-> // Compact pass — run if full walk was truncated
-> // (reuse the same idToVar / walk logic above)
-> const compact = {};
-> for (const [k, arr] of Object.entries(used)) compact[k] = arr.length;
-> return { used: compact, hiddenTokens: Object.keys(hidden) };
-> ```
-> Write the compact object as `bound-tokens.json` — `bound-check.mjs` uses `Object.keys()` so counts work fine.
+**If the auto-refresh fails** (no `FIGMA_TOKEN`, or 403): Gate [4] uses whatever `bound-tokens.json` already exists on disk. If the file is missing entirely, Gate [4] hard-fails (exit 2). Set `FIGMA_TOKEN` and ensure `ds-config.json` has `frames[]` entries to enable auto-refresh.
 
 ---
 
@@ -693,39 +644,45 @@ Then for each matched line, check whether text content is wrapped: `>Cancel<` is
 
 ---
 
-## Phase 2 — State walk → `component-state-tokens.json` (enables Gate [10])
+## Gate [3h] — Surface container token enforcement
 
-Walk all COMPONENT_SET nodes (not just DS frame instances) to capture tokens bound in EVERY state variant — not just State=Default. This reveals tokens like `buttonList/icon/hover` that are used in Figma's design but may not be wired into CSS hover rules.
+Verifies that every surface container in `SURFACE_CONTAINERS` declares `--area-bg: var(--bgVar)` in its CSS rule. This ensures components using `var(--area-bg, fallback)` automatically inherit the correct surface color without per-instance wiring.
+
+Add to `structure-contract.mjs`:
 
 ```js
-// Walk all COMPONENT_SET children (all state variants, not just State=Default)
-// idToVar must be populated first (same as bound-token walk)
-const PRIMITIVE_PREFIX = 'YOUR_PRIMITIVE_PREFIX';
-const stateTokens = {};
-const sets = figma.currentPage.findAll(n => n.type === 'COMPONENT_SET');
-for (const set of sets) {
-  for (const variant of set.children) {
-    function walkVariant(node) {
-      if (node.boundVariables) {
-        for (const [prop, binding] of Object.entries(node.boundVariables)) {
-          for (const b of (Array.isArray(binding) ? binding : [binding])) {
-            if (!b?.id) continue;
-            const v = idToVar[b.id];
-            if (!v || v.name.startsWith(PRIMITIVE_PREFIX)) continue;
-            if (!stateTokens[v.name]) stateTokens[v.name] = [];
-            stateTokens[v.name].push({ set: set.name, variant: variant.name, prop });
-          }
-        }
-      }
-      if ('children' in node) node.children.forEach(walkVariant);
-    }
-    walkVariant(variant);
-  }
-}
-return stateTokens;
+export const SURFACE_CONTAINERS = [
+  { sel: '.main-panel',   bgVar: '--bg'        },
+  { sel: '.detail-panel', bgVar: '--bg-detail'  },
+];
 ```
 
-**Save output to `component-state-tokens.json` at project root** (gitignored). Gate [10] will then verify all captured state tokens are implemented in CSS or in the `EXPLICIT`/`COVERED` sets in `bound-check.mjs`. Re-run after any DS component state addition.
+`structure-check.mjs` Gate [3h] verifies that each listed selector has `--area-bg: var(--bgVar[...])` in its CSS block. Fails if missing or uses the wrong var.
+
+**When to add an entry:** any time you add a new surface container (a wrapper that gives components a distinct background context).
+
+---
+
+## Gate [3g] — Inverse annotation check (WARN)
+
+In addition to the Figma→Contract direction (annotation must be acknowledged), Gate [3g] also warns in the **Contract→Figma** direction: if a `propertyMap` entry maps a CSS selector but no Figma annotation covers that property name, a `⚠️ WARN` is emitted.
+
+This is a warning, not a failure — it does not block the audit. Its purpose: surface documentation gaps and create pressure to add Figma annotations for behavioral CSS you've already implemented.
+
+**To silence a warn:** add a Figma annotation to the component set explaining why the behavior exists.
+
+---
+
+## Phase 2 — State walk (auto, enables Gate [10])
+
+**No manual step needed.** `audit.mjs` auto-generates `component-state-tokens.json` by:
+
+1. `GET /v1/files/{key}/component_sets` → all COMPONENT_SET node IDs
+2. Batch-fetch `/nodes?ids=...` for each set → walks all variant children, collecting every `boundVariables` reference
+
+This captures tokens used in every state (Hover, Disabled, Selected, etc.) — not just State=Default. Gate [10] (`state-check.mjs`) reads `component-state-tokens.json` and verifies all captured tokens are implemented in CSS.
+
+**If the auto-refresh fails** (no `FIGMA_TOKEN`): Gate [10] uses whatever `component-state-tokens.json` already exists. If missing, Gate [10] hard-fails (exit 2). Set `FIGMA_TOKEN` to enable.
 
 ---
 
@@ -908,6 +865,41 @@ Configure `webhook.port` and `webhook.secret` in `ds-config.json`.
 
 ---
 
+## CI Setup
+
+To run parity on every PR/push via GitHub Actions, add `.github/workflows/parity.yml` to your project:
+
+```yaml
+name: Parity
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - run: pnpm install
+      - run: pnpm parity
+        env:
+          FIGMA_TOKEN: ${{ secrets.FIGMA_TOKEN }}
+          FIGMA_FILE_KEY: ${{ vars.FIGMA_FILE_KEY }}
+```
+
+**Prerequisites:**
+- `ds-config.json` must be **committed** (it contains no secrets — only paths and the public Figma file key). If it's in `.gitignore`, CI will fail immediately with a clear message.
+- `structure-contract.mjs` must be committed (it's safe to commit — no secrets).
+- `FIGMA_TOKEN` must be added to GitHub Secrets.
+- `FIGMA_FILE_KEY` can optionally be set as a GitHub Variable (used for logging context; `ds-config.json` is the actual source).
+
+With `FIGMA_TOKEN` set, `pnpm parity` is fully self-contained: it auto-refreshes all snapshots, bound tokens, and state tokens via the Figma REST API. No Plugin API / MCP step needed.
+
+---
+
 ## End-of-Run Confidence Summary
 
 After every run, report this table so the practitioner knows exactly what the audit guarantees:
@@ -915,15 +907,18 @@ After every run, report this table so the practitioner knows exactly what the au
 | Area | Method | Confidence |
 |---|---|---|
 | Token values match Figma | Automated (Gate [2] — resolver against live snapshot) | High |
-| All Figma tokens have a CSS var | Automated (Gate [4] — bound-check against frame walk) | High if frames configured; **not run** if `frames: []` |
+| All Figma tokens have a CSS var | Automated (Gate [4] — bound-check against frame walk, auto-refreshed) | High if frames configured; **not run** if `frames: []` |
+| All state tokens wired | Automated (Gate [10] — state walk, auto-refreshed) | High |
 | No unused CSS vars | Automated (Gate [5]) | High |
 | No hardcoded values in rules | Automated (Gate [6]) | High |
 | Structural parity (height, padding, gap) | Automated (Gate [3]) | High |
 | Figma annotation acknowledgment + CSS verification | Automated (Gate [3g]) | High |
+| Surface container --area-bg declarations | Automated (Gate [3h]) | High if SURFACE_CONTAINERS populated |
 | Sub-component isolation | Automated (Gate [8]) | High |
 | Build freshness | Automated (Gate [7]) | High |
 | Removed tokens reconciled | Manual (Phase 1 diff) | Medium — verify any "used in a rule" replacements visually |
-| Component states fully wired | Manual (Step 3 deep-walk) | Low if skipped; High if run |
+| Component states fully wired | Automated (Gate [10]) | High |
 | Visual regression | Automated (Gate [9], requires FIGMA_TOKEN) or Manual (Step 7 screenshots) | **Not run** if neither is configured |
+| CI enforcement | GitHub Actions (`.github/workflows/parity.yml`) | High if configured |
 
 Flag any row marked **not run** or **skipped** explicitly in the summary — do not imply full coverage.

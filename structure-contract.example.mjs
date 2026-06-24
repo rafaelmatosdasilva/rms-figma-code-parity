@@ -184,3 +184,17 @@ export const STATE_SELECTORS = [
   //   ],
   // },
 ];
+
+// ─── Surface container enforcement (Gate [3h]) ────────────────────────────────
+// Lists every surface container in your plugin/app that components can be
+// placed inside. Gate [3h] verifies that each selector declares
+// `--area-bg: var(--bgVar)` in CSS, so components using `var(--area-bg, fallback)`
+// automatically inherit the correct surface background.
+//
+// Fields:
+//   sel   — CSS selector for the surface container
+//   bgVar — the CSS custom property this surface uses for its background
+export const SURFACE_CONTAINERS = [
+  // { sel: '.main-panel',   bgVar: '--bg'           },
+  // { sel: '.detail-panel', bgVar: '--bg-secondary'  },
+];

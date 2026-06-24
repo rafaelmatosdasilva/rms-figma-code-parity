@@ -7,6 +7,7 @@
 // First run: if ds-config.json is missing, asks 3 questions (Figma URL, CSS path,
 // token) then auto-detects collection structure via Figma API, scaffolds
 // parity-map.mjs + structure-contract.mjs, and writes ds-config.json.
+// Commit all three — they contain no secrets and are required for CI.
 // Subsequent runs: config exists, audit starts immediately.
 //
 // Gates:
@@ -237,6 +238,86 @@ async function refreshComponentProps(fileKey, token, outPath) {
   }
 }
 
+// ── Auto-refresh bound-tokens.json + component-state-tokens.json via REST API ─
+// Replaces the manual Phase 2 Plugin API walk. Called on every audit run when
+// FIGMA_TOKEN + frames are configured. Writes the same format consumed by
+// bound-check.mjs and state-check.mjs: { "Token/Path": true, ... }.
+
+function collectBound(node, idToName, tokenSet) {
+  for (const ref of Object.values(node?.boundVariables ?? {})) {
+    const refs = Array.isArray(ref) ? ref : [ref];
+    for (const r of refs) if (r?.id && idToName[r.id]) tokenSet.add(idToName[r.id]);
+  }
+  for (const child of node?.children ?? []) collectBound(child, idToName, tokenSet);
+}
+
+async function buildVarIdMap(fileKey, token) {
+  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
+    headers: { 'X-Figma-Token': token },
+  });
+  if (!res.ok) throw new Error(`variables/local returned ${res.status}`);
+  const { meta } = await res.json();
+  const idToName = {};
+  for (const [id, v] of Object.entries(meta?.variables ?? {})) idToName[id] = v.name;
+  return idToName;
+}
+
+async function refreshBoundTokens(fileKey, frames, token, outPath) {
+  if (!frames?.length) return false;
+  try {
+    const idToName = await buildVarIdMap(fileKey, token);
+    const tokenSet = new Set();
+    for (const frame of frames) {
+      const nRes = await fetch(
+        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${frame.nodeId}`,
+        { headers: { 'X-Figma-Token': token } },
+      );
+      if (!nRes.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nRes.status}`)); continue; }
+      const { nodes } = await nRes.json();
+      for (const data of Object.values(nodes ?? {})) collectBound(data?.document, idToName, tokenSet);
+    }
+    const result = Object.fromEntries([...tokenSet].map(t => [t, true]));
+    writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
+    console.log(C.dim(`  ✅ Bound tokens: ${tokenSet.size} token(s) across ${frames.length} frame(s)`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Bound tokens refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
+async function refreshStateTokens(fileKey, token, outPath) {
+  try {
+    const idToName = await buildVarIdMap(fileKey, token);
+    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
+      headers: { 'X-Figma-Token': token },
+    });
+    if (!csRes.ok) { console.log(C.yellow(`  ⚠️  /component_sets → ${csRes.status}`)); return false; }
+    const { meta: csMeta } = await csRes.json();
+    const setIds = Object.keys(csMeta?.component_sets ?? {});
+    if (!setIds.length) return false;
+    const tokenSet = new Set();
+    const BATCH = 50;
+    for (let i = 0; i < setIds.length; i += BATCH) {
+      const batch = setIds.slice(i, i + BATCH);
+      const nRes = await fetch(
+        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
+        { headers: { 'X-Figma-Token': token } },
+      );
+      if (!nRes.ok) continue;
+      const { nodes } = await nRes.json();
+      for (const data of Object.values(nodes ?? {})) collectBound(data?.document, idToName, tokenSet);
+    }
+    const result = Object.fromEntries([...tokenSet].map(t => [t, true]));
+    writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
+    console.log(C.dim(`  ✅ State tokens: ${tokenSet.size} token(s) across ${setIds.length} set(s)`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  State tokens refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
 // ── Bootstrap: generate ds-config.json from 3 questions ──────────────────────
 // Called when ds-config.json is missing (or --init flag). Auto-detects CSS paths,
 // plugin files, snapshot locations, and Figma collection structure via API.
@@ -420,10 +501,13 @@ async function bootstrapConfig() {
   // ── Update .gitignore ─────────────────────────────────────────────────────────
   const giPath    = join(ROOT, '.gitignore');
   const giContent = existsSync(giPath) ? readFileSync(giPath, 'utf8') : '';
-  const toAdd     = ['ds-config.json', 'parity-map.mjs', 'structure-contract.mjs', '.env']
+  // Only gitignore secrets and auto-generated transients.
+  // ds-config.json, parity-map.mjs, structure-contract.mjs contain no secrets —
+  // commit them so CI can run parity without interactive setup.
+  const toAdd     = ['.env', 'bound-tokens.json', 'component-state-tokens.json', 'parity-check-result.json']
     .filter(e => !giContent.split('\n').some(l => l.trim() === e));
   if (toAdd.length) {
-    const block = '\n# rms-parity project config (project-specific, not committed)\n' + toAdd.join('\n') + '\n';
+    const block = '\n# rms-parity: secrets + auto-generated transients — do not commit\n' + toAdd.join('\n') + '\n';
     writeFileSync(giPath, giContent + (giContent.endsWith('\n') ? '' : '\n') + block);
     console.log(C.green('✅ .gitignore updated'));
   }
@@ -457,6 +541,10 @@ async function bootstrapConfig() {
   try {
     cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8'));
   } catch {
+    if (process.env.CI) {
+      console.error('❌ ds-config.json not found. In CI, commit ds-config.json to the repository (it contains no secrets — only paths and the public Figma file key).');
+      process.exit(1);
+    }
     cfg = await bootstrapConfig();
   }
 
@@ -494,7 +582,7 @@ async function bootstrapConfig() {
   const SCAN_EXCLUDE_FILENAMES = new Set([
     'figma-vars.snapshot.json', 'figma-structure.snapshot.json',
     'figma-component-props.snapshot.json',
-    'bound-tokens.json', 'parity-history.json', 'master-token-table.md',
+    'bound-tokens.json', 'component-state-tokens.json', 'parity-history.json', 'master-token-table.md',
     ...(cfg.scanExcludeFilenames ?? []),
   ]);
 
@@ -548,12 +636,6 @@ async function bootstrapConfig() {
     } catch { return null; }
   }
 
-  function boundAge() {
-    try {
-      return Math.floor((Date.now() - statSync(join(ROOT, 'bound-tokens.json')).mtime) / 3_600_000);
-    } catch { return null; }
-  }
-
   // ── Gate parsers (subprocess-based gates) ────────────────────────────────────
   function parseGate2(r) {
     if (r.status === null) return { pass: false, lines: [C.red('parity-check.mjs not found')] };
@@ -585,7 +667,7 @@ async function bootstrapConfig() {
         pass: false,
         lines: [
           C.red('❌ HARD FAIL — bound-tokens.json missing.'),
-          C.red('   Run /rms-parity Phase 2 Step 1b and save output to bound-tokens.json.'),
+          C.red('   Set FIGMA_TOKEN and ensure ds-config.json has frames[] to auto-generate it.'),
         ],
       };
     }
@@ -639,7 +721,6 @@ async function bootstrapConfig() {
   function computeGate1() {
     const vars   = snapshotAge(SNAP_VARS);
     const struct = snapshotAge(SNAP_STRUCT);
-    const bnd    = boundAge();
     const lines  = [];
     let warn     = false;
 
@@ -659,14 +740,9 @@ async function bootstrapConfig() {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
     }
 
-    if (bnd === null) {
-      lines.push(C.red('bound-tokens.json missing — run /rms-parity Phase 2 Step 1b')); warn = true;
-    } else if (bnd > 24) {
-      lines.push(C.yellow(`⚠️  bound-tokens.json is ${bnd}h old`)); warn = true;
-    } else {
-      lines.push(`bound-tokens.json ✓ (${bnd}h old)`);
-    }
-
+    // bound-tokens.json and component-state-tokens.json are auto-generated each
+    // run when FIGMA_TOKEN is set — no staleness check needed here. Gate [4] and
+    // Gate [10] hard-fail (exit 2) if the files are absent.
     return { pass: !warn, lines };
   }
 
@@ -791,11 +867,13 @@ async function bootstrapConfig() {
     };
   }
 
-  // ── Refresh component-property snapshot (requires FIGMA_TOKEN) ──────────────
+  // ── Refresh Figma snapshots (requires FIGMA_TOKEN) ───────────────────────────
   const figmaToken   = process.env.FIGMA_TOKEN;
   const figmaFileKey = cfg.figmaFileKey;
   if (figmaToken && figmaFileKey) {
     await refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS));
+    await refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json'));
+    await refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json'));
   }
 
   // ── Run gates ─────────────────────────────────────────────────────────────────

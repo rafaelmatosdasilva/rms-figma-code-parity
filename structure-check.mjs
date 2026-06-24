@@ -32,7 +32,7 @@ const PLUGIN_CSS    = cfg.paths?.pluginCSS          ?? [];
 // ── Load structure-contract.mjs ───────────────────────────────────────────────
 let CONTRACT = {}, CSS_HEIGHT_RULES = {}, CSS_BASE_RULE_VARS = [], STATE_SELECTORS = [];
 let FIGMA_LAYOUT_TO_CSS = {}, FONT_SCALE_TO_CSS = {}, COMPONENT_CSS_SELECTORS = {};
-let CSS_PROPERTY_ASSERTIONS = [];
+let CSS_PROPERTY_ASSERTIONS = [], SURFACE_CONTAINERS = [];
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
   if (m.CONTRACT)                  CONTRACT                  = m.CONTRACT;
@@ -43,6 +43,7 @@ try {
   if (m.FONT_SCALE_TO_CSS)         FONT_SCALE_TO_CSS         = m.FONT_SCALE_TO_CSS;
   if (m.COMPONENT_CSS_SELECTORS)   COMPONENT_CSS_SELECTORS   = m.COMPONENT_CSS_SELECTORS;
   if (m.CSS_PROPERTY_ASSERTIONS)   CSS_PROPERTY_ASSERTIONS   = m.CSS_PROPERTY_ASSERTIONS;
+  if (m.SURFACE_CONTAINERS)        SURFACE_CONTAINERS        = m.SURFACE_CONTAINERS;
 } catch { /* optional — runs with empty contract */ }
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
@@ -752,6 +753,40 @@ for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
   }
 }
 
+// ── Gate [3h] — Surface container token enforcement ───────────────────────────
+// Each entry in SURFACE_CONTAINERS must declare --area-bg referencing its bgVar.
+// This ensures every surface container explicitly opts in to the surface-aware
+// background pattern rather than inheriting silently.
+const SURF_PASS = [], SURF_FAIL = [];
+
+for (const { sel, bgVar } of SURFACE_CONTAINERS) {
+  const block = findBlock(allCss, sel, allIndex);
+  if (!block) { SURF_FAIL.push(`Surface "${sel}": selector not found in CSS`); continue; }
+  const m = block.match(/(?<![a-zA-Z-])--area-bg\s*:\s*([^;]+)/);
+  const val = m ? m[1].trim() : null;
+  const pat = new RegExp(`var\\(${bgVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,)]`);
+  if (val && pat.test(val)) SURF_PASS.push(`${sel} --area-bg → var(${bgVar})`);
+  else SURF_FAIL.push(`Surface "${sel}": --area-bg is "${val ?? '(missing)'}" — expected var(${bgVar}...)`);
+}
+
+// ── Gate [3g] — Inverse annotation check (WARN only) ─────────────────────────
+// For every CONTRACT propertyMap entry with a CSS selector, warn if no Figma
+// annotation covers that property. Surfaces undocumented behaviors without blocking.
+const CANN_UNDOC = [];
+
+if (Object.keys(COMP_PROPS).length > 0) {
+  for (const [contractKey, entry] of Object.entries(CONTRACT)) {
+    if (!entry?.propertyMap) continue;
+    const figmaEntry = COMP_PROPS[entry.figmaName ?? contractKey];
+    const labels = new Set((figmaEntry?.annotations ?? []).map(a => (a.label ?? '').toLowerCase()));
+    for (const [propName, mapping] of Object.entries(entry.propertyMap)) {
+      if (!mapping || typeof mapping !== 'string') continue;
+      const covered = [...labels].some(l => l.includes(propName.toLowerCase()));
+      if (!covered) CANN_UNDOC.push(`${contractKey}/${propName}: CSS mapped but no Figma annotation`);
+    }
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -891,11 +926,28 @@ if (hasCannChecks) {
   }
 }
 
+if (SURF_PASS.length + SURF_FAIL.length > 0) {
+  const surfTotal = SURF_PASS.length + SURF_FAIL.length;
+  console.log(`\n✅ PASS  ${SURF_PASS.length}/${surfTotal} surface container --area-bg declarations`);
+  console.log(`❌ FAIL  ${SURF_FAIL.length}`);
+  if (SURF_FAIL.length) {
+    console.log('\n─── Gate [3h] — surface container missing --area-bg ─────────────────');
+    for (const f of SURF_FAIL) console.log(`  ❌ ${f}`);
+    console.log('   Fix: add `--area-bg: var(--bgVar)` to the selector in SURFACE_CONTAINERS.');
+  }
+}
+
+if (CANN_UNDOC.length > 0) {
+  console.log(`\n⚠️  WARN  ${CANN_UNDOC.length} CSS behavior(s) mapped but not annotated in Figma:`);
+  for (const w of CANN_UNDOC) console.log(`   ⚠️  ${w}`);
+  console.log('   Consider adding a Figma annotation to document why this behavior exists.');
+}
+
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
              || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
              || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
-             || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0;
+             || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
