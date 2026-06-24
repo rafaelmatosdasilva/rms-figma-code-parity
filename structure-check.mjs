@@ -578,6 +578,87 @@ if (CSS_PROPERTY_ASSERTIONS.length) {
   }
 }
 
+// ── Gate [3g]: Component Property Parity ─────────────────────────────────────
+// Verifies that every Figma component property (BOOLEAN/VARIANT) has a CSS
+// implementation. Reads figma-component-props.snapshot.json (written by audit.mjs
+// on every run when FIGMA_TOKEN is set).
+//
+// CONTRACT entry fields:
+//   figmaName   — Figma component set name (defaults to the CONTRACT key)
+//   propertyMap — map of Figma property name → one of:
+//     null / false         → explicitly skipped (no CSS needed)
+//     'css-selector'       → selector must exist somewhere in allCss
+//     { k: 'selector', … } → each value must exist in allCss (variant states or
+//                            show/hide pair, e.g. { show: '.el', hide: '@container ...' })
+const COMP_PROPS_SNAP_PATH = cfg.paths?.compPropsSnapshot ??
+  SNAPSHOT_PATH.replace(/[^/\\]+$/, 'figma-component-props.snapshot.json');
+
+let COMP_PROPS = {};
+try { COMP_PROPS = JSON.parse(readFileSync(join(ROOT, COMP_PROPS_SNAP_PATH), 'utf8')); } catch {}
+
+const CPROP_PASS = [], CPROP_FAIL = [], CPROP_WARN = [];
+
+// Discovery: flag component sets with BOOLEAN/VARIANT props but no propertyMap
+const mappedFigmaNames = new Set(
+  Object.values(CONTRACT)
+    .filter(c => c.propertyMap)
+    .map((c, i, arr) => {
+      const key = Object.keys(CONTRACT)[i];
+      return c.figmaName ?? key;
+    })
+);
+// Re-derive properly since Object.values loses keys
+for (const [key, c] of Object.entries(CONTRACT)) {
+  if (c.propertyMap) mappedFigmaNames.add(c.figmaName ?? key);
+}
+
+for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
+  if (figmaName === '_updated' || !entry?.properties) continue;
+  const hasBehavioural = Object.values(entry.properties).some(
+    p => p.type === 'BOOLEAN' || p.type === 'VARIANT'
+  );
+  if (hasBehavioural && !mappedFigmaNames.has(figmaName)) {
+    CPROP_WARN.push(`${figmaName}: has Figma component properties but no propertyMap in CONTRACT`);
+  }
+}
+
+// Implementation check: for each CONTRACT entry with propertyMap
+for (const [comp, contract] of Object.entries(CONTRACT)) {
+  if (!contract.propertyMap) continue;
+  const figmaName   = contract.figmaName ?? comp;
+  const figmaEntry  = COMP_PROPS[figmaName];
+
+  if (!figmaEntry?.properties) {
+    CPROP_WARN.push(`${comp}: "${figmaName}" not in component props snapshot — run parity to refresh`);
+    continue;
+  }
+
+  // Coverage: warn about Figma BOOLEAN/VARIANT props missing from propertyMap
+  for (const [propName, propDef] of Object.entries(figmaEntry.properties)) {
+    if (propDef.type === 'TEXT' || propDef.type === 'INSTANCE_SWAP') continue;
+    if (!(propName in contract.propertyMap)) {
+      CPROP_WARN.push(`${comp}/${propName}: Figma ${propDef.type} property not in propertyMap`);
+    }
+  }
+
+  // Implementation: verify each propertyMap entry's CSS selector exists
+  for (const [propName, mapping] of Object.entries(contract.propertyMap)) {
+    if (mapping === null || mapping === false) continue; // explicitly skipped
+
+    const pairs = typeof mapping === 'string'
+      ? [['', mapping]]
+      : Object.entries(mapping);
+
+    for (const [state, selector] of pairs) {
+      if (!selector) continue;
+      const label = state ? `${comp}/${propName}=${state}` : `${comp}/${propName}`;
+      const found = findBlock(allCss, selector, allIndex) !== null || allCss.includes(selector);
+      if (found) CPROP_PASS.push(label);
+      else CPROP_FAIL.push(`${label}: "${selector}" not found in CSS`);
+    }
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -684,10 +765,32 @@ if (CHILD_PASS.length + CHILD_FAIL.length > 0) {
   }
 }
 
+const hasCpropChecks = CPROP_PASS.length + CPROP_FAIL.length + CPROP_WARN.length > 0;
+if (hasCpropChecks) {
+  const cTotal = CPROP_PASS.length + CPROP_FAIL.length;
+  console.log(`\n✅ PASS  ${CPROP_PASS.length}/${cTotal} component property implementations`);
+  console.log(`❌ FAIL  ${CPROP_FAIL.length}`);
+  if (CPROP_WARN.length) console.log(`⚠️  WARN  ${CPROP_WARN.length} (unmapped Figma properties)`);
+  if (CPROP_FAIL.length) {
+    console.log('\n─── Gate [3g] — component property has no CSS implementation ────────');
+    for (const f of CPROP_FAIL) console.log(`  ❌ ${f}`);
+    console.log('   Fix: add CSS selector/class for this component property behavior.');
+    console.log('   Map it in structure-contract.mjs → propertyMap, or set null to skip.');
+  }
+  if (CPROP_WARN.length) {
+    console.log('\n─── Gate [3g] — unmapped Figma component properties ─────────────────');
+    for (const w of CPROP_WARN) console.log(`  ⚠️  ${w}`);
+    console.log('   Add to propertyMap in structure-contract.mjs (null = explicitly skipped).');
+  }
+} else if (Object.keys(COMP_PROPS).length === 0 && Object.values(CONTRACT).some(c => c.propertyMap)) {
+  console.log('\n⏭  Component props snapshot missing — run parity with FIGMA_TOKEN to populate Gate [3g]');
+}
+
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
              || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
              || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0
-             || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0;
+             || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
+             || CPROP_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }

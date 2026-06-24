@@ -167,6 +167,55 @@ async function analyseCollections(fileKey, token) {
   }
 }
 
+// ── Refresh component-property definitions from Figma REST API ───────────────
+// Writes figma-component-props.snapshot.json. Called on every audit run when
+// FIGMA_TOKEN is set. Queries /component_sets (names + nodeIds) then
+// /nodes?ids=... (componentPropertyDefinitions). Safe to skip: gate [3g]
+// falls back to reading an existing snapshot and warns if it's missing.
+async function refreshComponentProps(fileKey, token, outPath) {
+  try {
+    const h = { 'X-Figma-Token': token };
+    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
+    if (!csRes.ok) {
+      console.log(C.yellow(`  ⚠️  Figma ${csRes.status} — component props refresh skipped`));
+      return false;
+    }
+    const { meta } = await csRes.json();
+    const sets = Object.entries(meta?.component_sets ?? {});   // [[nodeId, {name,...}]]
+    if (!sets.length) return false;
+
+    const ids   = sets.map(([id]) => id);
+    const names = Object.fromEntries(sets.map(([id, s]) => [id, s.name]));
+    const result = {};
+
+    const BATCH = 50;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const batch   = ids.slice(i, i + BATCH);
+      const nRes    = await fetch(
+        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
+        { headers: h }
+      );
+      if (!nRes.ok) continue;
+      const { nodes } = await nRes.json();
+      for (const [nodeId, data] of Object.entries(nodes ?? {})) {
+        const doc   = data?.document;
+        const props = doc?.componentPropertyDefinitions ?? {};
+        if (Object.keys(props).length) {
+          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props };
+        }
+      }
+    }
+
+    result._updated = new Date().toISOString();
+    writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
+    console.log(C.dim(`  ✅ Component props: ${Object.keys(result).length - 1} component set(s)`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Component props refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
 // ── Bootstrap: generate ds-config.json from 3 questions ──────────────────────
 // Called when ds-config.json is missing (or --init flag). Auto-detects CSS paths,
 // plugin files, snapshot locations, and Figma collection structure via API.
@@ -398,8 +447,10 @@ async function bootstrapConfig() {
     return THEMES.filter(p => existsSync(join(ROOT, p)))
       .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n');
   }
-  const SNAP_VARS   = cfg.paths?.snapshotVars       ?? 'src/figma-vars.snapshot.json';
-  const SNAP_STRUCT = cfg.paths?.snapshotStructure  ?? 'src/figma-structure.snapshot.json';
+  const SNAP_VARS        = cfg.paths?.snapshotVars       ?? 'src/figma-vars.snapshot.json';
+  const SNAP_STRUCT      = cfg.paths?.snapshotStructure  ?? 'src/figma-structure.snapshot.json';
+  const SNAP_COMP_PROPS  = cfg.paths?.compPropsSnapshot  ??
+    SNAP_VARS.replace(/[^/\\]+$/, 'figma-component-props.snapshot.json');
   const PLUGIN_CSS  = cfg.paths?.pluginCSS          ?? [];
   const PLUGINS     = cfg.paths?.plugins            ?? [];
   const KNOWN_UNUSED     = new Set(cfg.knownUnusedVars         ?? []);
@@ -421,6 +472,7 @@ async function bootstrapConfig() {
   // Files whose content is auto-generated and should not be treated as source.
   const SCAN_EXCLUDE_FILENAMES = new Set([
     'figma-vars.snapshot.json', 'figma-structure.snapshot.json',
+    'figma-component-props.snapshot.json',
     'bound-tokens.json', 'parity-history.json', 'master-token-table.md',
     ...(cfg.scanExcludeFilenames ?? []),
   ]);
@@ -716,6 +768,13 @@ async function bootstrapConfig() {
         ? ['✅ All outputs current']
         : [`❌ Stale — rebuild: ${stale.join(', ')}`],
     };
+  }
+
+  // ── Refresh component-property snapshot (requires FIGMA_TOKEN) ──────────────
+  const figmaToken   = process.env.FIGMA_TOKEN;
+  const figmaFileKey = cfg.figmaFileKey;
+  if (figmaToken && figmaFileKey) {
+    await refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS));
   }
 
   // ── Run gates ─────────────────────────────────────────────────────────────────
