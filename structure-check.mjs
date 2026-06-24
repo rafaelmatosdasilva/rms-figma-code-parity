@@ -703,6 +703,35 @@ for (const [comp, contract] of Object.entries(CONTRACT)) {
   }
 }
 
+// ── Gate [3g] — Annotation parity ────────────────────────────────────────────
+// Every Figma annotation on a component set must be acknowledged in CONTRACT.annotations.
+// Acknowledged annotations with a CSS selector are verified to exist in the codebase.
+const CANN_PASS = [], CANN_FAIL = [], CANN_WARN = [];
+
+for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
+  if (figmaName === '_updated' || !entry?.annotations?.length) continue;
+  const contractKey = figmaNameToContractKey[figmaName];
+  if (!contractKey) {
+    if (!KNOWN_UNIMPLEMENTED.has(figmaName)) {
+      CANN_FAIL.push(`${figmaName}: has Figma annotations but no CONTRACT entry — add to CONTRACT or knownUnimplementedComponents`);
+    }
+    continue;
+  }
+  const contractAnns = CONTRACT[contractKey]?.annotations ?? {};
+  for (const ann of entry.annotations) {
+    const annLabel = ann.label ?? ann.name ?? String(ann);
+    if (!(annLabel in contractAnns)) {
+      CANN_FAIL.push(`${contractKey}: annotation "${annLabel}" not acknowledged in CONTRACT.annotations`);
+      continue;
+    }
+    const mapping = contractAnns[annLabel];
+    if (!mapping) { CANN_PASS.push(`${contractKey}/${annLabel} (prose — acknowledged)`); continue; }
+    const found = findBlock(allCss, mapping, allIndex) !== null || allCss.includes(mapping);
+    if (found) CANN_PASS.push(`${contractKey}/${annLabel}`);
+    else CANN_FAIL.push(`${contractKey}/${annLabel}: "${mapping}" not found in CSS`);
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -830,11 +859,23 @@ if (hasCpropChecks) {
   console.log('\n⏭  Component props snapshot missing — run parity with FIGMA_TOKEN to populate Gate [3g]');
 }
 
+const hasCannChecks = CANN_PASS.length + CANN_FAIL.length > 0;
+if (hasCannChecks) {
+  const cannTotal = CANN_PASS.length + CANN_FAIL.length;
+  console.log(`\n✅ PASS  ${CANN_PASS.length}/${cannTotal} Figma annotation acknowledgments`);
+  console.log(`❌ FAIL  ${CANN_FAIL.length}`);
+  if (CANN_FAIL.length) {
+    console.log('\n─── Gate [3g] — unacknowledged Figma annotation ─────────────────────');
+    for (const f of CANN_FAIL) console.log(`  ❌ ${f}`);
+    console.log('   Fix: add CONTRACT.annotations[label] = \'css-selector\' | null (prose-only).');
+  }
+}
+
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
              || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
              || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
-             || CPROP_FAIL.length > 0;
+             || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }

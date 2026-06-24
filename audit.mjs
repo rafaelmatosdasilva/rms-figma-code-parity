@@ -175,23 +175,43 @@ async function analyseCollections(fileKey, token) {
 async function refreshComponentProps(fileKey, token, outPath) {
   try {
     const h = { 'X-Figma-Token': token };
+
+    // ① Component SETS (variant groups) — the primary source
     const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
     if (!csRes.ok) {
       console.log(C.yellow(`  ⚠️  Figma ${csRes.status} — component props refresh skipped`));
       return false;
     }
-    const { meta } = await csRes.json();
-    const sets = Object.entries(meta?.component_sets ?? {});   // [[nodeId, {name,...}]]
-    if (!sets.length) return false;
-
+    const { meta: csMeta } = await csRes.json();
+    const sets  = Object.entries(csMeta?.component_sets ?? {});
     const ids   = sets.map(([id]) => id);
     const names = Object.fromEntries(sets.map(([id, s]) => [id, s.name]));
+
+    // ② Standalone COMPONENTS (single components not in a variant set)
+    const compRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, { headers: h });
+    const { meta: compMeta } = compRes.ok ? await compRes.json() : { meta: {} };
+    const standaloneEntries = Object.entries(compMeta?.components ?? {})
+      .filter(([, c]) => !c.containing_frame?.containingStateGroup);
+    for (const [nodeId, c] of standaloneEntries) {
+      if (!names[nodeId]) { ids.push(nodeId); names[nodeId] = c.name; }
+    }
+
+    // ③ Fallback: for unpublished files (API returns nothing), refresh known nodeIds
+    //    from the existing snapshot so annotations always stay current.
+    let existingSnap = {};
+    try { existingSnap = JSON.parse(readFileSync(outPath, 'utf8')); } catch {}
+    for (const [name, entry] of Object.entries(existingSnap)) {
+      if (name === '_updated' || !entry?.nodeId) continue;
+      if (!names[entry.nodeId]) { ids.push(entry.nodeId); names[entry.nodeId] = name; }
+    }
+
+    if (!ids.length) return false;
     const result = {};
 
     const BATCH = 50;
     for (let i = 0; i < ids.length; i += BATCH) {
-      const batch   = ids.slice(i, i + BATCH);
-      const nRes    = await fetch(
+      const batch = ids.slice(i, i + BATCH);
+      const nRes  = await fetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
         { headers: h }
       );
@@ -200,15 +220,16 @@ async function refreshComponentProps(fileKey, token, outPath) {
       for (const [nodeId, data] of Object.entries(nodes ?? {})) {
         const doc   = data?.document;
         const props = doc?.componentPropertyDefinitions ?? {};
-        if (Object.keys(props).length) {
-          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props };
+        const anns  = doc?.annotations ?? [];
+        if (Object.keys(props).length || anns.length) {
+          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props, annotations: anns };
         }
       }
     }
 
     result._updated = new Date().toISOString();
     writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
-    console.log(C.dim(`  ✅ Component props: ${Object.keys(result).length - 1} component set(s)`));
+    console.log(C.dim(`  ✅ Component props: ${Object.keys(result).length - 1} component(s)`));
     return true;
   } catch (e) {
     console.log(C.yellow(`  ⚠️  Component props refresh failed: ${e.message}`));
