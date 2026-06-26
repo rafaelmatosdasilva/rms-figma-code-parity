@@ -69,6 +69,8 @@ Once `ds-config.json` exists, extract:
   - `iconTextAlias` — when `true` (default), `/iconText/` in a token path is normalised to `/text/`. Set to `false` when the codebase keeps `iconText` as-is.
 - `paths.themeCSS` — path to the token CSS file, **or an array of paths** for projects that split tokens across multiple files (e.g. `["src/tokens/base.css", "src/tokens/components.css"]`). All files are merged before any gate runs. Auto-detection finds any `.css`/`.scss` file containing `:root {` and `--` — no need to manually configure `pluginCSS` for component files in Vue/React/Svelte projects.
 - `visualRefs` — directory for stored reference screenshots (default: `.parity-refs`)
+- `visualRefScale` *(optional)* — PNG export scale for Gate [9] screenshots (default: `2`). Set to `3` for higher-fidelity references. Changing this value invalidates all stored refs — accept the new `.new.png` files with `mv *.new.png *.png` after the first run at the new scale.
+- `knownUnimplementedComponents` — array of component names (matching keys in `structure-contract.mjs`) to exclude from Gate [3] and Gate [4] checks. Use this only as a temporary hold for DS components not yet built in code. Remove a component from this list as soon as its CSS and propertyMap are implemented. An empty array is the target state.
 - `webhook.port` / `webhook.secret` — webhook server config
 
 Use these throughout all Figma queries. Never hardcode collection or mode names.
@@ -685,6 +687,8 @@ This captures tokens used in every state (Hover, Disabled, Selected, etc.) — n
 
 **If the auto-refresh fails** (no `FIGMA_TOKEN`): Gate [10] uses whatever `component-state-tokens.json` already exists. If missing, Gate [10] hard-fails (exit 2). Set `FIGMA_TOKEN` to enable.
 
+> **Important:** `component-state-tokens.json` must be a plain `{ "token/name": count }` object — no metadata keys. `state-check.mjs` parses every key as a token name; any `_`-prefixed metadata key (`_updated`, `_note`) will appear as an uncovered token and fail Gate [10].
+
 ---
 
 ## Phase 2 — Steps 3–10: When are manual steps required?
@@ -735,6 +739,8 @@ function describe(n, depth=0) {
 **Stroke presence rule:** if `strokes: 'none'` on the Default state → CSS must use a transparent border (`border: ... solid transparent`). Never use a token color on the default state's border.
 
 Compare results against your `structure-contract.mjs`. Any drift → update contract AND CSS together.
+
+**Adding a new component to the contract:** when a component graduates from `knownUnimplementedComponents` to a real contract entry, the contract and the `figma-structure.snapshot.json` must declare the **exact same set of structural fields** (`h`, `gapVar`, `paddingVar`, `fontSizeVar`, `fontWeightVar`, `fillStructure`, `innerInset`, `innerRadiusVar`, `strokeOnDefault`, `strokeOnAnyState`). Gate [3] compares them field-by-field — a field present in the snapshot but absent (`undefined`) in the contract is a divergence even if both values would be `null`. Always include all structural fields in the contract explicitly, setting unknown/inapplicable ones to `null`.
 
 **State/variant selectors — full chain:** for every non-default Figma state or variant property value (Hover, Disabled, Selected, Size=Small, etc.), document in `structure-contract.mjs → STATE_SELECTORS`:
 - `selector` — the CSS selector that activates this state
