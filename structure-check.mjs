@@ -570,7 +570,7 @@ if (CSS_PROPERTY_ASSERTIONS.length) {
     '(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;\\n]+)'
   );
   const presentRe = (prop) => new RegExp(
-    '\\b' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:'
+    '(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:'
   );
 
   for (const a of CSS_PROPERTY_ASSERTIONS) {
