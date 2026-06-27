@@ -859,7 +859,27 @@ async function bootstrapConfig() {
       return /:\s*-?[0-9]+(\.[0-9]+)?(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\b/.test(code);
     });
 
-    const hits = [...new Set([...hexHits, ...numHits])];
+    // Pass 3 — layout anti-patterns across ALL files (gate6ExcludeDirs does NOT apply here).
+    // These viewport-unit rules cause scrollbar clipping and must never appear in any file.
+    const allFiles = allSourceFiles();
+    const vwR = sh('grep', ['-n', '-E', ':\\s*100vw\\b|calc\\([^)]*100vw', ...allFiles]);
+    const vwHits = (vwR.stdout || '').split('\n').filter(l => {
+      if (!l.trim()) return false;
+      const code = l.replace(/^[^:]+:\d+:\s*/, '');
+      // Allow inside comments or var declarations
+      if (/--[a-zA-Z][\w-]*\s*:/.test(code)) return false;
+      if (/^\s*(\/\/|\*)/.test(code)) return false;
+      if (/[`"'][^`"']*:\s*[^`"']*[`"']/.test(code)) return false;
+      if (/innerHTML\s*[+=]|insertAdjacentHTML/.test(code)) return false;
+      if (KNOWN_FS_EXCEPTS.some(e => {
+        if (typeof e === 'string') return l.includes(e);
+        const stripped = code.replace(/\/\*[^*]*\*\//g, '');
+        return (!e.file || l.includes(e.file)) && (!e.pattern || new RegExp(e.pattern).test(stripped));
+      })) return false;
+      return true;
+    });
+
+    const hits = [...new Set([...hexHits, ...numHits, ...vwHits])];
     const pass  = hits.length === 0;
     return {
       pass,
