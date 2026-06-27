@@ -8,6 +8,35 @@ Invoke `/rms-figma-code-parity` in any project to run a full parity check: Phase
 
 ---
 
+## Quick start
+
+**1 — Install the skill (once per machine)**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rafaelmatosds/rms-figma-code-parity/main/install.sh | bash
+```
+
+This copies `rms-figma-code-parity.md` to `~/.claude/commands/` so `/rms-figma-code-parity` is available in every project.
+
+**2 — Add to a project (once per repo)**
+
+```bash
+git submodule add https://github.com/rafaelmatosds/rms-figma-code-parity scripts
+node scripts/audit.mjs --init
+```
+
+`--init` asks 4 questions, auto-detects everything else, and prints a checklist of what to fill in next.
+
+**3 — Run**
+
+Open Claude Code inside the project and run:
+
+```
+/rms-figma-code-parity
+```
+
+---
+
 ## What it does
 
 | Phase | What happens |
