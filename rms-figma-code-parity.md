@@ -701,6 +701,25 @@ export const SURFACE_CONTAINERS = [
 
 ---
 
+## Gate [3i] — Button class-base rules
+
+Catches icon-only buttons (and other modifier-class buttons) using the wrong DS base class. The classic failure: a ghost icon button that should be `.buttonQuaternary` is coded as `.buttonTertiary.buttonUnpair`, giving it a visible border on hover.
+
+**How it works:** Gate [3i] scans every plugin HTML source file for `<button>` elements whose class list includes a _modifier class_ defined in `BUTTON_CLASS_RULES`. For each match, it checks that at least one of the `allowedBases` classes is also present. If not, it fails with the file path and full class string.
+
+```js
+// structure-contract.mjs
+export const BUTTON_CLASS_RULES = [
+  // modifier: class that triggers the check
+  // allowedBases: at least one must appear on the same <button>
+  { modifier: 'buttonUnpair', allowedBases: ['buttonQuaternary'] },
+];
+```
+
+**When to add an entry:** any time you introduce a modifier class that must only combine with specific base DS component classes. The gate is project-agnostic — `BUTTON_CLASS_RULES` in the consuming project's `structure-contract.mjs` drives the check.
+
+---
+
 ## Gate [3g] — Inverse annotation check (WARN)
 
 In addition to the Figma→Contract direction (annotation must be acknowledged), Gate [3g] also warns in the **Contract→Figma** direction: if a `propertyMap` entry maps a CSS selector but no Figma annotation covers that property name, a `⚠️ WARN` is emitted.
@@ -1033,6 +1052,7 @@ After every run, report this table so the practitioner knows exactly what the au
 | Structural parity (height, padding, gap) | Automated (Gate [3]) | High |
 | Figma annotation acknowledgment + CSS verification | Automated (Gate [3g]) | High |
 | Surface container --area-bg declarations | Automated (Gate [3h]) | High if SURFACE_CONTAINERS populated |
+| Button modifier-class base compliance | Automated (Gate [3i]) | High if BUTTON_CLASS_RULES populated |
 | Sub-component isolation | Automated (Gate [8]) | High |
 | Build freshness | Automated (Gate [7]) | High |
 | Removed tokens reconciled | Manual (Phase 1 diff) | Medium — verify any "used in a rule" replacements visually |
