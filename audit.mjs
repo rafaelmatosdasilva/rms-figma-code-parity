@@ -51,9 +51,9 @@ const WIDTH      = 60;
 const SHOW_TREND = process.argv.includes('--trend');
 const INIT_ONLY  = process.argv.includes('--init');
 
-// Set to true when variables/local returns 403 — Figma plan doesn't allow REST
-// variable access. Gates that depend on this (snapshot freshness, bound-token
-// coverage) downgrade from hard-fail to warn so CI remains useful.
+// Set to true when variables/local returns 403. Gates that depend on live Figma
+// data (snapshot freshness, bound-token coverage) hard-fail when this is set —
+// a 403 means missing token scopes or wrong plan, not a safe fallback.
 let _figmaApiLimited = false;
 
 // ── ANSI helpers (available before config loads) ──────────────────────────────
@@ -669,26 +669,25 @@ async function bootstrapConfig() {
     if (r.status === null) return { pass: true, lines: ['⏭ bound-check.mjs not found — skipped'] };
     const out = r.stdout + r.stderr;
     if (r.status === 2) {
-      if (_figmaApiLimited) {
-        return {
-          pass: true,
-          lines: [C.yellow('⚠️  bound-tokens.json missing — variables/local 403 and no committed snapshot; run /rms-figma-code-parity Phase 1 locally to generate it')],
-        };
-      }
       return {
         pass: false,
         lines: [
           C.red('❌ HARD FAIL — bound-tokens.json missing.'),
-          C.red('   Set FIGMA_TOKEN and ensure ds-config.json has frames[] to auto-generate it.'),
+          _figmaApiLimited
+            ? C.red('   variables/local returned 403 — check FIGMA_TOKEN scopes (needs file_variables:read).')
+            : C.red('   Set FIGMA_TOKEN and ensure ds-config.json has frames[] to auto-generate it.'),
         ],
       };
     }
     if (_figmaApiLimited) {
-      // REST refresh failed (403) but committed snapshot was used — note it as a warning
-      const pass = r.status === 0;
-      const summary = (r.stdout + r.stderr).split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
-      const failDetails = pass ? [] : (r.stdout + r.stderr).split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
-      return { pass, lines: [C.yellow('⚠️  variables/local 403 — using committed bound-tokens.json snapshot'), ...summary, ...failDetails] };
+      // 403 means live refresh failed — bound-tokens.json may be stale; hard-fail so stale data never silently passes.
+      return {
+        pass: false,
+        lines: [
+          C.red('❌ HARD FAIL — variables/local returned 403; bound-tokens.json was NOT refreshed.'),
+          C.red('   Check FIGMA_TOKEN scopes (needs file_variables:read). Fix the token and re-run.'),
+        ],
+      };
     }
     const pass       = r.status === 0;
     const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
@@ -753,8 +752,8 @@ async function bootstrapConfig() {
     if (vars === null) {
       lines.push(C.red(`${SNAP_VARS} missing — run /rms-parity Phase 1`)); warn = true;
     } else if (vars > 24) {
-      lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old${_figmaApiLimited ? ' (variables/local 403 — plan limitation)' : ''}`));
-      if (!_figmaApiLimited) warn = true;
+      lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old${_figmaApiLimited ? ' (variables/local 403 — check FIGMA_TOKEN scopes)' : ''}`));
+      warn = true;
     } else {
       lines.push(`${SNAP_VARS} ✓ (updated today)`);
     }
@@ -762,8 +761,8 @@ async function bootstrapConfig() {
     if (struct === null) {
       lines.push(C.red(`${SNAP_STRUCT} missing — run /rms-parity Phase 1`)); warn = true;
     } else if (struct > 24) {
-      lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old${_figmaApiLimited ? ' (variables/local 403 — plan limitation)' : ''}`));
-      if (!_figmaApiLimited) warn = true;
+      lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old${_figmaApiLimited ? ' (variables/local 403 — check FIGMA_TOKEN scopes)' : ''}`));
+      warn = true;
     } else {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
     }
