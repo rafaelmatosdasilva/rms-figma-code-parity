@@ -37,7 +37,7 @@ Then auto-detect and write `ds-config.json`:
 - `snapshotVars` / `snapshotStructure` → sibling files next to theme CSS
 - `pluginCSS` → scan `apps/*/ui.src.html` and `src/ui.src.html`
 - `plugins` → derived from pluginCSS paths
-- `figma.colorCollection` / `sizingCollection` / `primitivePrefix` → **queried from Figma API** if token available. Calls `GET /v1/files/:key/variables/local`, inspects every collection's variable types (`COLOR`, `FLOAT`, etc.), variable count, naming patterns, and mode count. The collection with the most `COLOR` vars becomes `colorCollection`; the collection with the most `FLOAT` vars (if distinct) becomes `sizingCollection`; single-mode collections with a dominant path prefix become `primitivePrefix`. Falls back to `"Color"` / `null` / `"primitives/"` only when the token is absent or the call fails.
+- `figma.primitivePrefix` / `animationCollection` / `excludeCollections` / `breakpointCollection` → **queried from Figma API** if token available. Falls back to defaults when the token is absent or the call fails.
 - `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default — edit if your DS has more modes)
 - `frames` → `[]` (add frame node IDs manually after setup)
 
@@ -53,8 +53,11 @@ Once `ds-config.json` exists, extract:
 - `figmaFileKey` — Figma consumer/product file key (the file being audited)
 - `figmaSourceKey` *(optional)* — DS library source file key; when set, Phase 1 queries both files. Mismatches where code matches source but not consumer → `⏳ PENDING FIGMA SYNC` (not a gate failure). Absent = no cross-check.
 - `frames` — array of `{ name, nodeId }` — the DS frame(s) to audit
-- `figma.colorCollection` — name of the color variable collection (e.g. `"Color"`)
-- `figma.sizingCollection` — name of the sizing collection, if any (e.g. `"Sizing"`)
+- `figma.colorCollection` *(optional scope limiter)* — if set, restrict COLOR var extraction to this collection. If absent, COLOR vars come from **all non-excluded collections** (type-based routing).
+- `figma.sizingCollection` *(optional scope limiter)* — if set, restrict single-mode FLOAT extraction to this collection.
+- `figma.excludeCollections` *(optional)* — collections to skip entirely (e.g. `["Language"]` for i18n/copy-string collections).
+- `figma.animationCollection` *(optional)* — collection containing EASING/TIMING vars. Auto-detected.
+- `figma.breakpointCollection` *(optional)* — if set, restrict multi-mode FLOAT/BOOLEAN extraction to this collection.
 - `figma.modes` — array of `{ name, snapshotKey, cssSelector }` defining all DS modes
   - OR legacy: `figma.darkMode` / `figma.lightMode` (two-mode shorthand)
 - `figma.primitivePrefix` — token path prefix to exclude from component token walks (e.g. `"primitives/"`)
@@ -66,6 +69,16 @@ Once `ds-config.json` exists, extract:
 - `webhook.port` / `webhook.secret` — webhook server config
 
 Use these throughout all Figma queries. Never hardcode collection or mode names.
+
+> **Key architectural rule:** Phase 1 routes variables by `resolvedType` across ALL collections (not by collection name). Collections are just organizational containers — any collection can hold any mix of types. The routing rules:
+> - `COLOR` (excluding `primitivePrefix` path) → `snapshot.color[modeKey]`
+> - `FLOAT` in collections with ≥3 modes → `snapshot.breakpoints[modeName]`
+> - `FLOAT` in collections with 1-2 modes → `snapshot.sizing`
+> - `STRING` (from non-excluded collections) → `snapshot.strings`
+> - `BOOLEAN` (any collection) → `snapshot.booleans[modeName]` (advisory only in Gate [2])
+> - `EASING` → `snapshot.animation` as `cubic-bezier(p1x, p1y, p2x, p2y)`
+> - `TIMING` → `snapshot.animation` as `Math.round(val * 1000) + 'ms'`
+> - Collections in `figma.excludeCollections` → skipped entirely
 
 ---
 
@@ -101,7 +114,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 | File | Contents | Path (from ds-config.json) |
 |---|---|---|
-| `figma-vars.snapshot.json` | color (all modes), sizing, typography | `paths.snapshotVars` |
+| `figma-vars.snapshot.json` | color (all modes), sizing, typography, breakpoints (all modes), strings, booleans (all modes), animation | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
 Both are machine-generated — never hand-edit. `bound-tokens.json` (project root, gitignored) is a transient capture of Phase 2 Step 1b.
@@ -132,7 +145,7 @@ Both are machine-generated — never hand-edit. `bound-tokens.json` (project roo
 
 ### Step 1a — Probe (always run first)
 
-Fill in `COLOR_COLLECTION`, `SIZING_COLLECTION` (or `null`), and `PRIMITIVE_PREFIX` from `ds-config.json`.
+Fill in `PRIMITIVE_PREFIX` and `EXCLUDE_COLLECTIONS` from `ds-config.json`.
 
 ```js
 const collections = await figma.variables.getLocalVariableCollectionsAsync();
@@ -142,20 +155,24 @@ for (const col of collections) {
     const v = await figma.variables.getVariableByIdAsync(id); if (v) idToVar[id] = v;
   }
 }
-const COLOR_COLLECTION  = 'Theme';       // figma.colorCollection from ds-config.json
-const SIZING_COLLECTION = 'Sizing';      // figma.sizingCollection (or null)
-const PRIMITIVE_PREFIX  = 'primitives/'; // figma.primitivePrefix
-const col = collections.find(c => c.name === COLOR_COLLECTION);
-const colorVarIds = col.variableIds.filter(id => {
-  const v = idToVar[id];
-  return v && v.resolvedType === 'COLOR' && !v.name.startsWith(PRIMITIVE_PREFIX);
-});
-const sizingCol = SIZING_COLLECTION ? collections.find(c => c.name === SIZING_COLLECTION) : null;
-return {
-  colorCount: colorVarIds.length,
-  sizingCount: sizingCol?.variableIds.length ?? 0,
-  modes: col.modes.map(m => m.name),
-};
+const PRIMITIVE_PREFIX    = 'primitives/'; // figma.primitivePrefix
+const EXCLUDE_COLLECTIONS = [];            // figma.excludeCollections (or [])
+let colorCount=0, sizingCount=0, bpCount=0, stringCount=0, booleanCount=0, animCount=0;
+for (const col of collections) {
+  if (EXCLUDE_COLLECTIONS.includes(col.name)) continue;
+  const isMulti = col.modes.length >= 3;
+  for (const id of col.variableIds) {
+    const v = idToVar[id]; if (!v) continue;
+    switch (v.resolvedType) {
+      case 'COLOR':  if (!v.name.startsWith(PRIMITIVE_PREFIX)) colorCount++; break;
+      case 'FLOAT':  isMulti ? bpCount++ : sizingCount++; break;
+      case 'STRING': stringCount++; break;
+      case 'BOOLEAN': booleanCount++; break;
+      case 'EASING': case 'TIMING': animCount++; break;
+    }
+  }
+}
+return { colorCount, sizingCount, bpCount, stringCount, booleanCount, animCount };
 ```
 
 **Decision after probe:**
@@ -164,122 +181,149 @@ return {
 
 ---
 
-### Step 1b-single — Full query (≤190 tokens)
+### Step 1b-single — Full query (≤190 color tokens)
 
-Use this when `colorCount ≤ 190`. Returns everything in one call.
+Use this when `colorCount ≤ 190`. Routes all variable types from all collections in one call.
 
 ```js
 function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
+function r4(n){return Math.round(n*10000)/10000;}
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-function resolve(varId,modeId,d=0){if(d>10)return null;const v=idToVar[varId];if(!v)return null;const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val)return null;if(val?.type==='VARIABLE_ALIAS')return resolve(val.id,modeId,d+1);if('r'in val)return toHex(val);return null;}
+function resolveColor(varId,modeId,d=0){if(d>10)return null;const v=idToVar[varId];if(!v)return null;const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val)return null;if(val?.type==='VARIABLE_ALIAS')return resolveColor(val.id,modeId,d+1);if('r'in val)return toHex(val);return null;}
 function aliasChain(varId,modeId,d=0){if(d>10)return[];const v=idToVar[varId];if(!v)return[];const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val||typeof val!=='object'||val.type!=='VARIABLE_ALIAS')return[];const a=idToVar[val.id];if(!a)return[];return[a.name,...aliasChain(val.id,modeId,d+1)];}
 // Fill from ds-config.json:
-const COLOR_COLLECTION='Theme'; const SIZING_COLLECTION='Sizing'; const PRIMITIVE_PREFIX='primitives/';
-const MODES=[{name:'Light',snapshotKey:'light'},{name:'Dark',snapshotKey:'dark'}]; // from figma.modes
-const col=collections.find(c=>c.name===COLOR_COLLECTION);
-const colorOut={},aliasesOut={};
-for(const m of MODES){
-  const modeId=col.modes.find(fm=>fm.name===m.name)?.modeId; if(!modeId)continue;
-  colorOut[m.snapshotKey]={}; aliasesOut[m.snapshotKey]={};
+const PRIMITIVE_PREFIX='primitives/';
+const EXCLUDE_COLLECTIONS=[]; // figma.excludeCollections
+const MODES=[{name:'Light',snapshotKey:'light'},{name:'Dark',snapshotKey:'dark'}]; // figma.modes
+
+const colorOut={},aliasesOut={},sizingOut={},bpOut={},strOut={},boolOut={},animOut={};
+for(const m of MODES){colorOut[m.snapshotKey]={};aliasesOut[m.snapshotKey]={};}
+
+for(const col of collections){
+  if(EXCLUDE_COLLECTIONS.includes(col.name))continue;
+  const isMulti=col.modes.length>=3;
+
   for(const id of col.variableIds){
-    const v=idToVar[id]; if(!v||v.resolvedType!=='COLOR'||v.name.startsWith(PRIMITIVE_PREFIX))continue;
-    colorOut[m.snapshotKey][v.name]=resolve(id,modeId);
-    const chain=aliasChain(id,modeId); if(chain.length>0)aliasesOut[m.snapshotKey][v.name]=chain;
+    const v=idToVar[id];if(!v)continue;
+
+    if(v.resolvedType==='COLOR'&&!v.name.startsWith(PRIMITIVE_PREFIX)){
+      for(const m of MODES){
+        const modeEntry=col.modes.find(cm=>cm.name===m.name);
+        const modeId=modeEntry?.modeId??col.modes[0]?.modeId;
+        colorOut[m.snapshotKey][v.name]=resolveColor(id,modeId);
+        const chain=aliasChain(id,modeId);if(chain.length>0)aliasesOut[m.snapshotKey][v.name]=chain;
+      }
+
+    }else if(v.resolvedType==='FLOAT'){
+      if(isMulti){
+        for(const mode of col.modes){
+          bpOut[mode.name]=bpOut[mode.name]??{};
+          let val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];
+          if(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'){const a=idToVar[val.id];val=a?.valuesByMode[mode.modeId]??Object.values(a?.valuesByMode??{})[0];}
+          if(typeof val==='number')bpOut[mode.name][v.name]=val+'px';
+        }
+      }else{
+        const modeId=col.modes[0]?.modeId;
+        let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];
+        let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}
+        if(typeof val==='number')sizingOut[v.name]=val+'px';
+      }
+
+    }else if(v.resolvedType==='STRING'){
+      const val=Object.values(v.valuesByMode)[0];
+      if(typeof val==='string')strOut[v.name]=val;
+
+    }else if(v.resolvedType==='BOOLEAN'){
+      for(const mode of col.modes){
+        boolOut[mode.name]=boolOut[mode.name]??{};
+        const val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];
+        if(typeof val==='boolean')boolOut[mode.name][v.name]=val;
+      }
+
+    }else if(v.resolvedType==='EASING'){
+      const val=Object.values(v.valuesByMode)[0];
+      if(val?.bezierValues){const{p1x,p1y,p2x,p2y}=val.bezierValues;animOut[v.name]=`cubic-bezier(${r4(p1x)}, ${r4(p1y)}, ${r4(p2x)}, ${r4(p2y)})`;}
+
+    }else if(v.resolvedType==='TIMING'){
+      const val=Object.values(v.valuesByMode)[0];
+      if(typeof val==='number')animOut[v.name]=Math.round(val*1000)+'ms';
+    }
   }
 }
-const sizingOut={};
-if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
-// Breakpoints — multi-mode FLOAT/BOOLEAN collection (e.g. Phone/Tablet/Laptop/Desktop)
-const bpOut={};
-if(BREAKPOINT_COLLECTION){const bc=collections.find(c=>c.name===BREAKPOINT_COLLECTION);if(bc){for(const mode of bc.modes){bpOut[mode.name]={};for(const id of bc.variableIds){const v=idToVar[id];if(!v)continue;const val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];if(v.resolvedType==='FLOAT'&&typeof val==='number')bpOut[mode.name][v.name]=val+'px';else if(v.resolvedType==='BOOLEAN')bpOut[mode.name][v.name]=val?'true':'false';}}}}
-// Strings — STRING-typed vars from any non-color collection
-const strOut={};
-for(const c of collections){if(c.name===COLOR_COLLECTION)continue;for(const id of c.variableIds){const v=idToVar[id];if(!v||v.resolvedType!=='STRING')continue;const val=Object.values(v.valuesByMode)[0];if(typeof val==='string')strOut[v.name]=val;}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
-const styles=await figma.getLocalTextStylesAsync(); const typo={};
+const styles=await figma.getLocalTextStylesAsync();const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';typo[key]=entry;}
-return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,breakpoints:bpOut,strings:strOut,typography:typo};
+return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,breakpoints:bpOut,strings:strOut,booleans:boolOut,animation:animOut,typography:typo};
 ```
 
 ---
 
-### Step 1b-batched — Batch queries (>190 tokens)
+### Step 1b-batched — Batch queries (>190 color tokens)
 
-When `colorCount > 190`, run **one query per batch of 190 tokens**. Each call returns `{tokenName: [lightHex, darkHex]}`. After all batches complete, merge all results into `light{}` and `dark{}` objects.
+When `colorCount > 190`, batch the COLOR extraction (other types come in one separate pass).
 
-Run `Math.ceil(colorCount / 190)` calls, substituting `BATCH_START` and `BATCH_END` each time:
+Run `Math.ceil(colorCount / 190)` color-batch calls, substituting `BATCH_START` and `BATCH_END`:
 
 ```js
-// Batch query — substitute BATCH_START and BATCH_END each iteration
-// Example: batch 0 → (0, 190), batch 1 → (190, 380), etc.
+// COLOR batch — substitute BATCH_START and BATCH_END each iteration
 function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-function resolve(varId,modeId,d=0){if(d>10)return null;const v=idToVar[varId];if(!v)return null;const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val)return null;if(val?.type==='VARIABLE_ALIAS')return resolve(val.id,modeId,d+1);if('r'in val)return toHex(val);return null;}
-// Fill from ds-config.json:
-const COLOR_COLLECTION='Theme'; const PRIMITIVE_PREFIX='primitives/';
+function resolveColor(varId,modeId,d=0){if(d>10)return null;const v=idToVar[varId];if(!v)return null;const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val)return null;if(val?.type==='VARIABLE_ALIAS')return resolveColor(val.id,modeId,d+1);if('r'in val)return toHex(val);return null;}
+const PRIMITIVE_PREFIX='primitives/';const EXCLUDE_COLLECTIONS=[];
 const MODES=[{name:'Light',snapshotKey:'light'},{name:'Dark',snapshotKey:'dark'}];
-const col=collections.find(c=>c.name===COLOR_COLLECTION);
-const modeIds=Object.fromEntries(MODES.map(m=>[m.snapshotKey, col.modes.find(fm=>fm.name===m.name)?.modeId]));
-const vars=col.variableIds.map(id=>idToVar[id]).filter(v=>v&&v.resolvedType==='COLOR'&&!v.name.startsWith(PRIMITIVE_PREFIX));
-const BATCH_START=0, BATCH_END=190; // ← substitute per iteration
+const colorVars=[];
+for(const col of collections){if(EXCLUDE_COLLECTIONS.includes(col.name))continue;for(const id of col.variableIds){const v=idToVar[id];if(v&&v.resolvedType==='COLOR'&&!v.name.startsWith(PRIMITIVE_PREFIX))colorVars.push({v,col});}}
+const BATCH_START=0,BATCH_END=190;
 const out={};
-for(const v of vars.slice(BATCH_START,BATCH_END)){
-  out[v.name]=MODES.map(m=>resolve(v.id,modeIds[m.snapshotKey]));
-}
-return out; // {tokenName: [lightHex, darkHex, ...]} — one value per mode in MODES order
-```
-
-**After all batch calls:** merge into per-mode objects:
-```
-light = {}; dark = {};
-for each batch result:
-  for each [tokenName, [lightHex, darkHex]] in result:
-    light[tokenName] = lightHex
-    dark[tokenName]  = darkHex
-```
-
-Then fetch **aliases in batches** (same BATCH_SIZE, same iteration count):
-
-```js
-// Alias batch — substitute BATCH_START / BATCH_END per iteration
-function aliasChain(varId,modeId,d=0){if(d>10)return[];const v=idToVar[varId];if(!v)return[];const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val||typeof val!=='object'||val.type!=='VARIABLE_ALIAS')return[];const a=idToVar[val.id];if(!a)return[];return[a.name,...aliasChain(val.id,modeId,d+1)];}
-// Reuse collections / idToVar / col / vars / modeIds / MODES from above
-const BATCH_START=0, BATCH_END=190;
-const out={};
-for(const m of MODES){out[m.snapshotKey]={};}
-for(const v of vars.slice(BATCH_START,BATCH_END)){
-  for(const m of MODES){
-    const chain=aliasChain(v.id,modeIds[m.snapshotKey]);
-    if(chain.length>0)out[m.snapshotKey][v.name]=chain;
-  }
+for(const{v,col}of colorVars.slice(BATCH_START,BATCH_END)){
+  out[v.name]=MODES.map(m=>{const modeEntry=col.modes.find(cm=>cm.name===m.name);const modeId=modeEntry?.modeId??col.modes[0]?.modeId;return resolveColor(v.id,modeId);});
 }
 return out;
 ```
 
-Merge alias batches the same way — accumulate into a single `aliases` object keyed by snapshotKey.
-
-Then fetch **sizing and typography** in one separate call (these collections are small enough to avoid truncation):
+**After all batch calls:** merge into per-mode objects. Then **alias batches** (same BATCH_SIZE):
 
 ```js
-// Sizing + breakpoints + strings + typography — single call, always safe
+function aliasChain(varId,modeId,d=0){if(d>10)return[];const v=idToVar[varId];if(!v)return[];const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val||typeof val!=='object'||val.type!=='VARIABLE_ALIAS')return[];const a=idToVar[val.id];if(!a)return[];return[a.name,...aliasChain(val.id,modeId,d+1)];}
+const BATCH_START=0,BATCH_END=190;
+const out={};for(const m of MODES)out[m.snapshotKey]={};
+for(const{v,col}of colorVars.slice(BATCH_START,BATCH_END)){
+  for(const m of MODES){const modeEntry=col.modes.find(cm=>cm.name===m.name);const modeId=modeEntry?.modeId??col.modes[0]?.modeId;const chain=aliasChain(v.id,modeId);if(chain.length>0)out[m.snapshotKey][v.name]=chain;}
+}
+return out;
+```
+
+Then **non-color type pass** (single call, always safe):
+
+```js
+function r4(n){return Math.round(n*10000)/10000;}
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-const SIZING_COLLECTION='Sizing'; const BREAKPOINT_COLLECTION=null; const COLOR_COLLECTION='Theme'; // fill from ds-config.json
-const sizingOut={};
-if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
-const bpOut={};
-if(BREAKPOINT_COLLECTION){const bc=collections.find(c=>c.name===BREAKPOINT_COLLECTION);if(bc){for(const mode of bc.modes){bpOut[mode.name]={};for(const id of bc.variableIds){const v=idToVar[id];if(!v)continue;const val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];if(v.resolvedType==='FLOAT'&&typeof val==='number')bpOut[mode.name][v.name]=val+'px';else if(v.resolvedType==='BOOLEAN')bpOut[mode.name][v.name]=val?'true':'false';}}}}
-const strOut={};
-for(const c of collections){if(c.name===COLOR_COLLECTION)continue;for(const id of c.variableIds){const v=idToVar[id];if(!v||v.resolvedType!=='STRING')continue;const val=Object.values(v.valuesByMode)[0];if(typeof val==='string')strOut[v.name]=val;}}
+const PRIMITIVE_PREFIX='primitives/';const EXCLUDE_COLLECTIONS=[];
+const sizingOut={},bpOut={},strOut={},boolOut={},animOut={};
+for(const col of collections){
+  if(EXCLUDE_COLLECTIONS.includes(col.name))continue;
+  const isMulti=col.modes.length>=3;
+  for(const id of col.variableIds){
+    const v=idToVar[id];if(!v||v.resolvedType==='COLOR')continue;
+    if(v.resolvedType==='FLOAT'){
+      if(isMulti){for(const mode of col.modes){bpOut[mode.name]=bpOut[mode.name]??{};let val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];if(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'){const a=idToVar[val.id];val=a?.valuesByMode[mode.modeId]??Object.values(a?.valuesByMode??{})[0];}if(typeof val==='number')bpOut[mode.name][v.name]=val+'px';}}
+      else{const modeId=col.modes[0]?.modeId;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}if(typeof val==='number')sizingOut[v.name]=val+'px';}
+    }else if(v.resolvedType==='STRING'){const val=Object.values(v.valuesByMode)[0];if(typeof val==='string')strOut[v.name]=val;
+    }else if(v.resolvedType==='BOOLEAN'){for(const mode of col.modes){boolOut[mode.name]=boolOut[mode.name]??{};const val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];if(typeof val==='boolean')boolOut[mode.name][v.name]=val;}
+    }else if(v.resolvedType==='EASING'){const val=Object.values(v.valuesByMode)[0];if(val?.bezierValues){const{p1x,p1y,p2x,p2y}=val.bezierValues;animOut[v.name]=`cubic-bezier(${r4(p1x)}, ${r4(p1y)}, ${r4(p2x)}, ${r4(p2y)})`;}
+    }else if(v.resolvedType==='TIMING'){const val=Object.values(v.valuesByMode)[0];if(typeof val==='number')animOut[v.name]=Math.round(val*1000)+'ms';}
+  }
+}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
-const styles=await figma.getLocalTextStylesAsync(); const typo={};
+const styles=await figma.getLocalTextStylesAsync();const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';typo[key]=entry;}
-return {sizing:sizingOut,breakpoints:bpOut,strings:strOut,typography:typo};
+return {sizing:sizingOut,breakpoints:bpOut,strings:strOut,booleans:boolOut,animation:animOut,typography:typo};
 ```
 
 **Final assembly** (after all calls complete):
@@ -288,6 +332,10 @@ return {sizing:sizingOut,breakpoints:bpOut,strings:strOut,typography:typo};
   color: { light, dark, /* other modes */ },
   aliases: aliasesOut,
   sizing: sizingOut,
+  breakpoints: bpOut,    // {} when no multi-mode FLOAT collections
+  strings: strOut,       // {} when no STRING vars (outside excluded collections)
+  booleans: boolOut,     // {} when no BOOLEAN vars — advisory only in Gate [2]
+  animation: animOut,    // {} when no EASING/TIMING vars
   typography: typo
 }
 ```

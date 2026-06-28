@@ -79,7 +79,7 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
        packages/ui/src/figma-vars.snapshot.json ✓ (updated today)
        ✅ All outputs current
 
-❌  [2] Token values match Figma (color · radius · gap · padding · stroke · typography · breakpoints · font strings)
+❌  [2] Token values match Figma (color · sizing · typography · breakpoints · strings · animation)
        ✅ PASS  87
        ❌ FAIL  2
          ❌ [color/Dark] buttonPrimary/background → --buttonPrimary-background
@@ -93,7 +93,7 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
   ⏭   [1]   Figma snapshots are up to date                  Skipped
          Plan detected: non-Enterprise (Figma Variables REST API not available)
          Risk: if DS component structure changed since the last committed snapshot, Gate [3] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.
-  ✅  [2]   Token values match Figma (color · radius · gap …Pass
+  ✅  [2]   Token values match Figma (color · sizing · typo…Pass
   ✅  [3]   Component structure matches Figma (layout, spac…Pass
   ⏭   [4]   Every DS token bound in Figma is implemented in…Skipped
          Plan detected: non-Enterprise (Figma Variables REST API not available)

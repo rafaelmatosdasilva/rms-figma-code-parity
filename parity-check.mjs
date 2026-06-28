@@ -74,7 +74,7 @@ const ICON_TEXT_ALIAS = cfg.figma?.namingConvention?.iconTextAlias  ?? true;
 
 let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
     KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {},
-    BOOLEAN_SKIP = new Set();
+    BOOLEAN_SKIP = new Set(), ANIMATION_SKIP = new Set();
 let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 // neutralMaps[i] = { key: '#hex' } for mode i — keys match NEUTRAL_VAR_RE capture group
 let neutralMaps = MODES.map(() => ({}));
@@ -89,7 +89,8 @@ try {
   if (map.SIZING_SKIP)     SIZING_SKIP     = map.SIZING_SKIP;
   if (map.TYPO)            TYPO            = map.TYPO;
   if (map.NEUTRAL_VAR_RE)  NEUTRAL_VAR_RE  = map.NEUTRAL_VAR_RE;
-  if (map.BOOLEAN_SKIP)   BOOLEAN_SKIP    = map.BOOLEAN_SKIP instanceof Set ? map.BOOLEAN_SKIP : new Set(map.BOOLEAN_SKIP);
+  if (map.BOOLEAN_SKIP)    BOOLEAN_SKIP   = map.BOOLEAN_SKIP instanceof Set ? map.BOOLEAN_SKIP : new Set(map.BOOLEAN_SKIP);
+  if (map.ANIMATION_SKIP)  ANIMATION_SKIP = map.ANIMATION_SKIP instanceof Set ? map.ANIMATION_SKIP : new Set(map.ANIMATION_SKIP);
   // Multi-mode: NEUTRAL_MAPS overrides NEUTRAL_LIGHT / NEUTRAL_DARK
   if (map.NEUTRAL_MAPS) {
     if (Array.isArray(map.NEUTRAL_MAPS)) {
@@ -497,6 +498,49 @@ if (bpModeNames.length > 0) {
   }
 }
 
+// ── 6. BOOLEANS ───────────────────────────────────────────────────────────────
+// BOOLEAN-typed Figma variables from any collection (theme toggles, feature flags,
+// display controls). Advisory only — document implemented vars in BOOLEAN_SKIP.
+const boolSnap = snap.booleans ?? {};
+const boolSeen = new Set();
+for (const [modeName, tokens] of Object.entries(boolSnap)) {
+  for (const [tokenName] of Object.entries(tokens)) {
+    if (!boolSeen.has(tokenName) && !BOOLEAN_SKIP.has(tokenName)) {
+      boolSeen.add(tokenName);
+      const cssVar = sizingTokenToVar(tokenName) ?? '--' + tokenName.replace(/\//g, '-');
+      BOOL_INFO.push({ token: tokenName, cssVar, breakpoint: modeName });
+    }
+  }
+}
+
+// ── 7. ANIMATION ──────────────────────────────────────────────────────────────
+// EASING and TIMING Figma variables — pre-formatted as CSS values in the snapshot:
+//   EASING → 'cubic-bezier(p1x, p1y, p2x, p2y)'
+//   TIMING → 'Nms'
+// Each maps to a CSS custom property the same way sizing/string tokens do.
+const animSnap = snap.animation ?? {};
+for (const [tokenName, expected] of Object.entries(animSnap)) {
+  if (ANIMATION_SKIP.has(tokenName)) {
+    SKIP.push({ dimension: 'animation', token: tokenName, mode: '-', reason: 'excluded in ANIMATION_SKIP' });
+    continue;
+  }
+  const cssVar = sizingTokenToVar(tokenName);
+  if (cssVar === null) {
+    SKIP.push({ dimension: 'animation', token: tokenName, mode: '-', reason: 'excluded in SIZING_SKIP' });
+    continue;
+  }
+  const raw = modeVars[0][cssVar];
+  if (!raw) {
+    FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${expected} to ${THEME_PATH}` });
+    continue;
+  }
+  if (raw.trim() !== String(expected).trim()) {
+    FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} — change ${cssVar}: ${raw} → ${expected}` });
+  } else {
+    PASS.push(`animation ${tokenName}`);
+  }
+}
+
 // ── Auto-fix: apply sizing/typography fixes to theme.css ─────────────────────
 if (FIX_MODE && autoFixes.length > 0) {
   let lines = rawCss.split('\n');
@@ -521,6 +565,7 @@ if (FIX_MODE && autoFixes.length > 0) {
 const _extraDims = [
   Object.keys(strSnap).length  > 0 && 'font strings',
   bpModeNames.length > 0 && `breakpoints (${bpModeNames.length} modes)`,
+  Object.keys(animSnap).length > 0 && 'animation',
 ].filter(Boolean);
 const _passLabel = ['color · radius · gap · padding · stroke · typography', ..._extraDims].join(' · ');
 console.log(`\n✅ PASS  ${PASS.length}   (${_passLabel})`);
@@ -529,7 +574,7 @@ console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
 if (snap.aliases) console.log(`🔗 ALIAS FAIL  ${ALIAS_FAIL.length}  (same hex, wrong primitive chain)`);
 if (sourceSnap)   console.log(`⏳ PENDING FIGMA SYNC  ${PENDING_FIGMA_SYNC.length}  (code matches DS source; consumer file has a pending library update)`);
-if (BOOL_INFO.length) console.log(`ℹ️  BOOLEAN TOKENS  ${BOOL_INFO.length}  (need implementation map in parity-map.mjs BOOLEAN_SKIP)`);
+if (BOOL_INFO.length) console.log(`ℹ️  BOOLEAN TOKENS  ${BOOL_INFO.length}  (implement via display rules or class toggles — add to BOOLEAN_SKIP in parity-map.mjs to suppress)`);
 
 if (SKIP.length) {
   console.log('\n─── Skipped (expected — each has a documented reason) ─────────');
@@ -571,11 +616,11 @@ if (PENDING_FIGMA_SYNC.length) {
 
 if (BOOL_INFO.length) {
   console.log('\n─── ℹ️  Boolean tokens (need implementation map) ──────────────');
-  console.log('   These Figma BOOLEAN vars control element visibility per breakpoint.');
-  console.log('   Implement via @media display rules or JS class toggles, then add to');
-  console.log('   BOOLEAN_SKIP in parity-map.mjs to suppress this advisory.');
+  console.log('   Figma BOOLEAN vars control visibility, feature flags, or theme toggles.');
+  console.log('   Implement via display rules, data-* attributes, or JS class toggles,');
+  console.log('   then add each token to BOOLEAN_SKIP in parity-map.mjs to suppress.');
   for (const b of BOOL_INFO) {
-    console.log(`  ℹ️  [breakpoints/${b.breakpoint}] ${b.token}  →  ${b.cssVar}`);
+    console.log(`  ℹ️  [${b.breakpoint}] ${b.token}  →  ${b.cssVar}`);
   }
 }
 
@@ -585,6 +630,7 @@ if (JSON_MODE) {
     fail: FAIL, aliasFail: ALIAS_FAIL, newSkip: NEW_SKIP, skip: SKIP,
     pendingFigmaSync: PENDING_FIGMA_SYNC,
     boolInfo: BOOL_INFO,
+    animationCount: Object.keys(animSnap).length,
     passList: PASS,
   }, null, 2));
 }

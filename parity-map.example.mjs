@@ -89,14 +89,21 @@ export const TYPO = {
   // '--l-size':   ['l', 'size'],
 };
 
-// ─── BREAKPOINT BOOLEAN TOKENS: document display-toggle vars ─────────────────
-// Breakpoint collections may include BOOLEAN vars that control element visibility
-// per breakpoint (e.g. 'components/main-menu/button-donate/display').
-// These can't be CSS custom properties — implement via @media display rules or
-// JS class toggles, then list here to suppress the ℹ️ BOOLEAN advisory in Gate [2].
+// ─── BOOLEAN TOKENS: document how display/feature vars are implemented ────────
+// Figma BOOLEAN vars from any collection (breakpoints, theme, feature flags) that
+// control element visibility or theme behaviour. These aren't CSS custom properties
+// — implement via @media display rules, data-* attributes, or JS class toggles,
+// then list the token path here to suppress the ℹ️ advisory in Gate [2].
 export const BOOLEAN_SKIP = new Set([
-  // 'components/main-menu/button-donate/display',
-  // 'components/main-menu/button-menu/display',
+  // 'components/main-menu/button-donate/display',   // @media hidden below 768px
+  // 'base/shadow/allDisplay',                        // controlled via data-shadow attribute
+]);
+
+// ─── ANIMATION TOKENS: tokens not mapped to a CSS var ────────────────────────
+// EASING/TIMING vars handled via JS (e.g. Web Animations API) rather than CSS
+// custom properties. Listed here to suppress Gate [2] FAIL for missing CSS vars.
+export const ANIMATION_SKIP = new Set([
+  // 'modal/enter/transitionTimingFunction',  // handled via JS Web Animations API
 ]);
 
 // ─── BOUND-TOKEN COVERAGE: Tokens not given a dedicated CSS var ───────────────
