@@ -89,5 +89,19 @@ if (UNCOVERED.length) {
   process.exit(1);
 } else {
   console.log('\nEvery Figma-bound token is implemented or explicitly deferred. ✓\n');
+
+  // Orphaned token advisory: DS tokens that exist but are never bound to any frame node
+  try {
+    const SNAP_VARS = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
+    const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
+    const snapTokens = new Set(Object.keys(snap.color?.light ?? {}));
+    const orphaned = [...snapTokens].filter(t => !boundTokens.includes(t) && !isCovered(t));
+    if (orphaned.length) {
+      console.log(`ℹ️  ORPHANED TOKENS (${orphaned.length}) — in DS snapshot but not bound to any frame node`);
+      for (const t of orphaned) console.log(`     ${t}`);
+      console.log('');
+    }
+  } catch { /* snapshot may not exist yet */ }
+
   process.exit(0);
 }

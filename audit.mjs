@@ -81,6 +81,30 @@ if (SHOW_TREND) {
       console.log(`  ${icon}  ${entry.date}  ${String(filled).padStart(2)}/${total} [${bar}]`);
     }
     if (!hist.length) console.log('  No history yet — run: node scripts/audit.mjs');
+
+    // Regression delta: show gate changes since last run
+    if (recent.length >= 2) {
+      const prev = recent[recent.length - 2];
+      const curr = recent[recent.length - 1];
+      const prevMap = Object.fromEntries((prev.gates ?? []).map(g => [g.label, g.pass]));
+      const changes = (curr.gates ?? []).filter(g => prevMap[g.label] !== undefined && prevMap[g.label] !== g.pass);
+      if (changes.length) {
+        console.log('\n  ⚠️  Changes since last run:');
+        for (const g of changes)
+          console.log(`       ${g.pass ? C.green('✅') : C.red('❌')} ${g.label}  ${prevMap[g.label] ? 'PASS→FAIL' : 'FAIL→PASS'}`);
+      } else {
+        console.log('\n  ✅ No gate changes since last run');
+      }
+    }
+
+    // Oscillation detector: gate that flipped ≥3× in last 6 runs
+    const last6 = hist.slice(-6);
+    for (const gate of (last6[0]?.gates ?? [])) {
+      const states = last6.map(r => (r.gates ?? []).find(g => g.label === gate.label)?.pass);
+      const flips = states.filter((s, i) => i > 0 && s !== states[i - 1]).length;
+      if (flips >= 3) console.log(`  ⚠️  UNSTABLE: "${gate.label}" flipped ${flips}× in last ${last6.length} runs`);
+    }
+
     console.log(C.bold('─'.repeat(WIDTH)) + '\n');
   } catch {
     console.log('\n⏭  No history yet — run: node scripts/audit.mjs\n');

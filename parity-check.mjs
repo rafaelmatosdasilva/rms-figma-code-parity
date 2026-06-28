@@ -217,6 +217,20 @@ function figmaAliasToCSSVar(alias) {
   return '--' + bare.toLowerCase().replace(/\s+/g, '-').replace(/\//g, '-');
 }
 
+// Converts a Figma alias hop name to CSS var, applying the project's naming conventions.
+// Unlike figmaAliasToCSSVar: preserves case for semantic tokens and drops DROP_SEGMENTS suffixes.
+// Used for full intermediate chain comparisons.
+function aliasHopToVar(hop) {
+  if (hop.startsWith(PRIMITIVE_PREFIX)) {
+    const bare = hop.slice(PRIMITIVE_PREFIX.length);
+    return '--' + bare.toLowerCase().replace(/\s+/g, '-').replace(/\//g, '-');
+  }
+  let v = ICON_TEXT_ALIAS ? hop.replace(/\/iconText\//g, '/text/') : hop;
+  if (DROP_SEGMENTS.includes('color'))   v = v.replace(/\/color$/, '');
+  if (DROP_SEGMENTS.includes('default')) v = v.replace(/\/default$/, '');
+  return '--' + v.replace(/\//g, '-');
+}
+
 // ── Fix hint helpers ──────────────────────────────────────────────────────────
 // Reverse-lookup: given a target hex, find the matching neutral var name for a mode
 function hexToNeutralVar(hex, modeIdx) {
@@ -285,7 +299,7 @@ const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 const sourceSnap = snap.source ?? null;
 
 // ── Accumulators ──────────────────────────────────────────────────────────────
-const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [], BOOL_INFO = [];
+const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [], BOOL_INFO = [], ANIM_INFO = [];
 const autoFixes = []; // { cssVar, newVal, line } — applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
@@ -344,15 +358,43 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
       const figmaRaw = snap.aliases?.[modeMeta.snapshotKey]?.[tokenKey]
                     ?? snap.aliases?.[modeMeta.snapshotKey]?.[token] ?? null;
       if (figmaRaw) {
-        const chain = Array.isArray(figmaRaw) ? figmaRaw : [figmaRaw];
-        const finalFigmaHop = chain[chain.length - 1];
-        if (finalFigmaHop.startsWith(PRIMITIVE_PREFIX)) {
-          const expectedFinalCSSVar = figmaAliasToCSSVar(finalFigmaHop);
-          let cur = cssVar, hops = 0;
-          while (hops++ < 10) { const next = resolveCSSAlias(cur, modeIdx); if (!next) break; cur = next; }
-          const actualFinalCSSVar = cur === cssVar ? null : cur;
-          if (actualFinalCSSVar !== expectedFinalCSSVar) {
-            ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain: chain, expectedFinalCSSVar, actualFinalCSSVar });
+        const rawHops = Array.isArray(figmaRaw) ? figmaRaw : [figmaRaw];
+        const figmaChain = rawHops.map(hop => aliasHopToVar(hop));
+        const lastFigmaHop = figmaChain[figmaChain.length - 1];
+
+        // Only check when Figma chain ends in a known primitive
+        if (rawHops[rawHops.length - 1].startsWith(PRIMITIVE_PREFIX)) {
+          const cssChain = [];
+          let cur = cssVar;
+          for (let i = 0; i < 10; i++) {
+            const next = resolveCSSAlias(cur, modeIdx);
+            if (!next) break;
+            cssChain.push(next);
+            cur = next;
+          }
+
+          const lastCSSHop = cssChain[cssChain.length - 1] ?? null;
+
+          // Final primitive must match
+          if (lastCSSHop !== lastFigmaHop) {
+            ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain, cssChain,
+              mismatchAt: cssChain.length - 1,
+              expected: lastFigmaHop, actual: lastCSSHop ?? '(no alias chain — hardcoded hex)' });
+          } else {
+            // Check intermediate hops where both chains have a value.
+            // If CSS arrives at the final primitive directly (skipping semantic intermediates),
+            // that's allowed — break early. Only flag if CSS routes through a different semantic var.
+            for (let i = 0; i < figmaChain.length - 1; i++) {
+              const csshop = cssChain[i];
+              if (csshop === undefined) break; // CSS chain is shorter — skip remaining
+              if (csshop === lastFigmaHop) break; // CSS arrived at primitive directly — OK
+              if (csshop !== figmaChain[i]) {
+                ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain, cssChain,
+                  mismatchAt: i,
+                  expected: figmaChain[i], actual: csshop });
+                break;
+              }
+            }
           }
         }
       }
@@ -538,6 +580,11 @@ for (const [tokenName, expected] of Object.entries(animSnap)) {
     FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} — change ${cssVar}: ${raw} → ${expected}` });
   } else {
     PASS.push(`animation ${tokenName}`);
+    // Usage advisory: var declared with right value but never referenced in transition/animation
+    const usageRe = new RegExp(`var\\(${cssVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,)]`);
+    if (!usageRe.test(rawCss)) {
+      ANIM_INFO.push({ token: tokenName, cssVar, note: 'declared but not referenced in any transition/animation rule — add to ANIMATION_SKIP if used via JS' });
+    }
   }
 }
 
@@ -600,9 +647,10 @@ if (ALIAS_FAIL.length) {
   console.log('\n─── 🔗 Alias mismatches (same hex, wrong primitive chain) ─────');
   for (const a of ALIAS_FAIL) {
     console.log(`  🔗 [color/${a.mode}] ${a.token} → ${a.cssVar}`);
-    console.log(`       Figma chain:      ${a.figmaChain.join(' → ')}`);
-    console.log(`       Expected CSS end: ${a.expectedFinalCSSVar}`);
-    console.log(`       Actual CSS end:   ${a.actualFinalCSSVar ?? '(no CSS alias chain — hardcoded hex)'}`);
+    console.log(`       Figma chain:  ${a.figmaChain.join(' → ')}`);
+    console.log(`       CSS chain:    ${a.cssChain?.join(' → ') || '(no alias chain — hardcoded hex)'}`);
+    if (a.mismatchAt !== undefined)
+      console.log(`       Mismatch at hop #${a.mismatchAt}: expected ${a.expected}  got ${a.actual}`);
   }
 }
 if (PENDING_FIGMA_SYNC.length) {
@@ -623,6 +671,14 @@ if (BOOL_INFO.length) {
     console.log(`  ℹ️  [${b.breakpoint}] ${b.token}  →  ${b.cssVar}`);
   }
 }
+if (ANIM_INFO.length) {
+  console.log('\n─── ℹ️  Animation vars not used in CSS transitions ────────────');
+  console.log('   These vars are declared with the right value but not referenced in any');
+  console.log('   transition/animation rule. Add to ANIMATION_SKIP if used via JS API.');
+  for (const a of ANIM_INFO) {
+    console.log(`  ℹ️  ${a.token}  →  ${a.cssVar}`);
+  }
+}
 
 if (JSON_MODE) {
   writeFileSync(join(ROOT, 'parity-check-result.json'), JSON.stringify({
@@ -630,6 +686,7 @@ if (JSON_MODE) {
     fail: FAIL, aliasFail: ALIAS_FAIL, newSkip: NEW_SKIP, skip: SKIP,
     pendingFigmaSync: PENDING_FIGMA_SYNC,
     boolInfo: BOOL_INFO,
+    animInfo: ANIM_INFO,
     animationCount: Object.keys(animSnap).length,
     passList: PASS,
   }, null, 2));

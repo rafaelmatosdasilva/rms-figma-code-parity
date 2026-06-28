@@ -30,7 +30,7 @@ const PLUGIN_CSS = cfg.paths?.pluginCSS    ?? [];
 
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────
 let EXPLICIT = {}, EXPLICIT_SIZING = {}, SKIP_TOKENS = new Set();
-let SIZING_SKIP = new Map(), SYSTEM_VARS = new Set();
+let SIZING_SKIP = new Map(), SYSTEM_VARS = new Set(), typoMap = null;
 try {
   const map = await import(join(ROOT, 'parity-map.mjs'));
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
@@ -38,6 +38,7 @@ try {
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;
   if (map.SIZING_SKIP)     SIZING_SKIP     = map.SIZING_SKIP;
   if (map.SYSTEM_VARS)     SYSTEM_VARS     = map.SYSTEM_VARS;
+  if (map.TYPO)            typoMap         = map.TYPO;
 } catch { /* optional */ }
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
@@ -56,6 +57,8 @@ const knownCSSVars = new Set(SYSTEM_VARS);
 // EXPLICIT targets
 for (const cssVar of Object.values(EXPLICIT))        if (cssVar) knownCSSVars.add(cssVar);
 for (const cssVar of Object.values(EXPLICIT_SIZING)) if (cssVar) knownCSSVars.add(cssVar);
+// TYPO map CSS var keys (typography vars auto-registered without needing SYSTEM_VARS entries)
+if (typoMap) { for (const cssVar of Object.keys(typoMap)) knownCSSVars.add(cssVar); }
 
 // Convention-derived vars from every Figma token
 function conventionVar(token) {
