@@ -73,7 +73,8 @@ const DROP_SEGMENTS   = cfg.figma?.namingConvention?.dropSegments   ?? ['color',
 const ICON_TEXT_ALIAS = cfg.figma?.namingConvention?.iconTextAlias  ?? true;
 
 let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
-    KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {};
+    KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {},
+    BOOLEAN_SKIP = new Set();
 let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 // neutralMaps[i] = { key: '#hex' } for mode i — keys match NEUTRAL_VAR_RE capture group
 let neutralMaps = MODES.map(() => ({}));
@@ -88,6 +89,7 @@ try {
   if (map.SIZING_SKIP)     SIZING_SKIP     = map.SIZING_SKIP;
   if (map.TYPO)            TYPO            = map.TYPO;
   if (map.NEUTRAL_VAR_RE)  NEUTRAL_VAR_RE  = map.NEUTRAL_VAR_RE;
+  if (map.BOOLEAN_SKIP)   BOOLEAN_SKIP    = map.BOOLEAN_SKIP instanceof Set ? map.BOOLEAN_SKIP : new Set(map.BOOLEAN_SKIP);
   // Multi-mode: NEUTRAL_MAPS overrides NEUTRAL_LIGHT / NEUTRAL_DARK
   if (map.NEUTRAL_MAPS) {
     if (Array.isArray(map.NEUTRAL_MAPS)) {
@@ -256,6 +258,23 @@ function sizingTokenToVar(token) {
   return '--' + token.replace(/\//g, '-');
 }
 
+// ── Breakpoint media-query parser ─────────────────────────────────────────────
+// Returns { root: {'--var': 'val'}, '768': {...}, ... } keyed by min-width string.
+// The 'root' key holds all vars declared in :root without a media query wrapper.
+function parseMediaQueries(cssText) {
+  const result = { root: {} };
+  const rootBlock = cssText.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? '';
+  for (const m of rootBlock.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:\s*([^;]+);/g))
+    result.root[`--${m[1]}`] = m[2].trim();
+  const mediaRe = /@media[^{]*\(\s*min-width\s*:\s*(\d+(?:\.\d+)?)\s*px\s*\)[^{]*\{([\s\S]*?)\}\s*\}/g;
+  for (const m of cssText.matchAll(mediaRe)) {
+    result[m[1]] = {};
+    for (const vm of m[2].matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:\s*([^;]+);/g))
+      result[m[1]][`--${vm[1]}`] = vm[2].trim();
+  }
+  return result;
+}
+
 // ── Load snapshot ─────────────────────────────────────────────────────────────
 const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 
@@ -265,7 +284,7 @@ const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 const sourceSnap = snap.source ?? null;
 
 // ── Accumulators ──────────────────────────────────────────────────────────────
-const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [];
+const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [], BOOL_INFO = [];
 const autoFixes = []; // { cssVar, newVal, line } — applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
@@ -402,6 +421,82 @@ if (snap.typography && Object.keys(TYPO).length) {
   SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'TYPO map empty in parity-map.mjs — add your type scale vars' });
 }
 
+// ── 4. STRINGS ────────────────────────────────────────────────────────────────
+// STRING-typed Figma variables (font-family, font-weight, etc.) stored in snapshot.strings.
+// Each maps to a CSS custom property with a bare string value (no px suffix).
+const strSnap = snap.strings ?? {};
+for (const [tokenName, expected] of Object.entries(strSnap)) {
+  const cssVar = sizingTokenToVar(tokenName);
+  if (cssVar === null) {
+    SKIP.push({ dimension: 'strings', token: tokenName, mode: '-', reason: 'excluded in SIZING_SKIP' });
+    continue;
+  }
+  const raw = modeVars[0][cssVar];
+  if (!raw) {
+    FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${expected} to ${THEME_PATH}` });
+    continue;
+  }
+  const norm = s => String(s).replace(/^["']|["']$/g, '').trim();
+  if (norm(raw) !== norm(expected)) {
+    FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} — change ${cssVar}: ${raw} → ${expected}` });
+  } else {
+    PASS.push(`strings ${tokenName}`);
+  }
+}
+
+// ── 5. BREAKPOINTS ────────────────────────────────────────────────────────────
+// Multi-mode FLOAT collection (e.g. Phone / Tablet / Laptop / Desktop).
+// Each mode's 'viewport/min-width' value tells us the CSS @media min-width for that mode.
+// The smallest-width mode is the base (:root); larger modes map to @media blocks.
+const bpSnap = snap.breakpoints ?? {};
+const bpModeNames = Object.keys(bpSnap);
+if (bpModeNames.length > 0) {
+  const cssBlocks = parseMediaQueries(rawCss.replace(/\/\*[\s\S]*?\*\//g, ''));
+  const modeWidths = {};
+  for (const [modeName, tokens] of Object.entries(bpSnap)) {
+    const raw = tokens['viewport/min-width'];
+    modeWidths[modeName] = raw ? parseFloat(raw) : 0;
+  }
+  const sortedModes = bpModeNames.slice().sort((a, b) => modeWidths[a] - modeWidths[b]);
+
+  for (const [modeIdx, modeName] of sortedModes.entries()) {
+    const width = modeWidths[modeName];
+    const cssBlock = modeIdx === 0
+      ? cssBlocks.root
+      : (cssBlocks[String(width)] ?? cssBlocks[String(Math.round(width))] ?? null);
+    const tokens = bpSnap[modeName];
+
+    for (const [tokenName, expected] of Object.entries(tokens)) {
+      if (tokenName.startsWith('viewport/')) continue; // viewport vars define breakpoints, not CSS props
+      if (expected === 'true' || expected === 'false') {
+        if (!BOOLEAN_SKIP.has(tokenName)) {
+          const cssVar = sizingTokenToVar(tokenName) ?? '--' + tokenName.replace(/\//g, '-');
+          BOOL_INFO.push({ token: tokenName, cssVar, breakpoint: modeName });
+        }
+        continue;
+      }
+      const cssVar = sizingTokenToVar(tokenName);
+      if (cssVar === null) {
+        SKIP.push({ dimension: 'breakpoints', token: tokenName, mode: modeName, reason: 'excluded in SIZING_SKIP' });
+        continue;
+      }
+      const actual = cssBlock?.[cssVar];
+      if (!actual) {
+        const rootVal = cssBlocks.root[cssVar];
+        if (rootVal === expected) { PASS.push(`breakpoints ${tokenName}@${modeName}`); continue; }
+        const fix = modeIdx === 0
+          ? `Add ${cssVar}: ${expected} to :root in ${THEME_PATH}`
+          : `Add ${cssVar}: ${expected} inside @media (min-width: ${width}px) in ${THEME_PATH}`;
+        FAIL.push({ dimension: 'breakpoints', token: tokenName, cssVar, mode: modeName, issue: modeIdx === 0 ? 'CSS var not declared in :root' : `missing in @media (min-width: ${width}px)`, fixHint: fix });
+      } else if (actual !== expected) {
+        FAIL.push({ dimension: 'breakpoints', token: tokenName, cssVar, mode: modeName, figma: expected, css: actual, hint: `@media ${width}px: CSS has ${actual} but Figma says ${expected}` });
+      } else {
+        PASS.push(`breakpoints ${tokenName}@${modeName}`);
+      }
+    }
+  }
+}
+
 // ── Auto-fix: apply sizing/typography fixes to theme.css ─────────────────────
 if (FIX_MODE && autoFixes.length > 0) {
   let lines = rawCss.split('\n');
@@ -423,12 +518,18 @@ if (FIX_MODE && autoFixes.length > 0) {
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
-console.log(`\n✅ PASS  ${PASS.length}   (color · radius · gap · padding · stroke · typography)`);
+const _extraDims = [
+  Object.keys(strSnap).length  > 0 && 'font strings',
+  bpModeNames.length > 0 && `breakpoints (${bpModeNames.length} modes)`,
+].filter(Boolean);
+const _passLabel = ['color · radius · gap · padding · stroke · typography', ..._extraDims].join(' · ');
+console.log(`\n✅ PASS  ${PASS.length}   (${_passLabel})`);
 console.log(`⏭  SKIP  ${SKIP.length}`);
 console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
 if (snap.aliases) console.log(`🔗 ALIAS FAIL  ${ALIAS_FAIL.length}  (same hex, wrong primitive chain)`);
 if (sourceSnap)   console.log(`⏳ PENDING FIGMA SYNC  ${PENDING_FIGMA_SYNC.length}  (code matches DS source; consumer file has a pending library update)`);
+if (BOOL_INFO.length) console.log(`ℹ️  BOOLEAN TOKENS  ${BOOL_INFO.length}  (need implementation map in parity-map.mjs BOOLEAN_SKIP)`);
 
 if (SKIP.length) {
   console.log('\n─── Skipped (expected — each has a documented reason) ─────────');
@@ -468,11 +569,22 @@ if (PENDING_FIGMA_SYNC.length) {
   }
 }
 
+if (BOOL_INFO.length) {
+  console.log('\n─── ℹ️  Boolean tokens (need implementation map) ──────────────');
+  console.log('   These Figma BOOLEAN vars control element visibility per breakpoint.');
+  console.log('   Implement via @media display rules or JS class toggles, then add to');
+  console.log('   BOOLEAN_SKIP in parity-map.mjs to suppress this advisory.');
+  for (const b of BOOL_INFO) {
+    console.log(`  ℹ️  [breakpoints/${b.breakpoint}] ${b.token}  →  ${b.cssVar}`);
+  }
+}
+
 if (JSON_MODE) {
   writeFileSync(join(ROOT, 'parity-check-result.json'), JSON.stringify({
     pass: FAIL.length === 0 && NEW_SKIP.length === 0 && ALIAS_FAIL.length === 0,
     fail: FAIL, aliasFail: ALIAS_FAIL, newSkip: NEW_SKIP, skip: SKIP,
     pendingFigmaSync: PENDING_FIGMA_SYNC,
+    boolInfo: BOOL_INFO,
     passList: PASS,
   }, null, 2));
 }

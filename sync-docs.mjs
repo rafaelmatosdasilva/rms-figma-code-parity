@@ -87,7 +87,8 @@ function generateExampleOutput() {
   lines.push('       packages/ui/src/figma-vars.snapshot.json ✓ (updated today)');
   lines.push('       ✅ All outputs current');
   lines.push('');
-  lines.push('❌  [2] Token values match Figma (color, sizing, typography)');
+  const gate2Label = gatePlain[1] ?? 'Token values match Figma';
+  lines.push(`❌  [2] ${gate2Label}`);
   lines.push('       ✅ PASS  87');
   lines.push('       ❌ FAIL  2');
   lines.push('         ❌ [color/Dark] buttonPrimary/background → --buttonPrimary-background');

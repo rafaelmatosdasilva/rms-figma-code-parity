@@ -89,6 +89,16 @@ export const TYPO = {
   // '--l-size':   ['l', 'size'],
 };
 
+// ─── BREAKPOINT BOOLEAN TOKENS: document display-toggle vars ─────────────────
+// Breakpoint collections may include BOOLEAN vars that control element visibility
+// per breakpoint (e.g. 'components/main-menu/button-donate/display').
+// These can't be CSS custom properties — implement via @media display rules or
+// JS class toggles, then list here to suppress the ℹ️ BOOLEAN advisory in Gate [2].
+export const BOOLEAN_SKIP = new Set([
+  // 'components/main-menu/button-donate/display',
+  // 'components/main-menu/button-menu/display',
+]);
+
 // ─── BOUND-TOKEN COVERAGE: Tokens not given a dedicated CSS var ───────────────
 // These are covered by semantic aliases, shared primitives, or are un-implementable.
 // Used by bound-check.mjs (Gate [4]).

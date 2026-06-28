@@ -191,10 +191,16 @@ for(const m of MODES){
 }
 const sizingOut={};
 if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
+// Breakpoints — multi-mode FLOAT/BOOLEAN collection (e.g. Phone/Tablet/Laptop/Desktop)
+const bpOut={};
+if(BREAKPOINT_COLLECTION){const bc=collections.find(c=>c.name===BREAKPOINT_COLLECTION);if(bc){for(const mode of bc.modes){bpOut[mode.name]={};for(const id of bc.variableIds){const v=idToVar[id];if(!v)continue;const val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];if(v.resolvedType==='FLOAT'&&typeof val==='number')bpOut[mode.name][v.name]=val+'px';else if(v.resolvedType==='BOOLEAN')bpOut[mode.name][v.name]=val?'true':'false';}}}}
+// Strings — STRING-typed vars from any non-color collection
+const strOut={};
+for(const c of collections){if(c.name===COLOR_COLLECTION)continue;for(const id of c.variableIds){const v=idToVar[id];if(!v||v.resolvedType!=='STRING')continue;const val=Object.values(v.valuesByMode)[0];if(typeof val==='string')strOut[v.name]=val;}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';typo[key]=entry;}
-return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,typography:typo};
+return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,breakpoints:bpOut,strings:strOut,typography:typo};
 ```
 
 ---
@@ -259,17 +265,21 @@ Merge alias batches the same way — accumulate into a single `aliases` object k
 Then fetch **sizing and typography** in one separate call (these collections are small enough to avoid truncation):
 
 ```js
-// Sizing + typography — single call, always safe
+// Sizing + breakpoints + strings + typography — single call, always safe
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-const SIZING_COLLECTION='Sizing'; // or null — fill from ds-config.json
+const SIZING_COLLECTION='Sizing'; const BREAKPOINT_COLLECTION=null; const COLOR_COLLECTION='Theme'; // fill from ds-config.json
 const sizingOut={};
 if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
+const bpOut={};
+if(BREAKPOINT_COLLECTION){const bc=collections.find(c=>c.name===BREAKPOINT_COLLECTION);if(bc){for(const mode of bc.modes){bpOut[mode.name]={};for(const id of bc.variableIds){const v=idToVar[id];if(!v)continue;const val=v.valuesByMode[mode.modeId]??Object.values(v.valuesByMode)[0];if(v.resolvedType==='FLOAT'&&typeof val==='number')bpOut[mode.name][v.name]=val+'px';else if(v.resolvedType==='BOOLEAN')bpOut[mode.name][v.name]=val?'true':'false';}}}}
+const strOut={};
+for(const c of collections){if(c.name===COLOR_COLLECTION)continue;for(const id of c.variableIds){const v=idToVar[id];if(!v||v.resolvedType!=='STRING')continue;const val=Object.values(v.valuesByMode)[0];if(typeof val==='string')strOut[v.name]=val;}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';typo[key]=entry;}
-return {sizing:sizingOut,typography:typo};
+return {sizing:sizingOut,breakpoints:bpOut,strings:strOut,typography:typo};
 ```
 
 **Final assembly** (after all calls complete):

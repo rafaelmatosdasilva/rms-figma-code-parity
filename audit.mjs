@@ -136,10 +136,17 @@ async function analyseCollections(fileKey, token) {
     const sorted      = [...stats].sort((a, b) => (b.byType.COLOR ?? 0) - (a.byType.COLOR ?? 0));
     const colorCol    = sorted[0];
 
-    // Sizing collection: most FLOAT vars, distinct from color collection
+    // Sizing collection: most FLOAT vars, distinct from color collection, single mode
     const sizingCol   = stats
-      .filter(s => s.name !== colorCol.name && (s.byType.FLOAT ?? 0) > 0)
+      .filter(s => s.name !== colorCol.name && (s.byType.FLOAT ?? 0) > 0 && s.modeCount === 1)
       .sort((a, b) => (b.byType.FLOAT ?? 0) - (a.byType.FLOAT ?? 0))[0] ?? null;
+
+    // Breakpoint collection: FLOAT/BOOLEAN only, 3+ modes — responsive sizing
+    const breakpointCol = stats.find(s =>
+      s.name !== colorCol.name &&
+      s.modeCount >= 3 &&
+      (s.byType.FLOAT ?? 0) + (s.byType.BOOLEAN ?? 0) === s.total
+    ) ?? null;
 
     // Primitive prefix: look for a collection that has a dominant path prefix AND
     // whose variables are referenced as aliases by the color collection's variables.
@@ -155,14 +162,16 @@ async function analyseCollections(fileKey, token) {
       ? primitiveCol.prefix
       : (colorCol.prefix ?? 'primitives/');
 
-    console.log(C.dim(`\n  → Color collection:   "${colorCol.name}"`));
-    if (sizingCol)    console.log(C.dim(`  → Sizing collection:  "${sizingCol.name}"`));
-    if (primitiveCol) console.log(C.dim(`  → Primitive prefix:   "${primitivePrefix}" (from "${primitiveCol.name}")`));
+    console.log(C.dim(`\n  → Color collection:       "${colorCol.name}"`));
+    if (sizingCol)      console.log(C.dim(`  → Sizing collection:      "${sizingCol.name}"`));
+    if (breakpointCol)  console.log(C.dim(`  → Breakpoint collection:  "${breakpointCol.name}" (${breakpointCol.modeCount} modes)`));
+    if (primitiveCol)   console.log(C.dim(`  → Primitive prefix:       "${primitivePrefix}" (from "${primitiveCol.name}")`));
     console.log('');
 
     return {
-      colorCollection:  colorCol.name,
-      sizingCollection: sizingCol?.name ?? null,
+      colorCollection:      colorCol.name,
+      sizingCollection:     sizingCol?.name ?? null,
+      breakpointCollection: breakpointCol?.name ?? null,
       primitivePrefix,
     };
   } catch (e) {
@@ -446,7 +455,7 @@ async function bootstrapConfig() {
   console.log('');
 
   // ── Auto-detect Figma collections ─────────────────────────────────────────────
-  let figmaCfg = { colorCollection: 'Color', sizingCollection: null, primitivePrefix: 'primitives/' };
+  let figmaCfg = { colorCollection: 'Color', sizingCollection: null, breakpointCollection: null, primitivePrefix: 'primitives/' };
   if (figmaFileKey && figmaToken) {
     console.log(C.dim('  Querying Figma for collection structure…'));
     const detected = await analyseCollections(figmaFileKey, figmaToken);
@@ -977,7 +986,7 @@ async function bootstrapConfig() {
 
   addGate('Freshness  (snapshots · build output)',
     combineGates(_g1, _g7));
-  addGate('Token parity  (color · sizing · typography)',
+  addGate('Token parity  (color · sizing · typography · breakpoints · font strings)',
     parseGate2(rParity));
   addGate('Structure  (snapshot · CSS height · base-rule vars)',
     parseGate3(rStructure));
@@ -1018,7 +1027,7 @@ async function bootstrapConfig() {
   // ── Summary table ─────────────────────────────────────────────────────────────
   const GATE_PLAIN = [
     'Figma snapshots are up to date',
-    'Token values match Figma (color, radius, gap, padding, stroke, typography)',
+    'Token values match Figma (color · radius · gap · padding · stroke · typography · breakpoints · font strings)',
     'Component structure matches Figma (layout, spacing, bindings)',
     'Every DS token bound in Figma is implemented in CSS',
     'No unused CSS variables or hardcoded values',
