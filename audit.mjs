@@ -1030,10 +1030,14 @@ async function bootstrapConfig() {
     'Every CSS variable maps back to a real Figma token',
     'Pseudo-elements and SVG symbols are documented in the contract',
   ];
+  const GATE_PLAN_RISK = {
+    1: 'Risk: if DS component structure changed since the last committed snapshot, Gate [3] may pass against outdated data and miss new or renamed tokens.',
+    4: 'Risk: if DS frames were updated since the last committed snapshot, newly bound or removed token bindings will not be detected.',
+  };
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
     const icon = result === 'plan' ? C.yellow('⏭') : result ? C.green('✅') : C.red('❌');
-    const status = result === 'plan' ? C.yellow('Not verified (plan)') : result ? C.green('Pass') : C.red('Fail');
+    const status = result === 'plan' ? C.yellow('Skipped') : result ? C.green('Pass') : C.red('Fail');
     const n = `[${num}]`.padEnd(COL1);
     const l = label.length > COL2 ? label.slice(0, COL2 - 1) + '…' : label.padEnd(COL2);
     return `  ${icon}  ${n}${l}${status}`;
@@ -1045,6 +1049,11 @@ async function bootstrapConfig() {
     const result = g.planLimited ? 'plan' : g.pass;
     const plainLabel = GATE_PLAIN[i] ?? g.label;
     console.log(tRow(i + 1, plainLabel, result));
+    if (g.planLimited) {
+      console.log(C.yellow(`         Plan detected: non-Enterprise (Figma Variables REST API not available)`));
+      const risk = GATE_PLAN_RISK[i + 1];
+      if (risk) console.log(C.yellow(`         ${risk}`));
+    }
   });
   console.log();
 
