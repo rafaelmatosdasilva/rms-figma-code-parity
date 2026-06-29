@@ -177,6 +177,20 @@ function selectorExists(css, selector) {
   return new RegExp(`(?:^|[,\\n])\\s*${esc}\\s*(?:,|\\{)`, 'm').test(css);
 }
 
+// propHasVar / propActual — hoisted here so Gate [3j] can share them with Gate [3b]
+function propHasVar(block, prop, expectedVar) {
+  if (!block || !expectedVar) return false;
+  const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
+  const m  = block.match(re);
+  return m ? m[1].includes(`var(${expectedVar})`) : false;
+}
+function propActual(block, prop) {
+  if (!block) return '(not set)';
+  const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
+  const m  = block?.match(re);
+  return m ? m[1].trim().slice(0, 60) : '(not set)';
+}
+
 // ── 1. Snapshot vs CONTRACT ───────────────────────────────────────────────────
 const components = snap.components ?? {};
 const UNIMPLEMENTED_SET = new Set(cfg.knownUnimplementedComponents ?? []);
@@ -425,20 +439,6 @@ for (const entry of STATE_SELECTORS) {
 const PROP_FAIL = [], PROP_PASS = [];
 
 if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
-  function propHasVar(block, prop, expectedVar) {
-    if (!block || !expectedVar) return false;
-    const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
-    const m  = block.match(re);
-    return m ? m[1].includes(`var(${expectedVar})`) : false;
-  }
-
-  function propActual(block, prop) {
-    if (!block) return '(not set)';
-    const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
-    const m  = block?.match(re);
-    return m ? m[1].trim().slice(0, 60) : '(not set)';
-  }
-
   for (const [comp, contract] of Object.entries(CONTRACT)) {
     const selCfg = COMPONENT_CSS_SELECTORS[comp];
     if (!selCfg) continue;
@@ -1194,12 +1194,98 @@ if (BUTTON_CLASS_RULES.length) {
   }
 }
 
+// ── Gate [3j]: Variant / state geometry ──────────────────────────────────────
+// For each CONTRACT entry with `states: { stateName: { h?, paddingVar?, gapVar? } }`,
+// verifies that the CSS selector for that state (from propertyMap.state[stateName])
+// uses the correct token vars for every declared geometry field.
+//
+// WHY THIS GATE EXISTS: Gate [3b] only checks the contract.main selector. When a
+// component has multiple states with distinct geometry (e.g. toast loading h=48 vs
+// success h=32, or buttonList default vs hover/selected padding-right + gap), every
+// non-main state was invisible to every gate — a completely wrong value could ship
+// without a single gate detecting it. Gate [3j] closes that gap: declare state geometry
+// once in contract.states and every future run verifies it automatically.
+//
+// Supported fields per state:
+//   h            — fixed height in px
+//   paddingVar   — { tb?, lr?, r? } — shorthand tb+lr or asymmetric right-only
+//   gapVar       — gap token name (key in FIGMA_LAYOUT_TO_CSS)
+const STATE_GEOM_FAIL = [], STATE_GEOM_PASS = [];
+
+if (themeCSS) {
+  for (const [comp, contract] of Object.entries(CONTRACT)) {
+    if (!contract.states) continue;
+    const pm = contract.propertyMap ?? {};
+    const stateKey = Object.keys(pm).find(k => k.toLowerCase() === 'state');
+    const stateSelMap = stateKey ? pm[stateKey] : {};
+
+    for (const [stateName, stateGeom] of Object.entries(contract.states)) {
+      const cssSelector = stateSelMap[stateName];
+      if (!cssSelector) {
+        STATE_GEOM_FAIL.push(`${comp}/${stateName}: no CSS selector in propertyMap.state`);
+        continue;
+      }
+
+      const block = findBlock(themeCSS, cssSelector, themeIndex)
+                 ?? findBlock(allCss,   cssSelector, allIndex);
+      if (!block) {
+        STATE_GEOM_FAIL.push(`${comp}/${stateName}: selector "${cssSelector}" not found in CSS`);
+        continue;
+      }
+
+      let statePass = true;
+      const lbl = `${comp}/${stateName}`;
+
+      function sgCheck(key, prop, tokenName) {
+        if (tokenName === undefined || tokenName === null) return;
+        const cssVar = FIGMA_LAYOUT_TO_CSS[tokenName];
+        if (!cssVar) {
+          STATE_GEOM_FAIL.push(`${lbl}/${key}: FIGMA_LAYOUT_TO_CSS missing entry for "${tokenName}"`);
+          statePass = false; return;
+        }
+        if (!propHasVar(block, prop, cssVar)) {
+          STATE_GEOM_FAIL.push(`${lbl}/${key}: "${prop}" expected var(${cssVar}) [${tokenName}] — got: ${propActual(block, prop)}`);
+          statePass = false;
+        }
+      }
+
+      if (stateGeom.h !== undefined && stateGeom.h !== null) {
+        const hMatch = block.match(/(?<!-)height\s*:\s*([^;\n]+)/);
+        const cssPx  = hMatch ? toPx(hMatch[1]) : null;
+        if (cssPx !== stateGeom.h) {
+          STATE_GEOM_FAIL.push(`${lbl}/height: CSS is ${cssPx ?? '(not set)'}px — contract is ${stateGeom.h}px`);
+          statePass = false;
+        }
+      }
+
+      sgCheck('padding-tb',    'padding',       stateGeom.paddingVar?.tb);
+      sgCheck('padding-lr',    'padding',       stateGeom.paddingVar?.lr);
+      sgCheck('padding-right', 'padding-right', stateGeom.paddingVar?.r);
+      sgCheck('gap',           'gap',           stateGeom.gapVar);
+
+      if (statePass) STATE_GEOM_PASS.push(lbl);
+    }
+  }
+}
+
+if (STATE_GEOM_PASS.length + STATE_GEOM_FAIL.length > 0) {
+  const sgTotal = STATE_GEOM_PASS.length + STATE_GEOM_FAIL.length;
+  console.log(`\n✅ PASS  ${STATE_GEOM_PASS.length}/${sgTotal} state/variant geometry checks`);
+  console.log(`❌ FAIL  ${STATE_GEOM_FAIL.length}`);
+  if (STATE_GEOM_FAIL.length) {
+    console.log('\n─── Gate [3j] — state/variant geometry mismatch ─────────────────────');
+    for (const f of STATE_GEOM_FAIL) console.log(`  ❌ ${f}`);
+    console.log('   Fix: update the CSS selector to use the correct token var.');
+    console.log('   Contract: edit contract.states[stateName] in structure-contract.mjs.');
+  }
+}
+
 const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0 || CSS_FAIL.length > 0
              || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
              || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
              || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0
-             || BCLASS_FAIL.length > 0;
+             || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
