@@ -40,13 +40,13 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1 — Figma refresh** | Pulls the latest values from Figma (colors, sizes, fonts, component structure), shows you what changed since last time, and updates the local snapshot files. |
-| **2 — Code audit** | Runs 12 automated checks against your CSS and reports everything that doesn't match. |
+| **2 — Code audit** | Runs 15 automated checks against your CSS and reports everything that doesn't match. |
 
 You always audit against a fresh snapshot. There's no way to accidentally check against yesterday's design.
 
 ---
 
-## The 12 checks
+## The 15 checks
 
 | # | What it checks |
 |---|---|
@@ -62,6 +62,9 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
 | 10 | **Mode completeness** — Do all tokens that are supposed to change between modes (light/dark, compact/comfortable) actually resolve to different values in each mode? |
 | 11 | **CSS naming round-trip** — Does every CSS variable name trace back to a real token in the Figma file? Catches variables someone invented that have no design backing. |
 | 12 | **Contract coverage** — Are all `::before`/`::after` pseudo-elements and SVG icons documented in the structure contract? DS icons must link back to a Figma node ID. |
+| 13 | **Icon slot parity** — Does every declared button slot use the exact DS icon the Figma spec calls for? |
+| 14 | **Component slot parity** — Does every declared slot use the exact DS component class the Figma spec calls for? |
+| 15 | **HTML structure snapshot** — Have a slot's ids, component classes, or icon refs changed since the last accepted baseline? |
 
 ---
 

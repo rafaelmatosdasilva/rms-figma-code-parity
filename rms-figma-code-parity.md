@@ -1,7 +1,7 @@
 # /rms-figma-code-parity — Figma DS ↔ Code Parity
 
 **What it does:** Audits whether the CSS codebase faithfully implements the DS Figma file.
-Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (17 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
+Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (15 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
 
 > **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
 
@@ -824,7 +824,7 @@ return JSON.stringify(result, null, 2);
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 10 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
+| All 15 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
 

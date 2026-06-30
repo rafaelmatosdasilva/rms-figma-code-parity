@@ -183,9 +183,27 @@ for (const doc of DOCS) {
     return `${GATE_COUNT}${post}`;
   });
 
-  // ── Patch: "Run all N audit gates" / "all N audit gates" / "all N gates"
-  patched = patched.replace(/(Run all |all )(\d+)( audit gates| gates)/g, (_, pre, n, post) => {
+  // ── Patch: "N automated checks"
+  patched = patched.replace(/\b(\d+)( automated checks\b)/g, (_, n, post) => {
+    if (Number(n) !== GATE_COUNT) changes.push(`"${n} automated checks" → "${GATE_COUNT} automated checks"`);
+    return `${GATE_COUNT}${post}`;
+  });
+
+  // ── Patch: "Run all N audit gates" / "all N audit gates" / "All N gates" (any case)
+  patched = patched.replace(/(Run all |[Aa]ll )(\d+)( audit gates| gates)/g, (_, pre, n, post) => {
     if (Number(n) !== GATE_COUNT) changes.push(`"${pre}${n}${post}" → "${pre}${GATE_COUNT}${post}"`);
+    return `${pre}${GATE_COUNT}${post}`;
+  });
+
+  // ── Patch: "(N gates)" parenthetical, e.g. "...and more (17 gates)."
+  patched = patched.replace(/(\()(\d+)( gates\))/g, (_, pre, n, post) => {
+    if (Number(n) !== GATE_COUNT) changes.push(`"(${n} gates)" → "(${GATE_COUNT} gates)"`);
+    return `${pre}${GATE_COUNT}${post}`;
+  });
+
+  // ── Patch: "## The N checks" heading
+  patched = patched.replace(/(##\s*The )(\d+)( checks)/g, (_, pre, n, post) => {
+    if (Number(n) !== GATE_COUNT) changes.push(`"The ${n} checks" → "The ${GATE_COUNT} checks"`);
     return `${pre}${GATE_COUNT}${post}`;
   });
 
@@ -223,8 +241,24 @@ for (const doc of DOCS) {
     )
     .map(({ g, anchor, plainAnchor }) => `[${g.n}] ${g.label}  (looking for: "${anchor}"${plainAnchor ? ` or "${plainAnchor}"` : ''})`);
 
+  // ── Check: "## The N checks" table has exactly GATE_COUNT numbered rows.
+  // Catches a table that's been truncated/under-grown even though every gate
+  // label still appears elsewhere in the doc (e.g. inside the auto-generated
+  // example-output block, which always lists all gates regardless of the
+  // human-written table's state).
+  let tableRowIssue = null;
+  {
+    const headingMatch = patched.match(/##\s*The \d+ checks\s*\n([\s\S]*?)(?=\n##\s|\n*$)/);
+    if (headingMatch) {
+      const rowNums = [...headingMatch[1].matchAll(/^\|\s*(\d+)\s*\|/gm)].map(m => Number(m[1]));
+      if (rowNums.length !== GATE_COUNT) {
+        tableRowIssue = `"The N checks" table has ${rowNums.length} row(s), expected ${GATE_COUNT} (update manually — row content isn't auto-generated)`;
+      }
+    }
+  }
+
   // ── Report
-  if (changes.length === 0 && missingLabels.length === 0) {
+  if (changes.length === 0 && missingLabels.length === 0 && !tableRowIssue) {
     console.log(green(`  ✅ ${doc.label} — in sync`));
   } else {
     anyStale = true;
@@ -236,6 +270,9 @@ for (const doc of DOCS) {
     if (missingLabels.length) {
       console.log(red(`  ❌ ${doc.label} — gate labels missing from doc (update manually):`));
       for (const l of missingLabels) console.log(`       ${l}`);
+    }
+    if (tableRowIssue) {
+      console.log(red(`  ❌ ${doc.label} — ${tableRowIssue}`));
     }
     if (!CHECK && changes.length) {
       writeFileSync(doc.path, patched);
