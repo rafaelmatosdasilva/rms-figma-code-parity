@@ -54,7 +54,7 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
 | 2 | **Token values** — Do every color, size, and font in your CSS match what Figma says they should be? Checks all color modes (light, dark, etc.). |
 | 3 | **Component structure** — Is each component the right height? Are its spacing, font, and corner radius wired to the right tokens — not hardcoded? |
 | 4 | **Bound-token coverage** — Is there anything in the Figma frames that has no CSS variable yet? |
-| 5 | **CSS hygiene** — Are there CSS variables nobody's using? Are there raw values (colors, sizes) written directly into CSS rules instead of using a token variable? |
+| 5 | **CSS hygiene** — Are there CSS variables nobody's using? Are there raw values (colors, sizes) written directly into CSS rules instead of using a token variable? Also catches hand-drawn icons: a `data:image/svg+xml` background-image with a literal or `%23`-encoded color bypasses the DS icon sprite entirely and is invisible to icon-slot checks, since it's a CSS string, not markup. |
 | 6 | **Sub-component isolation** — When one DS component is nested inside another, are their styles leaking into each other? |
 | 7 | **Visual regression** — Does the live Figma frame still look the same as the last accepted screenshot? |
 | 8 | **State coverage** — Does every interactive state from Figma (hover, disabled, selected…) have a CSS rule? Are the right token variables used inside those rules? |
