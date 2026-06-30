@@ -1,20 +1,17 @@
-#!/bin/sh
-# Auto-patch doc gate counts before every commit.
-# Staged changes to docs are re-staged automatically if sync-docs patches them.
+#!/usr/bin/env bash
+# Auto-patches all stale gate counts and doc references before every commit.
+# Install once in this repo: git config core.hooksPath .githooks
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+set -e
 
-node "$SCRIPT_DIR/sync-docs.mjs"
-STATUS=$?
+ROOT="$(git rev-parse --show-toplevel)"
 
-if [ $STATUS -ne 0 ]; then
-  # sync-docs printed what's missing — abort so dev can fix the gate descriptions
-  echo ""
-  echo "  Pre-commit: docs have missing gate labels — update them manually, then re-commit."
-  exit 1
-fi
+# 1. Patch what can be auto-fixed (counts, headings, trend bars, example block).
+node "$ROOT/sync-docs.mjs"
 
-# Re-stage any doc files that were patched (count/bar fixes are safe to auto-stage)
-git add "$SCRIPT_DIR/README.md" "$SCRIPT_DIR/.claude/commands/rms-parity.md" 2>/dev/null || true
+# 2. Re-stage any doc files that were changed by the patch so they land in this commit.
+git add "$ROOT/README.md" "$ROOT/rms-figma-code-parity.md" 2>/dev/null || true
 
-exit 0
+# 3. Verify nothing remains that needs a manual fix (e.g. truncated checks table).
+#    Exits 1 and prints what needs fixing if stale; commit is blocked.
+node "$ROOT/sync-docs.mjs" --check
