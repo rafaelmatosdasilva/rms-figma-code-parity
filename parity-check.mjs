@@ -467,6 +467,26 @@ if (snap.typography && Object.keys(TYPO).length) {
 } else if (!Object.keys(TYPO).length) {
   SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'TYPO map empty in parity-map.mjs — add your type scale vars' });
 }
+// Advisory: snapshot has ls/textTransform fields not yet covered by a TYPO map entry.
+// Phase 1 captures these when letterSpacing / textCase are present in the Figma text style.
+// To gate-check them: add entries to parity-map.mjs TYPO, e.g.:
+//   '--m-ls': ['m', 'ls'], '--m-text-transform': ['m', 'textTransform'],
+if (snap.typography) {
+  for (const [scale, entry] of Object.entries(snap.typography)) {
+    for (const field of ['ls', 'textTransform']) {
+      if (entry[field] === undefined) continue;
+      const alreadyCovered = Object.entries(TYPO).some(([, [s, p]]) => s === scale && p === field);
+      if (!alreadyCovered) {
+        const cssSuffix = field === 'ls' ? 'ls' : 'text-transform';
+        TYPO_INFO.push({
+          cssVar: `--${scale}-${cssSuffix} (inferred)`,
+          note: `snapshot has ${scale}.${field}="${entry[field]}" — add '--${scale}-${cssSuffix}': ['${scale}', '${field}'] to TYPO in parity-map.mjs to gate-check it`,
+        });
+      }
+    }
+  }
+}
+
 // Advisory: TYPO vars declared in :root but never used in any component-level CSS rule
 if (Object.keys(TYPO).length) {
   const rulesOnlyCSS = rawCss.replace(/:root\s*\{[\s\S]*?\}/g, '');

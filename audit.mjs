@@ -880,8 +880,9 @@ async function bootstrapConfig() {
 
   // ── Inline gate computations (no subprocess) ─────────────────────────────────
   function computeGate1() {
-    const vars   = snapshotAge(SNAP_VARS);
-    const struct = snapshotAge(SNAP_STRUCT);
+    const vars      = snapshotAge(SNAP_VARS);
+    const struct    = snapshotAge(SNAP_STRUCT);
+    const compProps = snapshotAge(SNAP_COMP_PROPS);
     const lines  = [];
     let warn     = false;
 
@@ -908,6 +909,18 @@ async function bootstrapConfig() {
       }
     } else {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
+    }
+
+    // Component-props snapshot drives Gate [3g] (component property parity).
+    // Refreshed via REST on every run when FIGMA_TOKEN is set. Warn if stale.
+    if (compProps === null) {
+      lines.push(C.yellow(`⚠️  ${SNAP_COMP_PROPS} missing — Gate [3g] (component property parity) will be skipped`));
+      warn = true;
+    } else if (compProps > 24) {
+      lines.push(C.yellow(`⚠️  ${SNAP_COMP_PROPS} is ${compProps}h old — Gate [3g] may miss new/renamed component properties`));
+      warn = true;
+    } else {
+      lines.push(`${SNAP_COMP_PROPS} ✓ (updated today)`);
     }
 
     const anyPlanLimited = varsPlanLimited || structPlanLimited;
@@ -1038,7 +1051,26 @@ async function bootstrapConfig() {
       return true;
     });
 
-    const hits = [...new Set([...hexHits, ...numHits, ...vwHits, ...svgUriHits])];
+    // Pass 5 — hardcoded box-shadow colors via rgba() (gate6ExcludeDirs does NOT apply).
+    // A box-shadow with a literal rgba() bypasses DS effect styles / color tokens.
+    // Document intentional shadows in ds-config.json → knownHardcodedExceptions.
+    const shadowR    = sh('grep', ['-n', '-E', 'box-shadow\\s*:.*rgba\\s*\\(', ...allFiles]);
+    const shadowHits = (shadowR.stdout || '').split('\n').filter(l => {
+      if (!l.trim()) return false;
+      const code    = l.replace(/^[^:]+:\d+:\s*/, '');
+      const stripped = code.replace(/\/\*[^*]*\*\//g, '');
+      if (/--[a-zA-Z][\w-]*\s*:/.test(code)) return false;
+      if (/^\s*(\/\/|\*)/.test(code)) return false;
+      if (/[`"'][^`"']*:\s*[^`"']*[`"']/.test(code)) return false;
+      if (/innerHTML\s*[+=]|insertAdjacentHTML/.test(code)) return false;
+      if (KNOWN_FS_EXCEPTS.some(e => {
+        if (typeof e === 'string') return l.includes(e);
+        return (!e.file || l.includes(e.file)) && (!e.pattern || new RegExp(e.pattern).test(stripped));
+      })) return false;
+      return true;
+    });
+
+    const hits = [...new Set([...hexHits, ...numHits, ...vwHits, ...svgUriHits, ...shadowHits])];
     const pass  = hits.length === 0;
     return {
       pass,
@@ -1104,7 +1136,7 @@ async function bootstrapConfig() {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1121,6 +1153,7 @@ async function bootstrapConfig() {
     runScriptAsync('icon-slot-check.mjs'),
     runScriptAsync('component-slot-check.mjs'),
     runScriptAsync('html-structure-check.mjs'),
+    runScriptAsync('transition-check.mjs'),
   ]);
 
   addGate('Freshness  (snapshots · build output)',
@@ -1153,6 +1186,8 @@ async function bootstrapConfig() {
     parseGeneric(rComponentSlot, /✅|❌/));
   addGate('HTML structure snapshot  (ids · component classes · icon refs)',
     parseGeneric(rHtmlStructure, /✅|❌/));
+  addGate('Transition contract  (duration · easing · property per DS selector)',
+    parseGeneric(rTransition, /✅|❌/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
@@ -1186,6 +1221,7 @@ async function bootstrapConfig() {
     'Every declared icon slot uses the correct DS icon symbol',
     'Every declared component slot uses the correct DS component class',
     'HTML structure (ids, component classes, icon refs) matches the stored snapshot',
+    'All CSS transitions match the documented duration and easing contract',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: if DS component structure changed since the last committed snapshot, Gate [3] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.',

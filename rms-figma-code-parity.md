@@ -1,7 +1,7 @@
 # /rms-figma-code-parity — Figma DS ↔ Code Parity
 
 **What it does:** Audits whether the CSS codebase faithfully implements the DS Figma file.
-Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (15 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
+Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (16 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
 
 > **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
 
@@ -124,7 +124,7 @@ Both are machine-generated — never hand-edit. `component-state-tokens.json` (p
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`node scripts/audit.mjs`** | **All 15 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 16 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -201,7 +201,7 @@ const sizingOut={};
 if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
-for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';typo[key]=entry;}
+for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
 return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,typography:typo};
 ```
 
@@ -276,7 +276,7 @@ const sizingOut={};
 if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
-for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';typo[key]=entry;}
+for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
 return {sizing:sizingOut,typography:typo};
 ```
 
@@ -390,6 +390,34 @@ Write the result in this shape:
      ],
    }
    ```
+
+---
+
+## Phase 1 — Step 1d: Capture effect styles → `effects` key in snapshot
+
+Run this after Step 1b. Effect styles (drop shadow, inner shadow, blur) are captured into a top-level `"effects"` key in `figma-vars.snapshot.json`. Once populated, Gate [5] can flag any `box-shadow` not documented in `knownHardcodedExceptions` or a future `EFFECT_USAGES` contract.
+
+```js
+// Effect styles capture — always safe (effect list is always small)
+const effectStyles=await figma.getLocalEffectStylesAsync();
+const effects={};
+function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
+for(const es of effectStyles){
+  const efx=es.effects.filter(e=>e.visible!==false);
+  if(!efx.length)continue;
+  effects[es.name]=efx.map(e=>{
+    if(e.type==='DROP_SHADOW'||e.type==='INNER_SHADOW'){
+      const c=e.color;
+      return{type:e.type.toLowerCase().replace('_','-'),x:e.offset.x,y:e.offset.y,blur:e.radius,spread:e.spread??0,color:toHex(c),opacity:Math.round(c.a*100)/100};
+    }
+    if(e.type==='LAYER_BLUR'||e.type==='BACKGROUND_BLUR')return{type:e.type.toLowerCase().replace('_','-'),blur:e.radius};
+    return null;
+  }).filter(Boolean);
+}
+return {effects};
+```
+
+Merge the returned `effects` into `figma-vars.snapshot.json` alongside `color`/`sizing`/`typography`. If the DS has no effect styles yet, `effects` will be `{}` — store it anyway so the key exists.
 
 ---
 
@@ -570,13 +598,13 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. Run
 
 ---
 
-## Phase 2 — Step 2: Run all 15 audit gates
+## Phase 2 — Step 2: Run all 16 audit gates
 
 ```bash
 node scripts/audit.mjs
 ```
 
-All 15 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 16 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 | Gate | Script | What it checks |
 |---|---|---|
@@ -595,6 +623,7 @@ All 15 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 | [13] | `icon-slot-check.mjs` | **Icon slot parity** — Two-phase check: (1) every slot declared in `ICON_USAGES` (structure-contract.mjs) uses the exact DS icon specified — catches wrong icons in known slots; (2) **exhaustiveness scan** — every `<button id="X">` with a direct `<use href="#icon-">` child MUST be in `ICON_USAGES`, or the gate fails with "undeclared icon slot." Prevents a developer from adding a wrong-icon button and hiding it from the contract. |
 | [14] | `component-slot-check.mjs` | **Component slot parity** — Two-phase check: (1) every slot declared in `COMPONENT_USAGES` uses the correct DS component class (`buttonTertiary`, `buttonPrimary`, etc.); (2) **exhaustiveness scan** — every `<button id="X">` carrying a primary/secondary/tertiary/quaternary class MUST be in `COMPONENT_USAGES`, or the gate fails with "undeclared DS component." Prevents an undeclared button from silently using the wrong component type. |
 | [15] | `html-structure-check.mjs` | **HTML structure snapshot** — Fingerprint includes: element IDs, DS component classes on interactive elements, icon `<use href>` refs with context, and **button inner structure** (whether each id'd `<button>` has SVG, span children with their classes, and text content). The button-content dimension specifically catches spurious text labels added inside icon buttons (e.g. `<span class="tab-label">Tree</span>` widening a segmented control). Diffs against stored snapshot; any undeclared structural change is ❌. Accept: `node scripts/html-structure-check.mjs --accept`. |
+| [16] | `transition-check.mjs` | **Transition contract** — Every selector in `TRANSITION_CONTRACT` (structure-contract.mjs) must have a CSS `transition:` declaration containing each documented part (duration, easing, property). Catches animation drift before Figma EASING/TIMING tokens exist. Update the contract when the DS spec changes. |
 
 **Gate [2] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -824,7 +853,7 @@ return JSON.stringify(result, null, 2);
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 15 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
+| All 16 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
 

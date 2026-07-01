@@ -576,6 +576,45 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).lengt
   }
 }
 
+// ── Gate [3k]: Stroke-width token binding ────────────────────────────────────
+// Components with strokeOnDefault=true must use a CSS var for the border-width
+// segment, not a hardcoded literal like "1.5px". Checks the default-state selector.
+// A literal first token in "border: <width> <style> <color>" is the failure signal.
+const STROKE_WIDTH_FAIL = [], STROKE_WIDTH_PASS = [];
+
+if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).length) {
+  for (const [comp, selCfg] of Object.entries(COMPONENT_CSS_SELECTORS)) {
+    const snapComp = components[comp];
+    if (!snapComp?.strokeOnDefault) continue;
+
+    const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
+    if (!mainBlock) {
+      // Selector lives in a plugin-specific file — skip rather than false-fail.
+      STROKE_WIDTH_PASS.push(`${comp}/stroke-width (selector not in theme.css)`);
+      continue;
+    }
+
+    const borderVal =
+      mainBlock.match(/(?<![a-zA-Z-])border\s*:\s*([^;]+)/)?.[1] ??
+      mainBlock.match(/(?<![a-zA-Z-])border-width\s*:\s*([^;]+)/)?.[1] ?? null;
+
+    if (borderVal == null) {
+      // No inline border rule on this selector — nothing to flag.
+      STROKE_WIDTH_PASS.push(`${comp}/stroke-width (no inline border rule)`);
+      continue;
+    }
+
+    // A bare `1.5px` as the first whitespace token in border shorthand is a
+    // hardcoded width. Anything starting with `var(` is a token binding.
+    const firstToken = borderVal.trim().split(/\s+/)[0];
+    if (/^\d+(?:\.\d+)?px$/.test(firstToken)) {
+      STROKE_WIDTH_FAIL.push(`${comp}: border-width is hardcoded "${firstToken}" — use var(--thickness) or a sizing token var`);
+    } else {
+      STROKE_WIDTH_PASS.push(`${comp}/stroke-width`);
+    }
+  }
+}
+
 // ── 6. Hover/Selected pill geometry checks ────────────────────────────────────
 // Components that implement hover/selected backgrounds via a positioned ::before
 // element (a "pill") need two geometry checks the default-state snapshot misses:
@@ -1034,6 +1073,17 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
     console.log('   Exemptions: add the selector string to ds-config.json → knownPhantomBorderExceptions');
   }
 
+  if (STROKE_WIDTH_PASS.length || STROKE_WIDTH_FAIL.length) {
+    const swTotal = STROKE_WIDTH_PASS.length + STROKE_WIDTH_FAIL.length;
+    console.log(`\n✅ PASS  ${STROKE_WIDTH_PASS.length}/${swTotal} stroke-width token bindings`);
+    console.log(`❌ FAIL  ${STROKE_WIDTH_FAIL.length}`);
+    if (STROKE_WIDTH_FAIL.length) {
+      console.log('\n─── Gate [3k] — stroke-width is hardcoded instead of a token var ───');
+      for (const f of STROKE_WIDTH_FAIL) console.log(`  ❌ ${f}`);
+      console.log('   Fix: replace the literal px with var(--thickness) or the appropriate sizing token.');
+    }
+  }
+
   const pillTotal = PILL_PASS.length + PILL_FAIL.length;
   if (pillTotal > 0) {
     console.log(`\n✅ PASS  ${PILL_PASS.length}/${pillTotal} hover/selected pill geometry checks`);
@@ -1285,7 +1335,8 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
              || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0
-             || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0;
+             || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0
+             || STROKE_WIDTH_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
