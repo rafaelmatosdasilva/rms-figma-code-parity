@@ -168,10 +168,35 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
   const got = r.result.value ?? [];
 
   asserts.forEach((a, i) => {
+    if (a.forcePseudo) return; // handled below via CSS.forcePseudoState
     const label = `${plugin} ${a.selector} → ${a.prop}`;
     if (got[i] === a.expected) PASS.push(label);
     else FAIL.push(`${label}: rendered "${got[i]}" ≠ expected "${a.expected}"${a.note ? `  [${a.note}]` : ''}`);
   });
+
+  // forcePseudo assertions: geometry of :hover/:focus/:active rules cannot be read
+  // from JS alone — CSS.forcePseudoState applies the pseudo-class rules to the node,
+  // then getComputedStyle reflects them. Probes injected above are reused.
+  const pseudoAsserts = asserts.filter(a => a.forcePseudo);
+  if (pseudoAsserts.length) {
+    await send('DOM.enable', {}, sessionId);
+    await send('CSS.enable', {}, sessionId);
+    const { root } = await send('DOM.getDocument', {}, sessionId);
+    for (const a of pseudoAsserts) {
+      const label = `${plugin} ${a.selector}:${a.forcePseudo.join(':')} → ${a.prop}`;
+      const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: a.selector }, sessionId);
+      if (!nodeId) { FAIL.push(`${label}: selector not found (probe missing?)`); continue; }
+      await send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: a.forcePseudo }, sessionId);
+      const pr = await send('Runtime.evaluate', {
+        expression: `getComputedStyle(document.querySelector(${JSON.stringify(a.selector)}))[${JSON.stringify(a.prop)}]`,
+        returnByValue: true,
+      }, sessionId);
+      await send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: [] }, sessionId);
+      const val = pr.result.value;
+      if (val === a.expected) PASS.push(label);
+      else FAIL.push(`${label}: rendered "${val}" ≠ expected "${a.expected}"${a.note ? `  [${a.note}]` : ''}`);
+    }
+  }
 
   await send('Target.closeTarget', { targetId });
 }

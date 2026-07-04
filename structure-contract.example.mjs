@@ -54,6 +54,11 @@ export const RENDERED_ASSERTIONS = [
   // { plugin: 'my-plugin', selector: '.toast', prop: 'columnGap', expected: '4px',
   //   probe: '<div class="toast"><span class="toast-icon"></span><span>Done</span></div>',
   //   note: 'DS toast icon↔title gap/s' },
+  // forcePseudo: measure a pseudo-class state via CSS.forcePseudoState — e.g. lock
+  // "content must not shift on hover" by asserting the :hover gap equals the default:
+  // { plugin: 'my-plugin', selector: 'button.listRow', prop: 'columnGap', expected: '4px',
+  //   forcePseudo: ['hover'], probe: '<button class="listRow">Item</button>',
+  //   note: 'gap unchanged on hover — label must not move' },
 ];
 
 // ─── Plugin overrides of DS base classes (Gate [9] second check) ──────────────
