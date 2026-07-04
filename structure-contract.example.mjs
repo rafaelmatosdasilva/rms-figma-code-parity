@@ -22,6 +22,12 @@
 //                      innerH    — pill height in px (outer h minus vertical inset × 2)
 //                      radiusVar — Figma token for border-radius (e.g. 'radii/button')
 //                      insetH    — horizontal inset in px (0 = full outer width, no side gap)
+//   children       — [{ name, cssSelector, gapVar?, paddingVar? }] (optional). Inner Figma
+//                    frames with their own bound gap/padding. Gate [3f] verifies the CSS
+//                    selector uses the matching var; the snapshot cross-check verifies the
+//                    contracted values still match Figma (childFrameGaps/childFramePadding).
+//                    cssSelector: null = frame is flattened into the parent (gap/padding on
+//                    the root rule or geometric) — CSS lookup skipped, cross-check still runs.
 export const CONTRACT = {
   // Example:
   // button: {
@@ -31,6 +37,9 @@ export const CONTRACT = {
   //   fontSizeVar: 'm', fontWeightVar: 'm',
   //   fillStructure: 'direct', innerRadiusVar: 'radii/button',
   //   strokeOnDefault: false,
+  //   children: [
+  //     { name: 'content', cssSelector: '.button-content', gapVar: 'gap/m', paddingVar: { tb: null, lr: null } },
+  //   ],
   // },
 };
 

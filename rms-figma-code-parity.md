@@ -301,7 +301,7 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 ```js
 // Extract: h, paddingVar {tb,lr}, gapVar, fontSizeVar, fontWeightVar,
 //          fillStructure ('direct' | 'before' | 'none'), innerRadiusVar,
-//          strokeOnDefault, strokeOnAnyState, childFramePadding
+//          strokeOnDefault, strokeOnAnyState, childFramePadding, childFrameGaps
 // fillStructure = 'before' when fill is on a child "Background" rect (→ CSS ::before)
 //                 'direct' when on the frame itself
 //                 'none' when default state has no fill
@@ -316,6 +316,13 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 //                    add inner padding on top of the outer component padding. The CSS must account
 //                    for them via padding on the matching HTML child element (e.g. span, .label).
 //                    Omit if no child frames have bound padding.
+// childFrameGaps   = direct child FRAME nodes with a bound itemSpacing variable:
+//                    [{ name, gapVar }]. Root-level gapVar cannot see these — a DS rebind on an
+//                    inner frame (e.g. toast "content" gap/s → gap/m) is invisible without them.
+//                    Gate [3] cross-checks every entry against CONTRACT[comp].children: an
+//                    uncontracted snapshot entry or a gapVar mismatch is a failure, and a
+//                    contracted gapVar whose frame no longer binds a gap in Figma is stale.
+//                    Omit if no child frames have bound gaps.
 ```
 
 Capture `strokeOnAnyState` with a **deep recursive walk** across all variants:
@@ -342,13 +349,16 @@ function getBoundPaddingVar(node, idToVar) {
   const tb = res(bv.paddingTop?.id ?? bv.paddingBottom?.id);
   return (lr || tb) ? { tb: tb ?? null, lr: lr ?? null } : null;
 }
-const childFramePadding = [];
+const childFramePadding = [], childFrameGaps = [];
 for (const child of defaultVariant.children ?? []) {
   if (child.type !== 'FRAME') continue;
   const pv = getBoundPaddingVar(child, idToVar);
   if (pv) childFramePadding.push({ name: child.name, paddingVar: pv });
+  const gapId = child.boundVariables?.itemSpacing?.id;
+  const gv = gapId ? idToVar[gapId]?.name ?? null : null;
+  if (gv) childFrameGaps.push({ name: child.name, gapVar: gv });
 }
-// Include childFramePadding in snapshot only when non-empty
+// Include childFramePadding / childFrameGaps in snapshot only when non-empty
 ```
 
 Write the result in this shape:
@@ -372,6 +382,14 @@ Write the result in this shape:
       "childFramePadding": [
         { "name": "LabelContainer", "paddingVar": { "tb": null, "lr": "padding/xs" } }
       ]
+    },
+    "toast": {
+      "h": 48,
+      "paddingVar": { "tb": "padding/s", "lr": "padding/m" },
+      "gapVar": "gap/xl",
+      "childFrameGaps": [
+        { "name": "content", "gapVar": "gap/m" }
+      ]
     }
   }
 }
@@ -390,6 +408,8 @@ Write the result in this shape:
      ],
    }
    ```
+
+**`childFrameGaps` → contracted `children` entry required.** Same idea for inner-frame gaps: every snapshot `childFrameGaps` entry must have a matching `children: [{ name, cssSelector, gapVar }]` entry in `structure-contract.mjs`. Gate [3] fails on an uncontracted snapshot entry, a `gapVar` mismatch (contract stale vs Figma), or a contracted `gapVar` whose frame no longer binds a gap in Figma. Set `cssSelector: null` when the child frame is flattened in the HTML (its gap/padding is expressed on the root rule or geometrically) — the CSS lookup in Gate [3f] is skipped, but the snapshot cross-check still runs, so a DS rebind is always caught. Document the flattening in a comment next to the entry.
 
 ---
 

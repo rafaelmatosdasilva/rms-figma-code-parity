@@ -220,7 +220,8 @@ const SCALAR_FIELDS = ['h', 'gapVar', 'fontSizeVar', 'fontWeightVar', 'fillStruc
 // A CONTRACT entry is "structural" if it declares at least one structural field.
 // Entries that only carry propertyMap (no h/gapVar/etc.) skip snapshot comparison.
 function hasStructuralFields(entry) {
-  return SCALAR_FIELDS.some(f => entry[f] !== undefined) || entry.paddingVar !== undefined;
+  return SCALAR_FIELDS.some(f => entry[f] !== undefined) || entry.paddingVar !== undefined
+      || entry.children !== undefined;
 }
 
 for (const [name, expect] of Object.entries(CONTRACT)) {
@@ -235,6 +236,36 @@ for (const [name, expect] of Object.entries(CONTRACT)) {
     const e = expect.paddingVar?.[side] ?? null, g = got.paddingVar?.[side] ?? null;
     if (e !== g) FAIL.push({ component: name, field: `paddingVar.${side}`, expected: e, got: g });
   }
+
+  // Child-frame gap/padding bindings: snapshot childFrameGaps/childFramePadding vs contract.children.
+  // Catches DS-side spacing rebinds on inner frames (e.g. a toast content gap changed from gap/s
+  // to gap/m) that root-level fields cannot see. Every child binding in the snapshot must have a
+  // contracted expectation, and every contracted binding must still exist in Figma.
+  const contractChildren = expect.children ?? [];
+  const contractChildPad = [...contractChildren, ...(expect.childFramePadding ?? [])];
+  for (const sc of got.childFrameGaps ?? []) {
+    const c = contractChildren.find(k => k.name === sc.name);
+    if (!c) FAIL.push({ component: name, field: `children.${sc.name}.gapVar`, expected: '(uncontracted — add a children entry)', got: sc.gapVar });
+    else if ((c.gapVar ?? null) !== sc.gapVar)
+      FAIL.push({ component: name, field: `children.${sc.name}.gapVar`, expected: c.gapVar ?? null, got: sc.gapVar });
+  }
+  for (const c of contractChildren) {
+    if (c.gapVar && !(got.childFrameGaps ?? []).some(k => k.name === c.name))
+      FAIL.push({ component: name, field: `children.${c.name}.gapVar`, expected: c.gapVar, got: '(no longer bound in Figma)' });
+  }
+  for (const sc of got.childFramePadding ?? []) {
+    const c = contractChildPad.find(k => k.name === sc.name);
+    if (!c) { FAIL.push({ component: name, field: `children.${sc.name}.paddingVar`, expected: '(uncontracted — add a children entry)', got: sc.paddingVar }); continue; }
+    for (const side of ['tb', 'lr']) {
+      const e = c.paddingVar?.[side] ?? null, g = sc.paddingVar?.[side] ?? null;
+      if (e !== g) FAIL.push({ component: name, field: `children.${sc.name}.paddingVar.${side}`, expected: e, got: g });
+    }
+  }
+  for (const c of contractChildPad) {
+    if ((c.paddingVar?.tb || c.paddingVar?.lr) && !(got.childFramePadding ?? []).some(k => k.name === c.name))
+      FAIL.push({ component: name, field: `children.${c.name}.paddingVar`, expected: c.paddingVar, got: '(no longer bound in Figma)' });
+  }
+
   if (!FAIL.some(x => x.component === name)) PASS.push(name);
 }
 
@@ -697,12 +728,16 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
 // ── Gate [3f]: Sub-frame layout (children) ───────────────────────────────────
 // Verifies gap and padding on named child frames that have explicit CSS selectors.
 // Contract: CONTRACT[comp].children = [{ name, cssSelector, gapVar?, paddingVar? }]
+// cssSelector: null = the child frame is flattened into the parent (gap/padding expressed
+// geometrically or on the root rule, asserted elsewhere) — CSS lookup is skipped, but the
+// entry still anchors the snapshot cross-check above (childFrameGaps/childFramePadding).
 // Uses allCss (all files) since child selectors may live in plugin or shared files.
 const CHILD_FAIL = [], CHILD_PASS = [];
 
 for (const [comp, contract] of Object.entries(CONTRACT)) {
   if (!contract.children?.length) continue;
   for (const child of contract.children) {
+    if (child.cssSelector === null) continue; // flattened child frame — asserted via other gates
     const block = findBlock(allCss, child.cssSelector, allIndex);
     if (!block) {
       CHILD_FAIL.push(`${comp}/${child.name}: selector "${child.cssSelector}" not found in CSS`);
