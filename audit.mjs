@@ -1152,7 +1152,7 @@ async function bootstrapConfig() {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness, rRendered] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1171,6 +1171,7 @@ async function bootstrapConfig() {
     runScriptAsync('html-structure-check.mjs'),
     runScriptAsync('transition-check.mjs'),
     runScriptAsync('icon-freshness-check.mjs'),
+    runScriptAsync('rendered-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -1214,6 +1215,10 @@ async function bootstrapConfig() {
   // ── Animation ─────────────────────────────────────────────────────────────────
   addGate('Transition contract  (duration · easing · property per DS selector)',
     parseGeneric(rTransition, /✅|❌/));
+
+  // ── Rendered output ───────────────────────────────────────────────────────────
+  addGate('Rendered parity  (headless Chrome computed styles vs DS contract)',
+    parseGeneric(rRendered, /✅|❌|⏭/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));

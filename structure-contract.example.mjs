@@ -43,6 +43,19 @@ export const CONTRACT = {
   // },
 };
 
+// ─── Rendered assertions (Gate [16]) ──────────────────────────────────────────
+// Computed-style checks run in headless Chrome against the BUILT plugin ui.html.
+// prop = camelCase computed-style key; expected = exact string match.
+// probe = HTML injected when the selector matches nothing (runtime-only components).
+export const RENDERED_ASSERTIONS = [
+  // Example:
+  // { plugin: 'my-plugin', selector: '.statusBar', prop: 'height', expected: '56px',
+  //   note: 'DS statusBar h' },
+  // { plugin: 'my-plugin', selector: '.toast', prop: 'columnGap', expected: '4px',
+  //   probe: '<div class="toast"><span class="toast-icon"></span><span>Done</span></div>',
+  //   note: 'DS toast icon↔title gap/s' },
+];
+
 // ─── Plugin overrides of DS base classes (Gate [9] second check) ──────────────
 // Any PLUGIN-file rule that targets a class with a standalone base rule in theme CSS
 // and sets identity properties (color/background/border/padding/gap/height/font/…)

@@ -1,7 +1,7 @@
 # /rms-figma-code-parity — Figma DS ↔ Code Parity
 
 **What it does:** Audits whether the CSS codebase faithfully implements the DS Figma file.
-Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (15 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
+Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (16 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
 
 > **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
 
@@ -124,7 +124,7 @@ Both are machine-generated — never hand-edit. `component-state-tokens.json` (p
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`node scripts/audit.mjs`** | **All 15 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 16 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -618,13 +618,13 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. Run
 
 ---
 
-## Phase 2 — Step 2: Run all 15 audit gates
+## Phase 2 — Step 2: Run all 16 audit gates
 
 ```bash
 node scripts/audit.mjs
 ```
 
-All 15 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 16 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -645,6 +645,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [13] | `icon-slot-check.mjs` `component-slot-check.mjs` | **Markup** | **Slot parity** — Two-phase exhaustiveness check for both asset types: (a) icon slots — every slot in `ICON_USAGES` uses the exact DS icon specified; every `<button id="X">` with `<use href="#icon-">` must be declared; (b) component slots — every slot in `COMPONENT_USAGES` uses the correct DS component class; every button with a primary/secondary/tertiary/quaternary class must be declared. |
 | [14] | `pseudo-element-check.mjs` `icon-check.mjs` `icon-freshness-check.mjs` | **Markup** | **Icon contract** — Three-part check: (a) `::before`/`::after` pseudo-elements declared in the structure contract; (b) every SVG `<symbol>` in `ICON_SYMBOLS` — DS icons with Figma node ID, plugin icons marked `PLUGIN-SPECIFIC`, with path data verified against snapshot; (c) **live Figma freshness** — for every DS icon with a `nodeId`, fetches the live SVG from Figma REST API and compares path data against the snapshot. Requires `FIGMA_TOKEN`; part (c) skips if not set. |
 | [15] | `transition-check.mjs` | **Animation** | **Transition contract** — Every selector in `TRANSITION_CONTRACT` (structure-contract.mjs) must have a CSS `transition:` declaration containing each documented part (duration, easing, property). Catches animation drift before Figma EASING/TIMING tokens exist. |
+| [16] | `rendered-check.mjs` | **Rendered output** | **Rendered parity** — Launches headless Chrome via CDP (no npm deps; Node ≥ 22 built-in WebSocket), loads each built plugin `ui.html` from `file://`, and asserts `getComputedStyle` values from `RENDERED_ASSERTIONS` (structure-contract.mjs). Catches what static text analysis cannot: cascade/specificity surprises (a later rule silently overriding the DS base), wrong `var()` resolution, and stale builds. Components that only exist at runtime (toasts, list rows) are instantiated via the entry's `probe` HTML, injected into an absolutely-positioned hidden host so the app shell's flex layout cannot stretch/shrink them. Skips gracefully when Chrome is absent (`CHROME_PATH` to point at a binary). |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -874,7 +875,7 @@ return JSON.stringify(result, null, 2);
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 15 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
+| All 16 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
 
