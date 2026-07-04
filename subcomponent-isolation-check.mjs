@@ -39,20 +39,25 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const THEME_PATH = cfg.paths?.themeCSS  ?? 'src/theme.css';
+const THEME_PATHS = [].concat(cfg.paths?.themeCSS ?? 'src/theme.css');
 const PLUGIN_CSS = cfg.paths?.pluginCSS ?? [];
-const SOURCES = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
+const SOURCES = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
 
 // ── Load project-specific ALLOWED broad rules from structure-contract.mjs ──────
 // Export ALLOWED_BROAD_RULES from structure-contract.mjs at the project root.
 // Key   = normalized selector (single spaces, no leading/trailing whitespace).
 // Value = isolation proof (LEAF / ISOLATED / NON-VISUAL / OWNED CHILDREN /
 //         ISOLATION FIX / PLUGIN-SPECIFIC / DECORATIVE).
-let ALLOWED = {};
+// PLUGIN_DS_OVERRIDES: allowlist for plugin-file rules that restyle a DS base class
+// (see the second check below). Key = normalized selector, value = reason.
+let ALLOWED = {}, PLUGIN_OVERRIDES_ALLOWED = {};
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
   if (m.ALLOWED_BROAD_RULES && typeof m.ALLOWED_BROAD_RULES === 'object') {
     ALLOWED = m.ALLOWED_BROAD_RULES;
+  }
+  if (m.PLUGIN_DS_OVERRIDES && typeof m.PLUGIN_DS_OVERRIDES === 'object') {
+    PLUGIN_OVERRIDES_ALLOWED = m.PLUGIN_DS_OVERRIDES;
   }
 } catch { /* structure-contract.mjs optional */ }
 
@@ -105,6 +110,37 @@ for (const srcPath of SOURCES) {
   }
 }
 
+// ── Plugin overrides of DS base classes ───────────────────────────────────────
+// A class with a standalone base rule in theme CSS (`.x { ... }`) is a DS component
+// class — its visual identity belongs to the base. Any PLUGIN-file rule that targets
+// such a class AND sets identity properties (color, background, border, padding, gap,
+// height, font, radius, opacity, shadow) overrides the DS and must be documented in
+// PLUGIN_DS_OVERRIDES (structure-contract.mjs) with a reason. Layout-only rules
+// (width, margin, position, flex, z-index, ...) are consumer placement and pass freely.
+const IDENTITY_RE = /(^|[;{]|\s)(color|background[\w-]*|border[\w-]*|padding[\w-]*|gap|height|min-height|font-size|font-weight|line-height|letter-spacing|text-transform|opacity|box-shadow|fill|stroke)\s*:/;
+
+const dsBaseClasses = new Set();
+for (const themePath of THEME_PATHS.filter(f => existsSync(join(ROOT, f)))) {
+  const text = readFileSync(join(ROOT, themePath), 'utf8');
+  for (const { selector } of extractRules(text)) {
+    const m = selector.match(/^\.([a-zA-Z][a-zA-Z0-9_-]*)$/);
+    if (m) dsBaseClasses.add(m[1]);
+  }
+}
+
+const overrideNew = [], overrideDocumented = [];
+for (const srcPath of PLUGIN_CSS.filter(f => existsSync(join(ROOT, f)))) {
+  const text = readFileSync(join(ROOT, srcPath), 'utf8');
+  for (const { selector, body } of extractRules(text)) {
+    if (!IDENTITY_RE.test(body)) continue;
+    const hit = [...dsBaseClasses].find(c => new RegExp(`\\.${c}(?![\\w-])`).test(selector));
+    if (!hit) continue;
+    const key = normalizeSelector(selector);
+    if (PLUGIN_OVERRIDES_ALLOWED[key]) overrideDocumented.push({ key, reason: PLUGIN_OVERRIDES_ALLOWED[key], file: srcPath });
+    else overrideNew.push({ key, cls: hit, body: body.slice(0, 120), file: srcPath });
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── Sub-component style isolation (Hard Rule #8) ───────────────────\n');
 
@@ -119,7 +155,6 @@ if (documented.length) {
 
 if (newRules.length === 0) {
   console.log('✅ No new undocumented broad element selectors with visual properties.\n');
-  process.exit(0);
 } else {
   console.log(`❌ UNDOCUMENTED  ${newRules.length}  (new broad rules — verify sub-component isolation)\n`);
   for (const r of newRules) {
@@ -128,5 +163,30 @@ if (newRules.length === 0) {
     console.log(`      → Either prove this is a LEAF component (add to ALLOWED with reason),`);
     console.log(`        or add explicit .<subComponent> elementTag { } override rules later in the cascade.\n`);
   }
-  process.exit(1);
 }
+
+console.log('\n─── Plugin overrides of DS base classes ─────────────────────────────\n');
+console.log(`   (${dsBaseClasses.size} DS base classes derived from theme CSS)`);
+
+if (overrideDocumented.length) {
+  console.log(`✅ DOCUMENTED  ${overrideDocumented.length}  (plugin overrides with a recorded reason)`);
+  for (const r of overrideDocumented) {
+    console.log(`   ✅ ${r.key}`);
+    console.log(`      ${r.reason}`);
+  }
+  console.log();
+}
+
+if (overrideNew.length === 0) {
+  console.log('✅ No undocumented plugin overrides of DS base classes.\n');
+} else {
+  console.log(`❌ UNDOCUMENTED  ${overrideNew.length}  (plugin rules restyling a DS base class)\n`);
+  for (const r of overrideNew) {
+    console.log(`   ❌ "${r.key}"  in ${r.file}  (DS class: .${r.cls})`);
+    console.log(`      body: { ${r.body.replace(/\n/g, ' ').replace(/\s+/g, ' ')} }`);
+    console.log(`      → Move the styling into the DS base (theme CSS), or document the override`);
+    console.log(`        in PLUGIN_DS_OVERRIDES (structure-contract.mjs) with a really good reason.\n`);
+  }
+}
+
+process.exit(newRules.length === 0 && overrideNew.length === 0 ? 0 : 1);

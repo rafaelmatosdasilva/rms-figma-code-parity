@@ -940,14 +940,30 @@ async function bootstrapConfig() {
       try { return readFileSync(f, 'utf8'); } catch { return ''; }
     }).join('\n');
     const unused = declared.filter(v => !KNOWN_UNUSED.has(v) && !allSrc.includes(`var(${v})`));
-    const pass   = unused.length === 0;
+
+    // Undeclared vars: every fallback-less var(--x) used anywhere must be declared somewhere —
+    // theme.css, a plugin <style> block, or JS setProperty. A var() referencing a renamed or
+    // deleted variable silently resolves to nothing (e.g. a rename in theme.css orphans plugin
+    // usages with no visual error). Usages WITH a fallback are self-documenting and skipped.
+    const declaredAll = new Set([
+      ...[...allSrc.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)].map(m => '--' + m[1]),
+      ...[...allSrc.matchAll(/setProperty\(\s*['"](--[a-zA-Z][a-zA-Z0-9-]*)['"]/g)].map(m => m[1]),
+    ]);
+    const usedNoFallback = [...new Set(
+      [...allSrc.matchAll(/var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*\)/g)].map(m => m[1])
+    )];
+    const undeclared = usedNoFallback.filter(v => !declaredAll.has(v));
+
+    const pass   = unused.length === 0 && undeclared.length === 0;
     const scanned = allSourceFiles().length;
-    return {
-      pass,
-      lines: pass
-        ? [`✅ 0 unused vars  (scanned ${scanned} files; ${KNOWN_UNUSED.size} known-unused exempted)`]
-        : [`❌ ${unused.length} unused (scanned ${scanned} files): ${unused.join(', ')}`],
-    };
+    const lines = [];
+    lines.push(unused.length === 0
+      ? `✅ 0 unused vars  (scanned ${scanned} files; ${KNOWN_UNUSED.size} known-unused exempted)`
+      : `❌ ${unused.length} unused (scanned ${scanned} files): ${unused.join(', ')}`);
+    lines.push(undeclared.length === 0
+      ? `✅ 0 undeclared vars  (every fallback-less var() resolves to a declaration)`
+      : `❌ ${undeclared.length} undeclared var() usage(s) — renamed/deleted vars still referenced: ${undeclared.join(', ')}`);
+    return { pass, lines };
   }
 
   function computeGate6() {

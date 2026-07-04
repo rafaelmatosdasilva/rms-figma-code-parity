@@ -43,6 +43,19 @@ export const CONTRACT = {
   // },
 };
 
+// ─── Plugin overrides of DS base classes (Gate [9] second check) ──────────────
+// Any PLUGIN-file rule that targets a class with a standalone base rule in theme CSS
+// and sets identity properties (color/background/border/padding/gap/height/font/…)
+// must be listed here with the reason it cannot live in the base.
+// Key = normalized selector, value = reason (prefix with a category tag).
+export const PLUGIN_DS_OVERRIDES = {
+  // Example:
+  // '.scroll-area':
+  //   'LAYOUT — scroll container content padding is per-plugin placement, not identity',
+  // '.node.node-external':
+  //   'DS-FRAME STATE — dashed dimmed pill designed in the DS frame, no component variant exists',
+};
+
 // ─── CSS height/min-height rules to verify ────────────────────────────────────
 // For each component with a fixed height, verify the CSS selector enforces it.
 export const CSS_HEIGHT_RULES = {
