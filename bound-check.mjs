@@ -47,7 +47,8 @@ try { raw = readFileSync(join(ROOT, 'bound-tokens.json'), 'utf8'); } catch {
   process.exit(2);
 }
 const parsed = JSON.parse(raw);
-const boundTokens = Array.isArray(parsed) ? parsed : Object.keys(parsed);
+// _-prefixed keys are metadata (_updated stamp), not tokens
+const boundTokens = (Array.isArray(parsed) ? parsed : Object.keys(parsed)).filter(t => !t.startsWith('_'));
 
 // ── Collect all declared CSS vars ─────────────────────────────────────────────
 const declared = new Set();

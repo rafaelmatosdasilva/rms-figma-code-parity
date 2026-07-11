@@ -50,7 +50,8 @@ if (!existsSync(join(ROOT, 'component-state-tokens.json'))) {
   process.exit(2);
 }
 const parsed = JSON.parse(readFileSync(join(ROOT, 'component-state-tokens.json'), 'utf8'));
-const stateTokens = Object.keys(parsed);
+// _-prefixed keys are metadata (_updated stamp), not tokens
+const stateTokens = Object.keys(parsed).filter(t => !t.startsWith('_'));
 
 // ── Collect declared CSS vars ─────────────────────────────────────────────────
 const declared = new Set();

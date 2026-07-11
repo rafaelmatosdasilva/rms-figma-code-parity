@@ -113,7 +113,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 | `figma-vars.snapshot.json` | color (all modes), sizing, typography | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
-Both are machine-generated — never hand-edit. `component-state-tokens.json` (project root, gitignored) is auto-generated on every `pnpm parity` run when `FIGMA_TOKEN` is set. `bound-tokens.json` is **committed** — it is refreshed via REST when available, or via Plugin API and committed manually when the REST API returns 403 (Professional plan).
+Both are machine-generated — never hand-edit. `component-state-tokens.json` and `bound-tokens.json` are auto-refreshed via REST on every `pnpm parity` run when `FIGMA_TOKEN` is set. When the REST API returns 403 (non-Enterprise plans), refresh both via the Plugin API walks and **commit them** — each carries an `_updated` stamp, Gate [1] tracks their freshness, and the consuming gates ([4], [10]) always run at full strength against the committed data.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `node scripts/audit.mjs --trend`.
 
@@ -621,10 +621,10 @@ for (const id of FRAME_IDS) {
   const node = await figma.getNodeByIdAsync(id);
   if (node) collectBound(node, tokenSet);
 }
-return Object.fromEntries([...tokenSet].map(t => [t, true]));
+return { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
 ```
 
-Save the returned JSON as `bound-tokens.json` at project root and commit it. Run this whenever DS frames change significantly.
+Save the returned JSON as `bound-tokens.json` at project root and commit it. The `_updated` stamp lets Gate [1] track the file's freshness — a stamp ≤24h old keeps Gate [4] fully green on any plan. Run this whenever DS frames change significantly.
 
 **If `bound-tokens.json` is missing entirely:** Gate [4] hard-fails. Generate it via one of the two methods above.
 
@@ -645,7 +645,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [1]  | inline | **Freshness** | **Freshness** — Snapshot files pulled today and compiled outputs not older than source. Always ✅ after Phase 1 runs. |
 | [2]  | `visual-regression-check.mjs` | **Freshness** | **Visual regression** — Live Figma frame screenshot matches the stored reference. Skips if `FIGMA_TOKEN` isn't set or no frames are configured. |
 | [3]  | `parity-check.mjs` | **Tokens** | **Token parity** — Every token across every mode matches Figma. NEW SKIP = token in Figma but no CSS var yet — treat as ❌. `⏳ PENDING FIGMA SYNC` when code matches the upstream DS source but the primary snapshot has a newer value (not a code bug). |
-| [4]  | `bound-check.mjs` | **Tokens** | **Bound-token coverage** — Every token actively used in the Figma frames has a CSS variable. |
+| [4]  | `bound-check.mjs` | **Tokens** | **Bound-token coverage** — Every token actively used in the Figma frames has a CSS variable. Runs at full strength on any plan against `bound-tokens.json`; staleness of that file surfaces in Gate [1], not here. |
 | [5]  | `mode-completeness-check.mjs` | **Tokens** | **Mode completeness** — Every token meant to vary between modes actually does — light vs dark, compact vs comfortable, any DS mode. Nothing frozen at the same value where modes should differ. |
 | [6]  | `exemption-check.mjs` | **Tokens** | **Exemption validity** — Tokens marked as "skip this" are cross-checked against the snapshot. Stale exemptions (token renamed or removed) are flagged. |
 | [7]  | `naming-check.mjs` | **Tokens** | **CSS naming round-trip** — Every CSS variable name traces back to a real Figma token. Catches invented variables with no DS counterpart. |
@@ -804,9 +804,28 @@ This is a warning, not a failure — it does not block the audit. Its purpose: s
 
 `{ "token/name": count }` — every token found in any variant state. Gate [10] (`state-check.mjs`) reads this and verifies all captured tokens have CSS vars.
 
-**If the auto-refresh fails** (no `FIGMA_TOKEN`): Gate [10] uses whatever exists. If missing, Gate [10] hard-fails (exit 2).
+**If the auto-refresh fails** (no `FIGMA_TOKEN` or REST 403): Gate [10] uses whatever exists. If missing, Gate [10] hard-fails (exit 2).
 
-> **Important:** must be a plain `{ "token/name": count }` object. Any `_`-prefixed key will be treated as an uncovered token and fail Gate [10].
+> `_`-prefixed keys are metadata and ignored by every consumer — the refresh writes an `_updated` stamp so Gate [1] can track the file's freshness.
+
+**Plugin API fallback** — when REST is plan-limited, run this in Figma (via `use_figma` or Plugin console), save the output as `component-state-tokens.json` at project root, and commit it:
+
+```js
+const idToName = {};
+for (const v of await figma.variables.getLocalVariablesAsync()) idToName[v.id] = v.name;
+const counts = {};
+function collect(bv) {
+  if (!bv) return;
+  for (const val of Object.values(bv)) {
+    const refs = Array.isArray(val) ? val : [val];
+    for (const r of refs) { const n = idToName[r?.id]; if (n) counts[n] = (counts[n] ?? 0) + 1; }
+  }
+}
+function walk(n) { collect(n.boundVariables); if ('children' in n) for (const c of n.children) walk(c); }
+const page = figma.root.children.find(p => p.name.toLowerCase().includes('component')) ?? figma.currentPage;
+for (const node of page.children) if (node.type === 'COMPONENT_SET' || node.type === 'COMPONENT') walk(node);
+return { _updated: new Date().toISOString(), ...counts };
+```
 
 ### `component-state-bindings.json` — structured binding map (Gate [3c] auto-derivation)
 

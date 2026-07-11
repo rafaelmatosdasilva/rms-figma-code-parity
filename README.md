@@ -117,14 +117,10 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 ────────────────────────────────────────────────────────────
   GATE SUMMARY
 ────────────────────────────────────────────────────────────
-  ⏭   [1]   Figma snapshots are up to date and build output…Skipped
-         Plan detected: non-Enterprise (Figma Variables REST API not available)
-         Risk: if DS component structure changed since the last committed snapshot, Gate [10] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.
+  ✅  [1]   Figma snapshots are up to date and build output…Pass
   ✅  [2]   Visual output matches the stored Figma frame sc…Pass
   ✅  [3]   Token values match Figma (color · sizing · typo…Pass
-  ⏭   [4]   Every DS token bound in Figma is implemented in…Skipped
-         Plan detected: non-Enterprise (Figma Variables REST API not available)
-         Risk: if DS frames were updated since the last committed snapshot, newly bound or removed token bindings will not be detected. Fix: run /rms-figma-code-parity — Phase 1 Step 1d refreshes this via Plugin API on any plan.
+  ✅  [4]   Every DS token bound in Figma is implemented in…Pass
   ✅  [5]   Every token that changes between modes is handl…Pass
   ✅  [6]   All documented exceptions are still valid       Pass
   ✅  [7]   Every CSS variable maps back to a real Figma to…Pass
@@ -142,17 +138,13 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 
   ALL GATES PASS ✅
 
-  ⏭  PLAN-LIMITED GATES — what this means:
+  ⏭  STALE-SNAPSHOT MODE — when a gate shows ⏭ instead of ✅:
 
   [1] Figma snapshots are up to date and build outputs are current
-      This gate was skipped because the Figma Variables REST API
-      is only available on Enterprise plan.
-      Risk: if DS component structure changed since the last committed snapshot, Gate [10] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.
-
-  [4] Every DS token bound in Figma is implemented in CSS
-      This gate was skipped because the Figma Variables REST API
-      is only available on Enterprise plan.
-      Risk: if DS frames were updated since the last committed snapshot, newly bound or removed token bindings will not be detected. Fix: run /rms-figma-code-parity — Phase 1 Step 1d refreshes this via Plugin API on any plan.
+      Shown as ⏭ only when a snapshot is >24h old and the REST auto-refresh
+      is not available on this plan. The Phase 1 Plugin API captures refresh
+      every snapshot on any plan — commit them and the gate is ✅.
+      Risk: gates consuming a stale snapshot pass against outdated data — DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity — the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.
 
 ────────────────────────────────────────────────────────────
 ```

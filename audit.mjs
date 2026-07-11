@@ -333,7 +333,7 @@ async function refreshBoundTokens(fileKey, frames, token, outPath) {
       const { nodes } = await nRes.json();
       for (const data of Object.values(nodes ?? {})) collectBound(data?.document, idToName, tokenSet);
     }
-    const result = Object.fromEntries([...tokenSet].map(t => [t, true]));
+    const result = { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
     writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
     console.log(C.dim(`  ✅ Bound tokens: ${tokenSet.size} token(s) across ${frames.length} frame(s)`));
     return true;
@@ -406,7 +406,7 @@ async function refreshStateBindings(fileKey, token, outPath) {
       }
     }
 
-    writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
+    writeFileSync(outPath, JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2) + '\n');
     console.log(C.dim(`  ✅ State bindings: ${Object.keys(result).length} component set(s) indexed`));
     return true;
   } catch (e) {
@@ -437,7 +437,7 @@ async function refreshStateTokens(fileKey, token, outPath) {
       const { nodes } = await nRes.json();
       for (const data of Object.values(nodes ?? {})) collectBound(data?.document, idToName, tokenSet);
     }
-    const result = Object.fromEntries([...tokenSet].map(t => [t, true]));
+    const result = { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
     writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
     console.log(C.dim(`  ✅ State tokens: ${tokenSet.size} token(s) across ${setIds.length} set(s)`));
     return true;
@@ -803,29 +803,17 @@ async function bootstrapConfig() {
         ],
       };
     }
-    if (_figmaApiLimited) {
-      // bound-tokens.json exists (committed) but wasn't refreshed — coverage check ran against committed snapshot
-      const pass       = r.status === 0;
-      const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
-      const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
-      if (!pass) {
-        // Real coverage failures even against committed snapshot are still failures
-        return { pass: false, lines: [...summary, ...failDetails] };
-      }
-      return {
-        pass: true,
-        planLimited: true,
-        lines: [
-          C.yellow('⚠️  Variables REST API requires Enterprise plan — bound-tokens.json not refreshed'),
-          C.yellow('   Coverage checked against committed snapshot (may be stale if frames changed)'),
-          ...summary,
-        ],
-      };
-    }
+    // Coverage always runs fully against bound-tokens.json regardless of plan —
+    // the file is refreshed via REST when available, or via the Phase 1 Plugin API
+    // walk otherwise. Staleness of the file itself is Gate [1]'s job, not this gate's.
     const pass       = r.status === 0;
     const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
-    return { pass, lines: [...summary, ...failDetails] };
+    const boundAge   = snapshotAge('bound-tokens.json');
+    const provenance = boundAge === null
+      ? C.dim('coverage source: bound-tokens.json (no _updated stamp — age tracked by Gate [1] once refreshed)')
+      : C.dim(`coverage source: bound-tokens.json (updated ${boundAge}h ago via ${_figmaApiLimited ? 'Plugin API' : 'REST'})`);
+    return { pass, lines: [provenance, ...summary, ...failDetails] };
   }
 
   function parseGate8(r) {
@@ -901,7 +889,7 @@ async function bootstrapConfig() {
       lines.push(C.red(`${SNAP_STRUCT} missing — run /rms-parity Phase 1`)); warn = true;
     } else if (struct > 24) {
       if (_figmaApiLimited) {
-        lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old — not refreshed (Variables REST API requires Enterprise plan)`));
+        lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old — REST refresh not available on this plan; run the Phase 1 Step 1c Plugin API capture`));
         structPlanLimited = true;
       } else {
         lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old`));
@@ -909,6 +897,30 @@ async function bootstrapConfig() {
       }
     } else {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
+    }
+
+    // Walk snapshots consumed by Gates [4] (bound-check) and [11]/[6] (state-check,
+    // exemption-check). Refreshed via REST when available, or via the Phase 1 Plugin API
+    // walks otherwise — either path stamps _updated. Staleness is flagged HERE so the
+    // consuming gates can always run at full strength against the committed data.
+    let walksPlanLimited = false;
+    for (const [file, phase] of [['bound-tokens.json', 'bound walk'], ['component-state-tokens.json', 'COMPONENT_SET state walk']]) {
+      if (!existsSync(join(ROOT, file))) continue; // absence hard-fails in the consuming gate (exit 2)
+      const age = snapshotAge(file);
+      if (age === null) {
+        lines.push(C.yellow(`⚠️  ${file} has no _updated stamp — re-run the Phase 1 ${phase} to start tracking freshness`));
+        if (_figmaApiLimited) walksPlanLimited = true; else warn = true;
+      } else if (age > 24) {
+        if (_figmaApiLimited) {
+          lines.push(C.yellow(`⚠️  ${file} is ${age}h old — REST refresh not available on this plan; run the Phase 1 ${phase} (Plugin API)`));
+          walksPlanLimited = true;
+        } else {
+          lines.push(C.yellow(`⚠️  ${file} is ${age}h old`));
+          warn = true;
+        }
+      } else {
+        lines.push(`${file} ✓ (updated today)`);
+      }
     }
 
     // Component-props snapshot drives Gate [3g] (component property parity).
@@ -923,7 +935,7 @@ async function bootstrapConfig() {
       lines.push(`${SNAP_COMP_PROPS} ✓ (updated today)`);
     }
 
-    const anyPlanLimited = varsPlanLimited || structPlanLimited;
+    const anyPlanLimited = varsPlanLimited || structPlanLimited || walksPlanLimited;
     return { pass: !warn && !anyPlanLimited, planLimited: !warn && anyPlanLimited, lines };
   }
 
@@ -1260,8 +1272,7 @@ async function bootstrapConfig() {
     'All CSS transitions match the documented duration and easing contract',
   ];
   const GATE_PLAN_RISK = {
-    1: 'Risk: if DS component structure changed since the last committed snapshot, Gate [10] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.',
-    4: 'Risk: if DS frames were updated since the last committed snapshot, newly bound or removed token bindings will not be detected. Fix: run /rms-figma-code-parity — Phase 1 Step 1d refreshes this via Plugin API on any plan.',
+    1: 'Risk: gates consuming a stale snapshot pass against outdated data — DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity — the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',
   };
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
@@ -1295,21 +1306,14 @@ async function bootstrapConfig() {
   if (planLimitedGates.length) {
     const PLAN_NOTES = {
       1: [
-        'The structure snapshot (figma-structure.snapshot.json) could not be auto-refreshed.',
-        'Auto-refresh uses the Figma Variables REST API, which requires an Enterprise plan.',
-        'The last committed snapshot was used instead — if DS component structure changed',
-        'since it was committed, Gate [3] may pass against outdated data.',
-        'Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API',
-        'on any plan. After running, commit the new snapshot file.',
-      ],
-      4: [
-        'The bound-token list (bound-tokens.json) could not be auto-refreshed.',
-        'This file maps every DS frame node to the Figma variables bound to it.',
-        'Auto-refresh uses the Figma Variables REST API (Enterprise-only). Coverage was',
-        'checked against the last committed snapshot — if DS frames changed since then,',
-        'newly bound or removed token bindings will not be detected.',
-        'Fix: run /rms-figma-code-parity — Phase 1 Step 1d refreshes this via Plugin API',
-        'on any plan. After running, commit the new bound-tokens.json file.',
+        'One or more snapshots are older than 24h and could not be auto-refreshed —',
+        'the Figma Variables REST API is not available on this plan.',
+        'This is a FRESHNESS flag, not a capability gap: every snapshot here',
+        '(figma-structure, bound-tokens, component-state-tokens) can be refreshed on',
+        'any plan via the Phase 1 Plugin API captures in /rms-figma-code-parity.',
+        'Run Phase 1, commit the refreshed files, and this gate goes fully green.',
+        'Until then, gates consuming these files run against the committed data —',
+        'correct as of its _updated stamp, blind to DS changes made after it.',
       ],
     };
     console.log(C.yellow('  ⏭  PLAN-LIMITED GATES — what this means:\n'));

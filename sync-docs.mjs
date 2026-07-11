@@ -104,29 +104,23 @@ function generateExampleOutput() {
   for (let i = 0; i < GATE_COUNT; i++) {
     const n = i + 1;
     const plain = gatePlain[i] ?? gateLabels[i] ?? `Gate ${n}`;
-    const hasPlanRisk = !!gatePlanRisk[n];
-    const icon   = hasPlanRisk ? '⏭ ' : '✅';
-    const status = hasPlanRisk ? 'Skipped' : 'Pass';
     const numPad = `[${n}]`.padEnd(6);
     const labelPad = plain.length > 48 ? plain.slice(0, 47) + '…' : plain.padEnd(48);
-    lines.push(`  ${icon}  ${numPad}${labelPad}${status}`);
-    if (hasPlanRisk) {
-      lines.push(`         Plan detected: non-Enterprise (Figma Variables REST API not available)`);
-      lines.push(`         ${gatePlanRisk[n]}`);
-    }
+    lines.push(`  ✅  ${numPad}${labelPad}Pass`);
   }
   lines.push('');
   lines.push(divider);
   lines.push('');
   lines.push('  ALL GATES PASS ✅');
   lines.push('');
-  lines.push('  ⏭  PLAN-LIMITED GATES — what this means:');
+  lines.push('  ⏭  STALE-SNAPSHOT MODE — when a gate shows ⏭ instead of ✅:');
   lines.push('');
   for (const [num, risk] of Object.entries(gatePlanRisk)) {
     const plain = gatePlain[Number(num) - 1] ?? `Gate ${num}`;
     lines.push(`  [${num}] ${plain}`);
-    lines.push(`      This gate was skipped because the Figma Variables REST API`);
-    lines.push(`      is only available on Enterprise plan.`);
+    lines.push(`      Shown as ⏭ only when a snapshot is >24h old and the REST auto-refresh`);
+    lines.push(`      is not available on this plan. The Phase 1 Plugin API captures refresh`);
+    lines.push(`      every snapshot on any plan — commit them and the gate is ✅.`);
     lines.push(`      ${risk}`);
     lines.push('');
   }

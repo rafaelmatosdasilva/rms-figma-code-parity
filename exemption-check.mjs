@@ -61,13 +61,13 @@ const snapTokens = new Set([
   ...Object.keys(snap.sizing ?? {}),
 ]);
 
-// Runtime walk tokens (transient — may be absent; only checked when present)
-const boundTokens = existsSync(join(ROOT, 'bound-tokens.json'))
-  ? new Set(Object.keys(JSON.parse(readFileSync(join(ROOT, 'bound-tokens.json'), 'utf8'))))
+// Runtime walk tokens (transient — may be absent; only checked when present).
+// _-prefixed keys are metadata (_updated stamp), not tokens.
+const readTokenKeys = (file) => existsSync(join(ROOT, file))
+  ? new Set(Object.keys(JSON.parse(readFileSync(join(ROOT, file), 'utf8'))).filter(t => !t.startsWith('_')))
   : null;
-const stateTokens = existsSync(join(ROOT, 'component-state-tokens.json'))
-  ? new Set(Object.keys(JSON.parse(readFileSync(join(ROOT, 'component-state-tokens.json'), 'utf8'))))
-  : null;
+const boundTokens = readTokenKeys('bound-tokens.json');
+const stateTokens = readTokenKeys('component-state-tokens.json');
 const runtimeTokens = new Set([...(boundTokens ?? []), ...(stateTokens ?? [])]);
 
 // ── Collect declared CSS vars (all token files merged) ───────────────────────
