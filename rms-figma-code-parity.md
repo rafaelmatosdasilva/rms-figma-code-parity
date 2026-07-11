@@ -304,7 +304,19 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 //          strokeOnDefault, strokeOnAnyState, childFramePadding, childFrameGaps
 // fillStructure = 'before' when fill is on a child "Background" rect (→ CSS ::before)
 //                 'direct' when on the frame itself
-//                 'none' when default state has no fill
+//                 'none' when default state has no fill (fills === [] — an empty array is a real
+//                 DS fact, not a capture miss; figma.mixed must be treated as no-fill too)
+// fontSizeVar/fontWeightVar = bound fontSize/fontWeight variable name on the component's
+//                 primary (first, depth-first) TEXT node. When unbound, fall back to the
+//                 applied text style's scale key (last path segment, lowercased) for BOTH
+//                 fields — a text style carries size AND weight, so recording one of the
+//                 pair as null while a style is applied is a capture bug, not a DS fact.
+//                 null only when the component has no TEXT node or the text has no style.
+// innerRadiusVar = first bound radius variable (topLeftRadius → cornerRadius → other corners)
+//                 checked on the State=Default frame ITSELF first, THEN on a child named
+//                 *Background*. Radius commonly sits on the frame for 'direct'/'none' fills
+//                 and on the Background rect for 'before' fills — checking only one location
+//                 produces false nulls.
 // strokeOnDefault  = node.strokes?.length > 0 on the State=Default variant's top-level frame
 // strokeOnAnyState = true if a stroke exists ANYWHERE in ANY variant's subtree (deep walk).
 //                    Must walk recursively into children — many components put strokes on a
