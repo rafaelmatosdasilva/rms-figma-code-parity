@@ -1040,6 +1040,22 @@ async function bootstrapConfig() {
       return /:\s*-?[0-9]+(\.[0-9]+)?(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\b/.test(code);
     });
 
+    // Pass 2b — a length literal that appears AFTER a var() in the same value. Pass 2
+    // only anchors to the colon, so a magic literal buried mid-shorthand slips through
+    // (e.g. `padding: var(--x) var(--x) 7px var(--x)` — the over-tall-divider bug). A
+    // shorthand that mixes DS tokens with a raw literal is almost always a bug: the
+    // literal should be a token too. Length units only (px/rem/em) — a `var(--x, 9px)`
+    // fallback stays inside the parens and is not matched.
+    const mixR    = sh('grep', [...scanArgs,
+      ':[[:space:]]*[^;]*var\\([^;]*\\)[^;]*[0-9]+(\\.[0-9]+)?(px|rem|em)\\b',
+      ...scanTargets,
+    ]);
+    const mixHits = (mixR.stdout || '').split('\n').filter(l => {
+      if (!l.trim() || isLegitimate(l)) return false;
+      const code = l.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '');
+      return /:\s*[^;]*var\([^;]*\)[^;]*\b[0-9]+(\.[0-9]+)?(px|rem|em)\b/.test(code);
+    });
+
     // Pass 3 — layout anti-patterns across ALL files (gate6ExcludeDirs does NOT apply here).
     // These viewport-unit rules cause scrollbar clipping and must never appear in any file.
     const allFiles = allSourceFiles();
@@ -1098,7 +1114,7 @@ async function bootstrapConfig() {
       return true;
     });
 
-    const hits = [...new Set([...hexHits, ...numHits, ...vwHits, ...svgUriHits, ...shadowHits])];
+    const hits = [...new Set([...hexHits, ...numHits, ...mixHits, ...vwHits, ...svgUriHits, ...shadowHits])];
     const pass  = hits.length === 0;
     return {
       pass,
