@@ -351,6 +351,39 @@ function deepHasStroke(node, depth = 0) {
 const strokeOnAnyState = set.children.some(v => deepHasStroke(v));
 ```
 
+**Also capture the *resting* variant's root stroke** — `restingStroke` + `restingState`.
+The single-variant `/default/i` capture is blind to a newly-added resting state: if the
+DS inserts a borderless "Idle" variant before the bordered "Default", `strokeOnDefault`
+still reports the old bordered state and nothing notices the resting appearance changed
+(this is the node "idle border" miss). The *resting* variant is the pure at-rest one:
+first `State=` value, with `Disabled=False` and `Selected=False` where those axes exist.
+
+```js
+function parseAxes(name){const o={};for(const p of name.split(',')){const i=p.indexOf('=');if(i>=0)o[p.slice(0,i).trim().toLowerCase()]=p.slice(i+1).trim().toLowerCase();}return o;}
+const variants = set.children.filter(c => c.type === 'COMPONENT');
+const firstAxes = parseAxes(variants[0].name);
+const stateKey  = 'state' in firstAxes ? 'state' : Object.keys(firstAxes)[0];
+const firstState = firstAxes[stateKey];
+const resting = variants.find(v => {
+  const a = parseAxes(v.name);
+  if (a[stateKey] !== firstState) return false;
+  if ('disabled' in a && a.disabled !== 'false') return false;
+  if ('selected' in a && a.selected !== 'false') return false;
+  return true;
+}) ?? variants[0];
+const restingState  = firstState;
+const restingStroke = (resting.strokes ?? []).filter(s => s.visible !== false).length > 0;
+```
+
+`restingStroke` records the resting variant's **root** stroke, so a Phase-1 diff surfaces
+"resting state changed" when the DS adds/removes a resting border. To turn that visibility
+into an enforced lock, add `restingStroke: false` (+ `restingState`) to the component's
+CONTRACT entry when the resting state is borderless — **Gate [3l]** then requires the bare
+component selector's border to be `transparent`/`none`, so a colored resting border can
+never regress in. It's opt-in per component (a `false` in the contract) because many DS
+components model their border on a child rect while the root variant has no stroke, so an
+auto-derived "must have a border" rule would false-positive.
+
 Capture `childFramePadding` by walking direct FRAME children of the State=Default variant:
 
 ```js

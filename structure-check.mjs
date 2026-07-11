@@ -646,6 +646,42 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(compo
   }
 }
 
+// ── Gate [3l]: Borderless resting-state lock ─────────────────────────────────
+// When the DS gives a component a borderless *resting* state (e.g. node's "Idle"
+// variant, strokeCount 0) the bare component selector must render with NO visible
+// border — the stroke belongs only to the interactive/selection states. A component
+// opts in by declaring `restingStroke: false` in its CONTRACT entry (set from the
+// Phase-1 snapshot, which records the pure-resting variant's stroke). The gate then
+// asserts the base selector's border is transparent/none, so a colored resting border
+// can never creep back in. Only the false→visible direction is checked: many DS
+// components model their border on a child rect while the root variant has no stroke,
+// so auto-deriving a "must have border" assertion from root stroke would false-positive.
+const RESTING_FAIL = [], RESTING_PASS = [];
+if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
+  for (const [comp, selCfg] of Object.entries(COMPONENT_CSS_SELECTORS)) {
+    const contract = CONTRACT[comp];
+    if (!contract || contract.restingStroke !== false) continue; // opt-in per component
+
+    const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
+    if (!mainBlock) { RESTING_PASS.push(`${comp}/resting-stroke (selector not in theme.css)`); continue; }
+
+    // Effective base border color: prefer an explicit border-color, else the colour
+    // token of the `border` shorthand (width style COLOR).
+    let borderColorVal = mainBlock.match(/(?<![a-zA-Z-])border-color\s*:\s*([^;]+)/)?.[1]?.trim() ?? null;
+    if (borderColorVal == null) {
+      const sh = mainBlock.match(/(?<![a-zA-Z-])border\s*:\s*([^;]+)/)?.[1]?.trim();
+      if (sh) borderColorVal = sh.split(/\s+/).slice(2).join(' ') || sh;
+    }
+    if (borderColorVal == null) { RESTING_PASS.push(`${comp}/resting-stroke (no base border)`); continue; }
+
+    if (!TRANSPARENT_VAL_RE.test(borderColorVal)) {
+      RESTING_FAIL.push(`${comp}: DS resting state "${contract.restingState ?? 'idle'}" has NO stroke but base "${selCfg.main}" draws a border "${borderColorVal}" — set border-color: transparent and color the interactive states instead`);
+    } else {
+      RESTING_PASS.push(`${comp}/resting-stroke`);
+    }
+  }
+}
+
 // ── 6. Hover/Selected pill geometry checks ────────────────────────────────────
 // Components that implement hover/selected backgrounds via a positioned ::before
 // element (a "pill") need two geometry checks the default-state snapshot misses:
@@ -1119,6 +1155,18 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
     }
   }
 
+  if (RESTING_PASS.length || RESTING_FAIL.length) {
+    const rTotal = RESTING_PASS.length + RESTING_FAIL.length;
+    console.log(`\n✅ PASS  ${RESTING_PASS.length}/${rTotal} resting-state stroke checks`);
+    console.log(`❌ FAIL  ${RESTING_FAIL.length}`);
+    if (RESTING_FAIL.length) {
+      console.log('\n─── Gate [3l] — base CSS border ≠ DS resting-variant stroke ────────');
+      for (const f of RESTING_FAIL) console.log(`  ❌ ${f}`);
+      console.log('   Fix: the bare component selector renders the DS resting state (first variant).');
+      console.log('   Match its border to that variant\'s stroke, then color the interactive states.');
+    }
+  }
+
   const pillTotal = PILL_PASS.length + PILL_FAIL.length;
   if (pillTotal > 0) {
     console.log(`\n✅ PASS  ${PILL_PASS.length}/${pillTotal} hover/selected pill geometry checks`);
@@ -1371,7 +1419,7 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
              || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0
              || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0
-             || STROKE_WIDTH_FAIL.length > 0;
+             || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
