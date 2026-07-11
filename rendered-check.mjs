@@ -47,6 +47,14 @@ if (!ASSERTIONS.length) {
   process.exit(0);
 }
 
+// Color scheme is emulated per assertion so mode-dependent color checks are
+// deterministic regardless of host OS appearance (headless Chrome otherwise
+// follows the machine's prefers-color-scheme — light on CI runners, often dark
+// on a developer's Mac, which silently flips any assertion on a mode-varying token).
+// Default from ds-config (`rendered.colorScheme`), else 'light' (the :root base and
+// the headless default). An assertion overrides it with its own `colorScheme` field.
+const DEFAULT_SCHEME = cfg.rendered?.colorScheme ?? 'light';
+
 // ── Find Chrome ───────────────────────────────────────────────────────────────
 function findChrome() {
   const absolute = [
@@ -147,25 +155,38 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     continue;
   }
 
-  const expr = `(() => {
-    const asserts = ${JSON.stringify(asserts.map(({ selector, probe, prop }) => ({ selector, probe, prop })))};
-    // Probes render inside an absolutely-positioned host so the app shell's own
-    // flex/grid layout (e.g. body { display:flex; height:100vh }) cannot stretch
-    // or shrink them — computed values must reflect the component's own rules.
-    const probeHost = document.createElement('div');
-    probeHost.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
-    document.body.appendChild(probeHost);
-    return asserts.map(a => {
-      let el = document.querySelector(a.selector);
-      if (!el && a.probe) {
-        probeHost.insertAdjacentHTML('beforeend', a.probe);
-        el = probeHost.querySelector(a.selector) ?? document.querySelector(a.selector);
-      }
-      return el ? getComputedStyle(el)[a.prop] : '(selector not found)';
-    });
-  })()`;
-  const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
-  const got = r.result.value ?? [];
+  // Evaluate in color-scheme groups: set prefers-color-scheme via CDP before each
+  // group so results never depend on the host's ambient appearance. Mode-independent
+  // assertions (height/padding/gap) sit in the default group and are unaffected.
+  const schemeOf = a => a.colorScheme ?? DEFAULT_SCHEME;
+  const got = new Array(asserts.length);
+  const indexed = asserts.map((a, i) => ({ a, i })).filter(x => !x.a.forcePseudo);
+  for (const scheme of [...new Set(indexed.map(x => schemeOf(x.a)))]) {
+    await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] }, sessionId);
+    const group = indexed.filter(x => schemeOf(x.a) === scheme);
+    const expr = `(() => {
+      const asserts = ${JSON.stringify(group.map(x => ({ selector: x.a.selector, probe: x.a.probe, prop: x.a.prop })))};
+      // Probes render inside an absolutely-positioned host so the app shell's own
+      // flex/grid layout (e.g. body { display:flex; height:100vh }) cannot stretch
+      // or shrink them — computed values must reflect the component's own rules.
+      const probeHost = document.createElement('div');
+      probeHost.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
+      document.body.appendChild(probeHost);
+      const out = asserts.map(a => {
+        let el = document.querySelector(a.selector);
+        if (!el && a.probe) {
+          probeHost.insertAdjacentHTML('beforeend', a.probe);
+          el = probeHost.querySelector(a.selector) ?? document.querySelector(a.selector);
+        }
+        return el ? getComputedStyle(el)[a.prop] : '(selector not found)';
+      });
+      probeHost.remove(); // isolate probe markup between scheme groups
+      return out;
+    })()`;
+    const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
+    const vals = r.result.value ?? [];
+    group.forEach((x, k) => { got[x.i] = vals[k]; });
+  }
 
   asserts.forEach((a, i) => {
     if (a.forcePseudo) return; // handled below via CSS.forcePseudoState
@@ -181,8 +202,21 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
   if (pseudoAsserts.length) {
     await send('DOM.enable', {}, sessionId);
     await send('CSS.enable', {}, sessionId);
+    // Inject pseudo-assert probes into a persistent host (the scheme-grouped pass
+    // above runs its own throwaway host, so runtime-only elements like buttonList
+    // probes must be re-injected here for DOM.querySelector to resolve them).
+    const injectExpr = `(() => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
+      document.body.appendChild(host);
+      const probes = ${JSON.stringify(pseudoAsserts.map(a => ({ selector: a.selector, probe: a.probe })))};
+      for (const p of probes) if (p.probe && !document.querySelector(p.selector)) host.insertAdjacentHTML('beforeend', p.probe);
+      return true;
+    })()`;
+    await send('Runtime.evaluate', { expression: injectExpr, returnByValue: true }, sessionId);
     const { root } = await send('DOM.getDocument', {}, sessionId);
     for (const a of pseudoAsserts) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: a.colorScheme ?? DEFAULT_SCHEME }] }, sessionId);
       const label = `${plugin} ${a.selector}:${a.forcePseudo.join(':')} → ${a.prop}`;
       const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: a.selector }, sessionId);
       if (!nodeId) { FAIL.push(`${label}: selector not found (probe missing?)`); continue; }
