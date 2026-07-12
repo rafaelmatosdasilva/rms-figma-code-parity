@@ -310,11 +310,14 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
 // a plugin-local override silently changing it is a divergence. For each entry we render
 // its probe in every listed plugin, read the props, and compare across plugins.
 const XP_PASS = [], XP_FAIL = [];
-for (const entry of CROSS_PLUGIN) {
-  const perPlugin = {};
-  for (const plugin of entry.plugins) {
+if (CROSS_PLUGIN.length) {
+  // Open each referenced plugin's target ONCE and evaluate every cross-plugin probe for it
+  // in a single round-trip, instead of reopening a target per (entry × plugin).
+  const xpPlugins = [...new Set(CROSS_PLUGIN.flatMap(e => e.plugins))];
+  const results = {}; // plugin -> { entryLabel -> {prop: val} }  (or { _missing: true })
+  for (const plugin of xpPlugins) {
     const uiPath = join(ROOT, `apps/${plugin}/ui.html`);
-    if (!existsSync(uiPath)) { perPlugin[plugin] = { _missing: true }; continue; }
+    if (!existsSync(uiPath)) { results[plugin] = { _missing: true }; continue; }
     const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
     await send('Runtime.enable', {}, sessionId);
@@ -323,29 +326,39 @@ for (const entry of CROSS_PLUGIN) {
       if (r.result.value === true) break;
       await new Promise(res => setTimeout(res, 50));
     }
+    const specs = CROSS_PLUGIN.filter(e => e.plugins.includes(plugin))
+      .map(e => ({ label: e.label, selector: e.selector, probe: e.probe, props: e.props }));
     const expr = `(() => {
-      const host = document.createElement('div');
-      host.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
-      document.body.appendChild(host);
-      host.insertAdjacentHTML('beforeend', ${JSON.stringify(entry.probe)});
-      const el = host.querySelector(${JSON.stringify(entry.selector)});
-      const cs = el ? getComputedStyle(el) : null;
+      const specs = ${JSON.stringify(specs)};
       const out = {};
-      for (const p of ${JSON.stringify(entry.props)}) out[p] = cs ? cs[p] : '(selector not found)';
-      host.remove();
+      for (const s of specs) {
+        const host = document.createElement('div');
+        host.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
+        document.body.appendChild(host);
+        host.insertAdjacentHTML('beforeend', s.probe);
+        const el = host.querySelector(s.selector);
+        const cs = el ? getComputedStyle(el) : null;
+        const o = {};
+        for (const p of s.props) o[p] = cs ? cs[p] : '(selector not found)';
+        host.remove();
+        out[s.label] = o;
+      }
       return out;
     })()`;
     const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
-    perPlugin[plugin] = r.result.value ?? {};
+    results[plugin] = r.result.value ?? {};
     await send('Target.closeTarget', { targetId });
   }
-  for (const prop of entry.props) {
-    const distinct = [...new Set(entry.plugins.map(p => perPlugin[p]?._missing ? null : perPlugin[p]?.[prop]).filter(v => v != null))];
-    if (distinct.length > 1) {
-      const detail = entry.plugins.map(p => `${p}=${perPlugin[p]?._missing ? 'MISSING' : perPlugin[p]?.[prop]}`).join(', ');
-      XP_FAIL.push(`${entry.label} → ${prop} differs across plugins: ${detail}`);
-    } else {
-      XP_PASS.push(`${entry.label}/${prop}`);
+  for (const entry of CROSS_PLUGIN) {
+    for (const prop of entry.props) {
+      const valOf = p => results[p]?._missing ? null : results[p]?.[entry.label]?.[prop];
+      const distinct = [...new Set(entry.plugins.map(valOf).filter(v => v != null))];
+      if (distinct.length > 1) {
+        const detail = entry.plugins.map(p => `${p}=${results[p]?._missing ? 'MISSING' : results[p]?.[entry.label]?.[prop]}`).join(', ');
+        XP_FAIL.push(`${entry.label} → ${prop} differs across plugins: ${detail}`);
+      } else {
+        XP_PASS.push(`${entry.label}/${prop}`);
+      }
     }
   }
 }

@@ -81,29 +81,29 @@ const PASS = [], FAIL = [], NEW_REF = [], UPDATED = [];
 // frameGeom / FRAME_GEOMETRY_MAP rendered checks. Enable via ds-config visualRegression.mode.
 const ADVISORY = cfg.visualRegression?.mode === 'advisory';
 
-for (const frame of FRAMES) {
-  const normalized = frame.nodeId.replace(/-/, ':'); // match what we sent
-  const slug       = frame.nodeId.replace(/[:\/]/g, '-'); // safe filename
-  const refPath    = join(REFS_DIR, `${slug}.png`);
-  const newPath    = join(REFS_DIR, `${slug}.new.png`);
-
-  // Try both node ID formats in the response
-  const imgUrl = imageUrls[normalized]
+// Download every frame's PNG concurrently (each is an independent CDN fetch), then
+// process the results serially — the render was one batched /images call above.
+const downloads = await Promise.all(FRAMES.map(async frame => {
+  const imgUrl = imageUrls[frame.nodeId.replace(/-/, ':')]
     ?? imageUrls[frame.nodeId]
     ?? imageUrls[frame.nodeId.replace(':', '-')];
-
-  if (!imgUrl) {
-    console.log(`⚠️  No image URL returned for "${frame.name}" (${frame.nodeId}) — skipped`);
-    continue;
-  }
-
-  let imgData;
+  if (!imgUrl) return { frame, err: 'no image URL returned' };
   try {
     const imgResp = await fetch(imgUrl);
     if (!imgResp.ok) throw new Error(`HTTP ${imgResp.status}`);
-    imgData = Buffer.from(await imgResp.arrayBuffer());
+    return { frame, imgData: Buffer.from(await imgResp.arrayBuffer()) };
   } catch (e) {
-    console.error(`❌ Failed to download image for "${frame.name}": ${e.message}`);
+    return { frame, err: e.message };
+  }
+}));
+
+for (const { frame, imgData, err } of downloads) {
+  const slug    = frame.nodeId.replace(/[:\/]/g, '-'); // safe filename
+  const refPath = join(REFS_DIR, `${slug}.png`);
+  const newPath = join(REFS_DIR, `${slug}.new.png`);
+
+  if (err) {
+    console.log(`⚠️  ${frame.name} (${frame.nodeId}) — ${err} — skipped`);
     continue;
   }
 

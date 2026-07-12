@@ -305,18 +305,24 @@ function collectBound(node, idToName, tokenSet) {
   for (const child of node?.children ?? []) collectBound(child, idToName, tokenSet);
 }
 
-async function buildVarIdMap(fileKey, token) {
-  const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
-    headers: { 'X-Figma-Token': token },
-  });
-  if (!res.ok) {
-    if (res.status === 403) _figmaApiLimited = true;
-    throw new Error(`variables/local returned ${res.status}`);
-  }
-  const { meta } = await res.json();
-  const idToName = {};
-  for (const [id, v] of Object.entries(meta?.variables ?? {})) idToName[id] = v.name;
-  return idToName;
+// variables/local is hit by three refreshers (bound tokens, state tokens, state bindings).
+// Memoize the in-flight promise so the fetch happens once even when they run concurrently
+// (and a 403 on a non-Enterprise plan is only paid once, not three times).
+let _varIdMapPromise = null;
+function buildVarIdMap(fileKey, token) {
+  return (_varIdMapPromise ??= (async () => {
+    const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
+      headers: { 'X-Figma-Token': token },
+    });
+    if (!res.ok) {
+      if (res.status === 403) _figmaApiLimited = true;
+      throw new Error(`variables/local returned ${res.status}`);
+    }
+    const { meta } = await res.json();
+    const idToName = {};
+    for (const [id, v] of Object.entries(meta?.variables ?? {})) idToName[id] = v.name;
+    return idToName;
+  })());
 }
 
 async function refreshBoundTokens(fileKey, frames, token, outPath) {
@@ -1227,11 +1233,15 @@ async function bootstrapConfig() {
   const figmaToken   = process.env.FIGMA_TOKEN;
   const figmaFileKey = cfg.figmaFileKey;
   if (figmaToken && figmaFileKey) {
-    await refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS));
-    await refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json'));
-    await refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json'));
-    await refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json'));
-    if (SNAP_FRAME_GEOM) await refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM));
+    // These refreshers write independent files and only share the memoized buildVarIdMap
+    // fetch — run them concurrently instead of serially (they were ~7s of a 12s audit).
+    await Promise.all([
+      refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
+      refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
+      refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
+      refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json')),
+      SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
+    ]);
   }
 
   // ── Run gates ─────────────────────────────────────────────────────────────────
