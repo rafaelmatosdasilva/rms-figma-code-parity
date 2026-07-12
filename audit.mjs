@@ -343,6 +343,59 @@ async function refreshBoundTokens(fileKey, frames, token, outPath) {
   }
 }
 
+// ── Auto-refresh figma-frame-geometry.snapshot.json via REST /nodes ──────────
+// Captures every FRAME/INSTANCE/COMPONENT's box (h, pad[t,r,b,l], gap) from the DS
+// layout frame(s), keyed by node name (array + _path when a name repeats). Consumed
+// by RENDERED_ASSERTIONS `frameGeom` sourcing (Gate [16]). Uses the /nodes endpoint —
+// available on any plan, unlike variables/local — so it is NOT plan-limited.
+async function refreshFrameGeometry(fileKey, frames, token, outPath) {
+  if (!frames?.length) return false;
+  try {
+    const byName = {};
+    for (const frame of frames) {
+      const nRes = await fetch(
+        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${frame.nodeId}`,
+        { headers: { 'X-Figma-Token': token } },
+      );
+      if (!nRes.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nRes.status}`)); continue; }
+      const { nodes } = await nRes.json();
+      for (const data of Object.values(nodes ?? {})) {
+        (function rec(n, path) {
+          if (!n) return;
+          if (n.type === 'FRAME' || n.type === 'INSTANCE' || n.type === 'COMPONENT') {
+            const pad = [n.paddingTop ?? 0, n.paddingRight ?? 0, n.paddingBottom ?? 0, n.paddingLeft ?? 0];
+            const h = Math.round(n.absoluteBoundingBox?.height ?? n.size?.y ?? 0);
+            const gap = typeof n.itemSpacing === 'number' ? n.itemSpacing : null;
+            (byName[n.name] ??= []).push({ _path: path, h, pad, gap });
+          }
+          for (const c of n.children ?? []) rec(c, path + '/' + n.name);
+        })(data?.document, '');
+      }
+    }
+    // Per name: drop _path when all entries are identical (collapse to a single object).
+    const outNodes = {};
+    for (const [name, arr] of Object.entries(byName)) {
+      const seen = new Map();
+      for (const e of arr) { const k = JSON.stringify([e.h, e.pad, e.gap]); if (!seen.has(k)) seen.set(k, e); }
+      const uniq = [...seen.values()];
+      outNodes[name] = uniq.length === 1
+        ? { h: uniq[0].h, pad: uniq[0].pad, gap: uniq[0].gap }
+        : uniq;
+    }
+    const out = {
+      _updated: new Date().toISOString(),
+      _note: 'Per-container geometry (h, pad [t,r,b,l], gap) captured from the DS layout frame(s). Consumed by RENDERED_ASSERTIONS frameGeom sourcing. Auto-generated — do not edit by hand.',
+      nodes: outNodes,
+    };
+    writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');
+    console.log(C.dim(`  ✅ Frame geometry: ${Object.keys(outNodes).length} node name(s) across ${frames.length} frame(s)`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Frame geometry refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
 // ── Collect structured state bindings: component → variant → { props, bindings } ─
 // Used by structure-check.mjs Gate [3c] to auto-derive CSS assertions without
 // manual CSS_BASE_RULE_VARS entries. Only fills + strokes at root and direct TEXT
@@ -689,6 +742,7 @@ async function bootstrapConfig() {
   const SNAP_STRUCT      = cfg.paths?.snapshotStructure  ?? 'src/figma-structure.snapshot.json';
   const SNAP_COMP_PROPS  = cfg.paths?.compPropsSnapshot  ??
     SNAP_VARS.replace(/[^/\\]+$/, 'figma-component-props.snapshot.json');
+  const SNAP_FRAME_GEOM  = cfg.paths?.snapshotFrameGeometry ?? null;
   const PLUGIN_CSS  = cfg.paths?.pluginCSS          ?? [];
   const PLUGINS     = cfg.paths?.plugins            ?? [];
   const KNOWN_UNUSED     = new Set(cfg.knownUnusedVars         ?? []);
@@ -935,6 +989,22 @@ async function bootstrapConfig() {
       lines.push(`${SNAP_COMP_PROPS} ✓ (updated today)`);
     }
 
+    // Frame-geometry snapshot drives Gate [16] frameGeom sourcing. Refreshed via REST
+    // /nodes (any plan). Warn if stale so container-spacing checks never run against
+    // outdated frame boxes.
+    if (SNAP_FRAME_GEOM) {
+      const fg = snapshotAge(SNAP_FRAME_GEOM);
+      if (fg === null) {
+        lines.push(C.yellow(`⚠️  ${SNAP_FRAME_GEOM} missing or unstamped — Gate [16] frameGeom checks will skip`));
+        warn = true;
+      } else if (fg > 24) {
+        lines.push(C.yellow(`⚠️  ${SNAP_FRAME_GEOM} is ${fg}h old — frameGeom checks may run against a stale frame`));
+        warn = true;
+      } else {
+        lines.push(`${SNAP_FRAME_GEOM} ✓ (updated today)`);
+      }
+    }
+
     const anyPlanLimited = varsPlanLimited || structPlanLimited || walksPlanLimited;
     return { pass: !warn && !anyPlanLimited, planLimited: !warn && anyPlanLimited, lines };
   }
@@ -1161,6 +1231,7 @@ async function bootstrapConfig() {
     await refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json'));
     await refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json'));
     await refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json'));
+    if (SNAP_FRAME_GEOM) await refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM));
   }
 
   // ── Run gates ─────────────────────────────────────────────────────────────────

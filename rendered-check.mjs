@@ -36,11 +36,29 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-let ASSERTIONS = [];
+let ASSERTIONS = [], FRAME_GEOMETRY_MAP = [], CROSS_PLUGIN = [];
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
-  if (Array.isArray(m.RENDERED_ASSERTIONS)) ASSERTIONS = m.RENDERED_ASSERTIONS;
+  if (Array.isArray(m.RENDERED_ASSERTIONS))     ASSERTIONS         = m.RENDERED_ASSERTIONS;
+  if (Array.isArray(m.FRAME_GEOMETRY_MAP))       FRAME_GEOMETRY_MAP = m.FRAME_GEOMETRY_MAP;
+  if (Array.isArray(m.CROSS_PLUGIN_CONSISTENCY)) CROSS_PLUGIN       = m.CROSS_PLUGIN_CONSISTENCY;
 } catch { /* structure-contract.mjs optional */ }
+
+// #2 element-geometry auto-expand: a FRAME_GEOMETRY_MAP entry maps a CSS selector to a
+// DS frame node ONCE and expands into one frameGeom assertion per listed prop (default:
+// the four padding sides). Expected values then flow from the live frame-geometry snapshot
+// via the frameGeom resolver below — mapping a container once auto-checks all its box
+// geometry against the DS, with no hand-typed pixels.
+for (const e of FRAME_GEOMETRY_MAP) {
+  const props = e.props ?? ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'];
+  for (const prop of props) {
+    ASSERTIONS.push({
+      plugin: e.plugin, selector: e.selector, prop, probe: e.probe,
+      frameGeom: { node: e.node, path: e.path },
+      note: `${e.note ?? 'DS frame node ' + e.node} (${prop})`,
+    });
+  }
+}
 
 // DS-sourced icon sizes: an assertion with `iconSizeOf: '<component>'` takes its
 // expected value from that component's `iconSize` in the structure snapshot, so the
@@ -74,10 +92,11 @@ try {
   const PAD_IX = { paddingTop: 0, paddingRight: 1, paddingBottom: 2, paddingLeft: 3 };
   ASSERTIONS = ASSERTIONS.filter(a => {
     if (!a.frameGeom) return true;
-    const box = Object.entries(geom).filter(([name, v]) =>
-      name === a.frameGeom.node && (!a.frameGeom.path || (v._path ?? '').includes(a.frameGeom.path)))[0]?.[1];
+    const entry = geom[a.frameGeom.node];               // object (unique name) or array (repeated)
+    const list = entry == null ? [] : (Array.isArray(entry) ? entry : [entry]);
+    const box = list.find(v => !a.frameGeom.path || (v._path ?? '').includes(a.frameGeom.path)) ?? list[0];
     if (!box) {
-      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom node '${a.frameGeom.node}' not in frame-geometry snapshot — assertion skipped`);
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom node '${a.frameGeom.node}'${a.frameGeom.path ? ` (path ~ '${a.frameGeom.path}')` : ''} not in frame-geometry snapshot — assertion skipped`);
       return false;
     }
     let px = null;
@@ -286,6 +305,51 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
   await send('Target.closeTarget', { targetId });
 }
 
+// ── #5: Cross-plugin consistency ──────────────────────────────────────────────
+// A shared base component must compute the same values in every plugin that uses it;
+// a plugin-local override silently changing it is a divergence. For each entry we render
+// its probe in every listed plugin, read the props, and compare across plugins.
+const XP_PASS = [], XP_FAIL = [];
+for (const entry of CROSS_PLUGIN) {
+  const perPlugin = {};
+  for (const plugin of entry.plugins) {
+    const uiPath = join(ROOT, `apps/${plugin}/ui.html`);
+    if (!existsSync(uiPath)) { perPlugin[plugin] = { _missing: true }; continue; }
+    const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
+    const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
+    await send('Runtime.enable', {}, sessionId);
+    for (let i = 0; i < 60; i++) {
+      const r = await send('Runtime.evaluate', { expression: 'document.readyState === "complete"', returnByValue: true }, sessionId);
+      if (r.result.value === true) break;
+      await new Promise(res => setTimeout(res, 50));
+    }
+    const expr = `(() => {
+      const host = document.createElement('div');
+      host.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
+      document.body.appendChild(host);
+      host.insertAdjacentHTML('beforeend', ${JSON.stringify(entry.probe)});
+      const el = host.querySelector(${JSON.stringify(entry.selector)});
+      const cs = el ? getComputedStyle(el) : null;
+      const out = {};
+      for (const p of ${JSON.stringify(entry.props)}) out[p] = cs ? cs[p] : '(selector not found)';
+      host.remove();
+      return out;
+    })()`;
+    const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId);
+    perPlugin[plugin] = r.result.value ?? {};
+    await send('Target.closeTarget', { targetId });
+  }
+  for (const prop of entry.props) {
+    const distinct = [...new Set(entry.plugins.map(p => perPlugin[p]?._missing ? null : perPlugin[p]?.[prop]).filter(v => v != null))];
+    if (distinct.length > 1) {
+      const detail = entry.plugins.map(p => `${p}=${perPlugin[p]?._missing ? 'MISSING' : perPlugin[p]?.[prop]}`).join(', ');
+      XP_FAIL.push(`${entry.label} → ${prop} differs across plugins: ${detail}`);
+    } else {
+      XP_PASS.push(`${entry.label}/${prop}`);
+    }
+  }
+}
+
 ws.close();
 cleanup();
 
@@ -299,4 +363,16 @@ if (FAIL.length) {
   console.log('\n   Fix: the CSS cascade renders something different from the DS contract —');
   console.log('   check for later rules overriding the base, wrong var() resolution, or a stale build.');
 }
-process.exit(FAIL.length === 0 ? 0 : 1);
+
+if (XP_PASS.length || XP_FAIL.length) {
+  console.log(`\n✅ PASS  ${XP_PASS.length}/${XP_PASS.length + XP_FAIL.length} cross-plugin consistency checks`);
+  console.log(`❌ FAIL  ${XP_FAIL.length}`);
+  if (XP_FAIL.length) {
+    console.log('\n─── #5 — shared component renders differently across plugins ───────');
+    for (const f of XP_FAIL) console.log(`  ❌ ${f}`);
+    console.log('   Fix: a plugin-local rule is overriding a shared base component — move it to the base');
+    console.log('   or scope it so the shared component stays identical everywhere.');
+  }
+}
+
+process.exit(FAIL.length === 0 && XP_FAIL.length === 0 ? 0 : 1);

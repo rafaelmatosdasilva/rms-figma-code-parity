@@ -399,12 +399,32 @@ snapshot — so an icon that's silently too small (the 12px search icon) fails, 
 auto-updates if the DS resizes.
 
 **Frame-geometry capture (Gate [16] `frameGeom`).** Component checks verify a component's
-*own* box but miss *context* — spacing between elements, container padding. Capture the DS
-layout frame's per-container geometry into `figma-frame-geometry.snapshot.json`
-(`{ node: { h, pad:[t,r,b,l], gap } }`, keyed by node name, `_path` to disambiguate). A
-rendered assertion tagged `frameGeom: { node, path? }` sources its expected padding/gap/height
-from that node, so container-spacing checks track the live frame — this is the class that
-missed the 7px `.mode-toggle-row` bottom padding above the first divider.
+*own* box but miss *context* — spacing between elements, container padding. `figma-frame-geometry.snapshot.json`
+(`{ node: { h, pad:[t,r,b,l], gap } }`, keyed by node name, array + `_path` when a name repeats)
+is **auto-refreshed every run** via `refreshFrameGeometry` (REST `/nodes` — works on any plan,
+unlike `variables/local`) and Gate [1] tracks its freshness. A rendered assertion tagged
+`frameGeom: { node, path? }` sources its expected padding/gap/height from that node, so
+container-spacing checks track the live frame — the class that missed the 7px `.mode-toggle-row`
+bottom padding above the first divider.
+
+**`FRAME_GEOMETRY_MAP` — element-geometry auto-expand (Gate [16]).** Map a selector to a DS
+frame node once — `{ plugin, selector, node, path?, props? }` — and rendered-check expands it
+into one `frameGeom` assertion per `prop` (default: the four padding sides). Mapping a container
+once auto-checks all its box geometry against the live frame; no per-prop hand-authoring.
+
+**Cross-plugin consistency (`CROSS_PLUGIN_CONSISTENCY`, Gate [16]).** A `theme.css` base
+component must compute the same values in every plugin that uses it. Each entry —
+`{ label, selector, probe, props, plugins }` — renders the probe in every listed plugin and
+asserts they all agree on every prop, catching a plugin-local rule that silently overrides a
+shared component (e.g. dropping `flex-shrink` or changing a height on `.buttonList`).
+
+**Multi-variant capture + Gate [3n].** The snapshot records `variantStroke` — the root-stroke
+presence of **every** variant in the COMPONENT_SET, not just the single `/default/i` one. When a
+set is *mixed* (both a bordered and a borderless variant — the shape that hid node's new "Idle"
+state), **Gate [3n]** requires the contract to declare `restingStroke`, which activates Gate [3l]
+to lock the base border. So a newly-added borderless state can't slip in unnoticed: it makes the
+set mixed → [3n] fails until the resting state is declared → [3l] pins the render. Uniform
+components (all bordered or all borderless) pass automatically.
 
 ```js
 // Frame-geometry capture — run per DS layout frame, save to figma-frame-geometry.snapshot.json

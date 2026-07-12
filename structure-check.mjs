@@ -682,6 +682,31 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
   }
 }
 
+// ── Gate [3n]: Mixed-stroke variants must declare a resting state ────────────
+// The snapshot now records `variantStroke` (per-variant root stroke) for the whole
+// COMPONENT_SET — not just the single /default/i variant. When a set contains BOTH a
+// borderless and a bordered variant (the exact shape that hid node's new "Idle" state),
+// the author must consciously declare which state is at rest: the CONTRACT entry needs a
+// `restingStroke` boolean. That declaration then activates Gate [3l], which pins the base
+// selector's border to match. So a newly-added borderless state can't slip in unnoticed —
+// it makes the set mixed-stroke, this gate fails until restingStroke is declared, and [3l]
+// locks the render. Components that are uniformly bordered or uniformly borderless are fine.
+const MIXED_FAIL = [], MIXED_PASS = [];
+for (const [comp, snapComp] of Object.entries(components)) {
+  const vs = snapComp?.variantStroke;
+  if (!vs || typeof vs !== 'object') continue;
+  const vals = Object.values(vs);
+  const mixed = vals.includes(true) && vals.includes(false);
+  if (!mixed) { MIXED_PASS.push(`${comp}/mixed-stroke (uniform)`); continue; }
+  const declared = typeof CONTRACT[comp]?.restingStroke === 'boolean';
+  if (declared) {
+    MIXED_PASS.push(`${comp}/mixed-stroke (restingStroke declared)`);
+  } else {
+    const borderless = Object.entries(vs).filter(([, s]) => s === false).map(([n]) => n.replace(/,.*$/, ''));
+    MIXED_FAIL.push(`${comp}: has both bordered and borderless variants (borderless: ${borderless.join(', ')}) but no restingStroke in the contract — declare which state is at rest so Gate [3l] can lock the base border`);
+  }
+}
+
 // ── Gate [3m]: Fixed-height components must not shrink ────────────────────────
 // A DS component with a fixed (hug) height renders that exact height in Figma. In
 // code it's often placed as a flex-column child (a list row, a toolbar item); a
@@ -1210,6 +1235,18 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
     }
   }
 
+  if (MIXED_PASS.length || MIXED_FAIL.length) {
+    const mTotal = MIXED_PASS.length + MIXED_FAIL.length;
+    console.log(`\n✅ PASS  ${MIXED_PASS.length}/${mTotal} mixed-stroke resting-state checks`);
+    console.log(`❌ FAIL  ${MIXED_FAIL.length}`);
+    if (MIXED_FAIL.length) {
+      console.log('\n─── Gate [3n] — mixed bordered/borderless variants, no resting state ──');
+      for (const f of MIXED_FAIL) console.log(`  ❌ ${f}`);
+      console.log('   Fix: add restingStroke (+ restingState) to the component contract so the');
+      console.log('   at-rest border is consciously mapped and Gate [3l] can lock it.');
+    }
+  }
+
   const pillTotal = PILL_PASS.length + PILL_FAIL.length;
   if (pillTotal > 0) {
     console.log(`\n✅ PASS  ${PILL_PASS.length}/${pillTotal} hover/selected pill geometry checks`);
@@ -1463,7 +1500,7 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0
              || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0
              || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0
-             || SHRINK_FAIL.length > 0;
+             || SHRINK_FAIL.length > 0 || MIXED_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
