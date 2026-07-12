@@ -1261,7 +1261,7 @@ async function bootstrapConfig() {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1282,6 +1282,7 @@ async function bootstrapConfig() {
     runScriptAsync('icon-freshness-check.mjs'),
     runScriptAsync('rendered-check.mjs'),
     runScriptAsync('contrast-check.mjs'),
+    runScriptAsync('coverage-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -1331,6 +1332,8 @@ async function bootstrapConfig() {
     parseGeneric(rRendered, /✅|❌|⏭/));
   addGate('Contrast parity  (WCAG text/background ratios per mode)',
     parseGeneric(rContrast, /PASS|FAIL|REVIEW|SKIP/));
+  addGate('Coverage meta  (which DS components/states the audit checks)',
+    parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
@@ -1374,6 +1377,8 @@ async function bootstrapConfig() {
     'Rendered computed styles match the DS contract (headless Chrome)',
     // Accessibility
     'Text/background colors meet WCAG contrast per mode',
+    // Meta
+    'Coverage — which DS components/states the audit actually checks',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: gates consuming a stale snapshot pass against outdated data — DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity — the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',
