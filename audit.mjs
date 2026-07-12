@@ -1251,7 +1251,7 @@ async function bootstrapConfig() {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness, rRendered] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1271,6 +1271,7 @@ async function bootstrapConfig() {
     runScriptAsync('transition-check.mjs'),
     runScriptAsync('icon-freshness-check.mjs'),
     runScriptAsync('rendered-check.mjs'),
+    runScriptAsync('contrast-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -1318,6 +1319,8 @@ async function bootstrapConfig() {
   // ── Rendered output ───────────────────────────────────────────────────────────
   addGate('Rendered parity  (headless Chrome computed styles vs DS contract)',
     parseGeneric(rRendered, /✅|❌|⏭/));
+  addGate('Contrast parity  (WCAG text/background ratios per mode)',
+    parseGeneric(rContrast, /PASS|FAIL|REVIEW|SKIP/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
@@ -1357,6 +1360,10 @@ async function bootstrapConfig() {
     'All DS icon symbols are documented, paths verified, and fresh from Figma',
     // Animation
     'All CSS transitions match the documented duration and easing contract',
+    // Rendered
+    'Rendered computed styles match the DS contract (headless Chrome)',
+    // Accessibility
+    'Text/background colors meet WCAG contrast per mode',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: gates consuming a stale snapshot pass against outdated data — DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity — the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',

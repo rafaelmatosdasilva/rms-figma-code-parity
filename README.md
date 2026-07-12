@@ -40,13 +40,13 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1 — Figma refresh** | Pulls the latest values from Figma (colors, sizes, fonts, component structure), shows you what changed since last time, and updates the local snapshot files. |
-| **2 — Code audit** | Runs 16 automated checks against your CSS and reports everything that doesn't match. |
+| **2 — Code audit** | Runs 17 automated checks against your CSS and reports everything that doesn't match. |
 
 You always audit against a fresh snapshot. There's no way to accidentally check against yesterday's design.
 
 ---
 
-## The 16 checks
+## The 17 checks
 
 Gates are grouped by theme so failures point you to the right layer immediately.
 
@@ -89,6 +89,7 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 |---|---|
 | 15 | **Transition contract** — Does every DS component's CSS transition match the documented duration and easing value? Catches duration/easing drift before Figma EASING/TIMING tokens are available. |
 | 16 | **Rendered parity** — Does the browser actually compute what the DS contract says? Headless Chrome loads each built plugin UI and asserts getComputedStyle values — catches cascade/specificity overrides, wrong var() resolution, and stale builds that static text analysis cannot see. |
+| 17 | **Contrast parity** — Do text and background colors meet WCAG contrast, per mode? Computes the ratio of every foreground token against its background straight from the resolved DS hexes — surfaces low-contrast/illegible pairs a token-only audit is blind to. |
 
 ---
 
@@ -132,7 +133,8 @@ Gates are grouped by theme so failures point you to the right layer immediately.
   ✅  [13]  Every declared slot uses the correct DS icon an…Pass
   ✅  [14]  All DS icon symbols are documented, paths verif…Pass
   ✅  [15]  All CSS transitions match the documented durati…Pass
-  ✅  [16]  Rendered parity  (headless Chrome computed styl…Pass
+  ✅  [16]  Rendered computed styles match the DS contract …Pass
+  ✅  [17]  Text/background colors meet WCAG contrast per m…Pass
 
 ────────────────────────────────────────────────────────────
 
@@ -154,9 +156,9 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  16/16 [████████████████]
-  ❌  2026-06-16  11/12 [███████████████░]
-  ✅  2026-06-17  16/16 [████████████████]
+  ✅  2026-06-15  17/17 [█████████████████]
+  ❌  2026-06-16  11/12 [████████████████░]
+  ✅  2026-06-17  17/17 [█████████████████]
 ────────────────────────────────────────────────────────────
 ```
 
