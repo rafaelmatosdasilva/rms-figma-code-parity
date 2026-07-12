@@ -384,6 +384,45 @@ never regress in. It's opt-in per component (a `false` in the contract) because 
 components model their border on a child rect while the root variant has no stroke, so an
 auto-derived "must have a border" rule would false-positive.
 
+**Gate [3m] — fixed-height components must not shrink.** A component whose snapshot `h`
+is a fixed number renders that exact height in Figma, but in code it's often a flex-column
+child (a list row); a flex child with `height:Npx` and no `flex-shrink:0` compresses when
+the container runs short (the buttonList/node/toast/overflowList shrinking bug). Gate [3m]
+requires any fixed-height component whose base rule pins the height to also declare
+`flex-shrink:0` (harmless off-flex, so required defensively). Exempt a genuinely-never-flex
+component via `ds-config.json → knownShrinkExceptions`.
+
+**Icon-size capture (Gate [16] `iconSizeOf`).** In Step 1c, also record each component's
+primary icon box as `iconSize` (the DS uses one icon size, typically 16px). A rendered
+assertion tagged `iconSizeOf: '<component>'` then sources its expected width/height from the
+snapshot — so an icon that's silently too small (the 12px search icon) fails, and the check
+auto-updates if the DS resizes.
+
+**Frame-geometry capture (Gate [16] `frameGeom`).** Component checks verify a component's
+*own* box but miss *context* — spacing between elements, container padding. Capture the DS
+layout frame's per-container geometry into `figma-frame-geometry.snapshot.json`
+(`{ node: { h, pad:[t,r,b,l], gap } }`, keyed by node name, `_path` to disambiguate). A
+rendered assertion tagged `frameGeom: { node, path? }` sources its expected padding/gap/height
+from that node, so container-spacing checks track the live frame — this is the class that
+missed the 7px `.mode-toggle-row` bottom padding above the first divider.
+
+```js
+// Frame-geometry capture — run per DS layout frame, save to figma-frame-geometry.snapshot.json
+const nodes = {};
+(function rec(n, path) {
+  if (n.type === 'FRAME' || n.type === 'INSTANCE' || n.type === 'COMPONENT') {
+    (nodes[n.name] ??= []).push({
+      _path: path,
+      h: Math.round(n.height),
+      pad: 'paddingTop' in n ? [n.paddingTop, n.paddingRight, n.paddingBottom, n.paddingLeft] : null,
+      gap: n.itemSpacing ?? null,
+    });
+  }
+  if ('children' in n) for (const c of n.children) rec(c, path + '/' + n.name);
+})(frameNode, '');
+// De-dupe identical entries per name; keep _path only where a name repeats.
+```
+
 Capture `childFramePadding` by walking direct FRAME children of the State=Default variant:
 
 ```js
@@ -690,7 +729,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [13] | `icon-slot-check.mjs` `component-slot-check.mjs` | **Markup** | **Slot parity** — Two-phase exhaustiveness check for both asset types: (a) icon slots — every slot in `ICON_USAGES` uses the exact DS icon specified; every `<button id="X">` with `<use href="#icon-">` must be declared; (b) component slots — every slot in `COMPONENT_USAGES` uses the correct DS component class; every button with a primary/secondary/tertiary/quaternary class must be declared. |
 | [14] | `pseudo-element-check.mjs` `icon-check.mjs` `icon-freshness-check.mjs` | **Markup** | **Icon contract** — Three-part check: (a) `::before`/`::after` pseudo-elements declared in the structure contract; (b) every SVG `<symbol>` in `ICON_SYMBOLS` — DS icons with Figma node ID, plugin icons marked `PLUGIN-SPECIFIC`, with path data verified against snapshot; (c) **live Figma freshness** — for every DS icon with a `nodeId`, fetches the live SVG from Figma REST API and compares path data against the snapshot. Requires `FIGMA_TOKEN`; part (c) skips if not set. |
 | [15] | `transition-check.mjs` | **Animation** | **Transition contract** — Every selector in `TRANSITION_CONTRACT` (structure-contract.mjs) must have a CSS `transition:` declaration containing each documented part (duration, easing, property). Catches animation drift before Figma EASING/TIMING tokens exist. |
-| [16] | `rendered-check.mjs` | **Rendered output** | **Rendered parity** — Launches headless Chrome via CDP (no npm deps; Node ≥ 22 built-in WebSocket), loads each built plugin `ui.html` from `file://`, and asserts `getComputedStyle` values from `RENDERED_ASSERTIONS` (structure-contract.mjs). Catches what static text analysis cannot: cascade/specificity surprises (a later rule silently overriding the DS base), wrong `var()` resolution, and stale builds. Components that only exist at runtime (toasts, list rows) are instantiated via the entry's `probe` HTML, injected into an absolutely-positioned hidden host so the app shell's flex layout cannot stretch/shrink them. Entries with `forcePseudo: ['hover']` (or `focus`/`active`) are measured under `CSS.forcePseudoState` — the only way to verify the geometry of pseudo-class rules (e.g. "content must not shift on hover": assert the `:hover` gap equals the default). **Color scheme is emulated per assertion** via `Emulation.setEmulatedMedia`, so a check on a mode-varying token (e.g. a dark-mode text color) can never silently flip with the host OS appearance — headless Chrome otherwise follows the machine's `prefers-color-scheme` (light on CI, often dark on a dev Mac). Each entry runs under its own `colorScheme: 'dark' \| 'light'`, defaulting to `ds-config.json → rendered.colorScheme` (else `'light'`, the `:root` base). Geometry assertions are mode-independent and need no `colorScheme`. Skips gracefully when Chrome is absent (`CHROME_PATH` to point at a binary). |
+| [16] | `rendered-check.mjs` | **Rendered output** | **Rendered parity** — Launches headless Chrome via CDP (no npm deps; Node ≥ 22 built-in WebSocket), loads each built plugin `ui.html` from `file://`, and asserts `getComputedStyle` values from `RENDERED_ASSERTIONS` (structure-contract.mjs). Catches what static text analysis cannot: cascade/specificity surprises (a later rule silently overriding the DS base), wrong `var()` resolution, and stale builds. Components that only exist at runtime (toasts, list rows) are instantiated via the entry's `probe` HTML, injected into an absolutely-positioned hidden host so the app shell's flex layout cannot stretch/shrink them. Entries with `forcePseudo: ['hover']` (or `focus`/`active`) are measured under `CSS.forcePseudoState` — the only way to verify the geometry of pseudo-class rules (e.g. "content must not shift on hover": assert the `:hover` gap equals the default). **Color scheme is emulated per assertion** via `Emulation.setEmulatedMedia`, so a check on a mode-varying token (e.g. a dark-mode text color) can never silently flip with the host OS appearance — headless Chrome otherwise follows the machine's `prefers-color-scheme` (light on CI, often dark on a dev Mac). Each entry runs under its own `colorScheme: 'dark' \| 'light'`, defaulting to `ds-config.json → rendered.colorScheme` (else `'light'`, the `:root` base). Geometry assertions are mode-independent and need no `colorScheme`. **Two DS-sourced expected-value shortcuts** keep hand-typed pixels from going stale: `iconSizeOf: '<component>'` sources an icon width/height check from that component's `iconSize` in the structure snapshot (catches icon-size drift like the 12px→16px search icon), and `frameGeom: { node, path? }` sources a container padding/gap/height check from the named node's box in the **frame-geometry snapshot** (`figma-frame-geometry.snapshot.json` — per-container `h`/`pad[t,r,b,l]`/`gap` captured from the DS layout frame). `frameGeom` catches context/spacing bugs the component-only checks miss — e.g. the 7px `.mode-toggle-row` bottom padding that stacked on the first divider — and tracks the live frame automatically. Skips gracefully when Chrome is absent (`CHROME_PATH` to point at a binary). |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 

@@ -42,6 +42,57 @@ try {
   if (Array.isArray(m.RENDERED_ASSERTIONS)) ASSERTIONS = m.RENDERED_ASSERTIONS;
 } catch { /* structure-contract.mjs optional */ }
 
+// DS-sourced icon sizes: an assertion with `iconSizeOf: '<component>'` takes its
+// expected value from that component's `iconSize` in the structure snapshot, so the
+// check auto-updates if the DS resizes its icon and can never silently drift (the
+// 12px search-icon bug). Length asserts (width/height) get `<n>px`; the assertion
+// is dropped with a warning if the snapshot has no iconSize for that component.
+try {
+  const snapPath = cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json';
+  const comps = JSON.parse(readFileSync(join(ROOT, snapPath), 'utf8')).components ?? {};
+  ASSERTIONS = ASSERTIONS.filter(a => {
+    if (!a.iconSizeOf) return true;
+    const size = comps[a.iconSizeOf]?.iconSize;
+    if (typeof size !== 'number') {
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: iconSizeOf '${a.iconSizeOf}' has no iconSize in the snapshot — assertion skipped`);
+      return false;
+    }
+    a.expected = `${size}px`;
+    return true;
+  });
+} catch { /* snapshot optional — iconSizeOf assertions simply won't resolve */ }
+
+// DS-sourced container geometry: an assertion with `frameGeom: { node, path? }` takes
+// its expected value from that named node's box in the frame-geometry snapshot, mapped
+// by `prop` — paddingTop/Right/Bottom/Left → pad[0..3], columnGap/rowGap/gap → gap,
+// height → h. Container/context spacing (e.g. the 7px above the first divider) thus
+// tracks the LIVE DS frame instead of a hand-typed pixel that silently goes stale.
+try {
+  const geomPath = cfg.paths?.snapshotFrameGeometry
+    ?? (cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json').replace(/[^/]+$/, 'figma-frame-geometry.snapshot.json');
+  const geom = JSON.parse(readFileSync(join(ROOT, geomPath), 'utf8')).nodes ?? {};
+  const PAD_IX = { paddingTop: 0, paddingRight: 1, paddingBottom: 2, paddingLeft: 3 };
+  ASSERTIONS = ASSERTIONS.filter(a => {
+    if (!a.frameGeom) return true;
+    const box = Object.entries(geom).filter(([name, v]) =>
+      name === a.frameGeom.node && (!a.frameGeom.path || (v._path ?? '').includes(a.frameGeom.path)))[0]?.[1];
+    if (!box) {
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom node '${a.frameGeom.node}' not in frame-geometry snapshot — assertion skipped`);
+      return false;
+    }
+    let px = null;
+    if (a.prop in PAD_IX) px = box.pad?.[PAD_IX[a.prop]];
+    else if (/gap/i.test(a.prop)) px = box.gap;
+    else if (a.prop === 'height') px = box.h;
+    if (typeof px !== 'number') {
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom cannot map prop '${a.prop}' — assertion skipped`);
+      return false;
+    }
+    a.expected = `${px}px`;
+    return true;
+  });
+} catch { /* frame-geometry snapshot optional */ }
+
 if (!ASSERTIONS.length) {
   console.log('⏭  [16] rendered parity skipped — RENDERED_ASSERTIONS empty in structure-contract.mjs');
   process.exit(0);

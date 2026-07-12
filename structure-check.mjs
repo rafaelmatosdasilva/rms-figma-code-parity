@@ -682,6 +682,37 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
   }
 }
 
+// ── Gate [3m]: Fixed-height components must not shrink ────────────────────────
+// A DS component with a fixed (hug) height renders that exact height in Figma. In
+// code it's often placed as a flex-column child (a list row, a toolbar item); a
+// flex child with `height:Npx` but no `flex-shrink:0` compresses below Npx when the
+// container runs short (the buttonList shrinking-rows bug 2026-07-12). So any component
+// whose snapshot height is a fixed number and whose base rule pins that height via
+// `height`/`min-height` MUST also declare `flex-shrink:0` (harmless when it's never a
+// flex child, so it's required defensively). Exempt via ds-config → knownShrinkExceptions.
+const SHRINK_FAIL = [], SHRINK_PASS = [];
+const SHRINK_SKIP = new Set(cfg.knownShrinkExceptions ?? []);
+if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).length) {
+  for (const [comp, selCfg] of Object.entries(COMPONENT_CSS_SELECTORS)) {
+    if (SHRINK_SKIP.has(comp)) { SHRINK_PASS.push(`${comp}/no-shrink (exempted)`); continue; }
+    const snapComp = components[comp];
+    if (!snapComp || typeof snapComp.h !== 'number') continue; // only fixed-height (hug) components
+
+    const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
+    if (!mainBlock) { SHRINK_PASS.push(`${comp}/no-shrink (selector not in theme.css)`); continue; }
+
+    // Does the base rule pin a fixed height? (height: Npx or min-height: Npx)
+    const pinsHeight = /(?<![a-zA-Z-])(?:min-)?height\s*:\s*[0-9]/.test(mainBlock);
+    if (!pinsHeight) { SHRINK_PASS.push(`${comp}/no-shrink (no fixed height in base rule)`); continue; }
+
+    if (/(?<![a-zA-Z-])flex-shrink\s*:\s*0\b/.test(mainBlock) || /(?<![a-zA-Z-])flex\s*:\s*(?:none\b|0\s+0\b)/.test(mainBlock)) {
+      SHRINK_PASS.push(`${comp}/no-shrink`);
+    } else {
+      SHRINK_FAIL.push(`${comp}: fixed DS height ${snapComp.h}px but "${selCfg.main}" has no flex-shrink:0 — it will compress as a flex-column child`);
+    }
+  }
+}
+
 // ── 6. Hover/Selected pill geometry checks ────────────────────────────────────
 // Components that implement hover/selected backgrounds via a positioned ::before
 // element (a "pill") need two geometry checks the default-state snapshot misses:
@@ -1167,6 +1198,18 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
     }
   }
 
+  if (SHRINK_PASS.length || SHRINK_FAIL.length) {
+    const sTotal = SHRINK_PASS.length + SHRINK_FAIL.length;
+    console.log(`\n✅ PASS  ${SHRINK_PASS.length}/${sTotal} fixed-height no-shrink checks`);
+    console.log(`❌ FAIL  ${SHRINK_FAIL.length}`);
+    if (SHRINK_FAIL.length) {
+      console.log('\n─── Gate [3m] — fixed-height component can shrink as a flex child ──');
+      for (const f of SHRINK_FAIL) console.log(`  ❌ ${f}`);
+      console.log('   Fix: add flex-shrink:0 to the base rule (harmless off-flex).');
+      console.log('   Exempt a genuinely-never-flex component via ds-config.json → knownShrinkExceptions.');
+    }
+  }
+
   const pillTotal = PILL_PASS.length + PILL_FAIL.length;
   if (pillTotal > 0) {
     console.log(`\n✅ PASS  ${PILL_PASS.length}/${pillTotal} hover/selected pill geometry checks`);
@@ -1419,7 +1462,8 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
              || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0
              || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0
-             || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0;
+             || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0
+             || SHRINK_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
