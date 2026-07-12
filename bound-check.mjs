@@ -91,18 +91,64 @@ if (UNCOVERED.length) {
 } else {
   console.log('\nEvery Figma-bound token is implemented or explicitly deferred. ✓\n');
 
-  // Orphaned token advisory: DS tokens that exist but are never bound to any frame node
+  // ── #4: DS orphan-token report ──────────────────────────────────────────────
+  // An orphan = a token that exists in the DS variable snapshot but is bound to NOTHING —
+  // not to any frame node (bound-tokens.json) and not to any component variant
+  // (component-state-tokens.json). Two tiers:
+  //   • ORPHAN-BUT-USED (❌): the code declares/uses its CSS var. The DS binds the token
+  //     nowhere, yet the code styles with it — a stale token the DS abandoned (the
+  //     node/border/default class). This fails unless listed in ds-config knownOrphanExceptions.
+  //   • ORPHAN (ℹ️): defined but unused on both sides — advisory, likely DS cleanup.
+  let orphanFail = 0;
   try {
     const SNAP_VARS = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
     const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
     const snapTokens = new Set(Object.keys(snap.color?.light ?? {}));
-    const orphaned = [...snapTokens].filter(t => !boundTokens.includes(t) && !isCovered(t));
-    if (orphaned.length) {
-      console.log(`ℹ️  ORPHANED TOKENS (${orphaned.length}) — in DS snapshot but not bound to any frame node`);
-      for (const t of orphaned) console.log(`     ${t}`);
+
+    // "Bound anywhere" = frame bindings ∪ component-variant bindings.
+    const boundAnywhere = new Set(boundTokens);
+    try {
+      const st = JSON.parse(readFileSync(join(ROOT, 'component-state-tokens.json'), 'utf8'));
+      for (const k of Object.keys(st)) if (!k.startsWith('_')) boundAnywhere.add(k);
+    } catch { /* optional */ }
+
+    const ORPHAN_SKIP = new Set(cfg.knownOrphanExceptions ?? []);
+    const derivedVar = t => {
+      const n = normalize(t);
+      return EXPLICIT[n] ?? ('--' + n.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-'));
+    };
+
+    const orphanUsed = [], orphanBenign = [];
+    for (const t of snapTokens) {
+      if (boundAnywhere.has(t) || boundAnywhere.has(normalize(t))) continue; // bound somewhere → not orphan
+      if (t.startsWith('primitives/')) continue;
+      if (ORPHAN_SKIP.has(normalize(t)) || ORPHAN_SKIP.has(t)) continue;
+      const v = derivedVar(t);
+      if (declared.has(v)) orphanUsed.push({ t, v });
+      else if (!isCovered(t)) orphanBenign.push(t);
+    }
+
+    if (orphanUsed.length) {
+      // Advisory by default: the "bound" set can't perfectly tell a genuinely-stale token
+      // (DS abandoned it) from a legit interaction-state token the DS keeps without a variant
+      // (focus, selected+hover). So this surfaces review candidates but doesn't block. Set
+      // ds-config → orphanUsedStrict:true to fail instead (after triaging real ones into
+      // knownOrphanExceptions). Escalate a specific token to ❌ by removing it from that list.
+      const strict = cfg.orphanUsedStrict === true;
+      orphanFail = strict ? orphanUsed.length : 0;
+      const mark = strict ? '❌' : '⚠️ ';
+      console.log(`${mark} ORPHAN-BUT-USED (${orphanUsed.length}) — DS binds these to nothing, but the code uses their CSS var:`);
+      for (const { t, v } of orphanUsed) console.log(`  ${mark} ${t}  →  ${v} (declared in CSS)`);
+      console.log('   Review: is it a stale token (rebind in DS or drop the CSS var), or a legit');
+      console.log('   interaction state with no variant? Add confirmed-legit ones to ds-config →');
+      console.log('   knownOrphanExceptions; set orphanUsedStrict:true to make the rest fail.\n');
+    }
+    if (orphanBenign.length) {
+      console.log(`ℹ️  ORPHANED TOKENS (${orphanBenign.length}) — in DS snapshot, bound to nothing, unused in code (DS cleanup candidates)`);
+      for (const t of orphanBenign) console.log(`     ${t}`);
       console.log('');
     }
   } catch { /* snapshot may not exist yet */ }
 
-  process.exit(0);
+  process.exit(orphanFail === 0 ? 0 : 1);
 }

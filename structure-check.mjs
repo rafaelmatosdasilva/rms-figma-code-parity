@@ -707,6 +707,29 @@ for (const [comp, snapComp] of Object.entries(components)) {
   }
 }
 
+// ── Gate [3o]: Per-variant height states must be declared ────────────────────
+// #2 multi-variant capture: the snapshot records `variantHeight` (every variant's
+// height, not just the default). When a set has variants of DIFFERENT heights (e.g.
+// toast: loading=48, success=32), each non-base height must be declared in the contract's
+// `states` map — otherwise a state's geometry is unmodeled and any check runs against the
+// wrong height. A newly-added variant with a new height fails this until it's contracted.
+const VHEIGHT_FAIL = [], VHEIGHT_PASS = [];
+for (const [comp, snapComp] of Object.entries(components)) {
+  const vh = snapComp?.variantHeight;
+  if (!vh || typeof vh !== 'object') continue;
+  const heights = Object.values(vh).filter(h => typeof h === 'number');
+  if (new Set(heights).size <= 1) { VHEIGHT_PASS.push(`${comp}/variant-height (uniform)`); continue; }
+  const contract = CONTRACT[comp];
+  const baseH = contract?.h;
+  const stateHeights = new Set(Object.values(contract?.states ?? {}).map(s => s?.h).filter(h => typeof h === 'number'));
+  const uncovered = [...new Set(heights)].filter(h => h !== baseH && !stateHeights.has(h));
+  if (uncovered.length) {
+    VHEIGHT_FAIL.push(`${comp}: variant height(s) ${uncovered.join(', ')}px not covered by contract.h (${baseH ?? '—'}) or any states entry — declare the state's geometry in the contract`);
+  } else {
+    VHEIGHT_PASS.push(`${comp}/variant-height`);
+  }
+}
+
 // ── Gate [3m]: Fixed-height components must not shrink ────────────────────────
 // A DS component with a fixed (hug) height renders that exact height in Figma. In
 // code it's often placed as a flex-column child (a list row, a toolbar item); a
@@ -1247,6 +1270,17 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length) {
     }
   }
 
+  if (VHEIGHT_PASS.length || VHEIGHT_FAIL.length) {
+    const vhTotal = VHEIGHT_PASS.length + VHEIGHT_FAIL.length;
+    console.log(`\n✅ PASS  ${VHEIGHT_PASS.length}/${vhTotal} per-variant height checks`);
+    console.log(`❌ FAIL  ${VHEIGHT_FAIL.length}`);
+    if (VHEIGHT_FAIL.length) {
+      console.log('\n─── Gate [3o] — variant height not covered by contract h/states ────');
+      for (const f of VHEIGHT_FAIL) console.log(`  ❌ ${f}`);
+      console.log('   Fix: add the state to the component contract\'s `states` map with its height.');
+    }
+  }
+
   const pillTotal = PILL_PASS.length + PILL_FAIL.length;
   if (pillTotal > 0) {
     console.log(`\n✅ PASS  ${PILL_PASS.length}/${pillTotal} hover/selected pill geometry checks`);
@@ -1500,7 +1534,7 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || CPROP_FAIL.length > 0 || CANN_FAIL.length > 0 || SURF_FAIL.length > 0
              || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0
              || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0
-             || SHRINK_FAIL.length > 0 || MIXED_FAIL.length > 0;
+             || SHRINK_FAIL.length > 0 || MIXED_FAIL.length > 0 || VHEIGHT_FAIL.length > 0;
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }

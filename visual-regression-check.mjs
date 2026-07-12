@@ -74,7 +74,12 @@ try {
 }
 
 // ── Download and compare ──────────────────────────────────────────────────────
-const PASS = [], FAIL = [], NEW_REF = [];
+const PASS = [], FAIL = [], NEW_REF = [], UPDATED = [];
+// Advisory mode: a changed frame auto-updates the baseline and reports (git-visible)
+// instead of blocking the audit — the pixel screenshot is frame-vs-frame (does the DS
+// look different?), not a code check. Structural code-vs-DS geometry is covered by the
+// frameGeom / FRAME_GEOMETRY_MAP rendered checks. Enable via ds-config visualRegression.mode.
+const ADVISORY = cfg.visualRegression?.mode === 'advisory';
 
 for (const frame of FRAMES) {
   const normalized = frame.nodeId.replace(/-/, ':'); // match what we sent
@@ -111,6 +116,12 @@ for (const frame of FRAMES) {
     const refHash = createHash('md5').update(readFileSync(refPath)).digest('hex');
     if (newHash === refHash) {
       PASS.push(frame.name);
+    } else if (ADVISORY) {
+      // Advisory mode: the reference IS the DS frame, so a change means the designer edited
+      // the frame — not that the code regressed (that's the structural frameGeom checks' job).
+      // Auto-update the baseline (the PNG diff is git-visible for review) and report; never block.
+      writeFileSync(refPath, imgData);
+      UPDATED.push({ name: frame.name, slug });
     } else {
       writeFileSync(newPath, imgData);
       FAIL.push({ name: frame.name, nodeId: frame.nodeId, slug, refPath, newPath });
@@ -140,7 +151,13 @@ if (FAIL.length) {
   }
 }
 
-if (!FAIL.length && !NEW_REF.length && PASS.length) {
+if (UPDATED.length) {
+  console.log('\n─── Baselines auto-updated (advisory — DS frame changed) ─────');
+  for (const u of UPDATED) console.log(`  🔄 "${u.name}" → ${cfg.visualRefs ?? '.parity-refs'}/${u.slug}.png (review the PNG diff)`);
+  console.log('   Not a code regression — structural code↔DS geometry is checked by frameGeom.');
+}
+
+if (!FAIL.length && !NEW_REF.length && !UPDATED.length && PASS.length) {
   console.log('\nAll frames match their references. ✓\n');
 }
 

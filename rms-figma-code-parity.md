@@ -418,13 +418,29 @@ component must compute the same values in every plugin that uses it. Each entry 
 asserts they all agree on every prop, catching a plugin-local rule that silently overrides a
 shared component (e.g. dropping `flex-shrink` or changing a height on `.buttonList`).
 
-**Multi-variant capture + Gate [3n].** The snapshot records `variantStroke` — the root-stroke
-presence of **every** variant in the COMPONENT_SET, not just the single `/default/i` one. When a
-set is *mixed* (both a bordered and a borderless variant — the shape that hid node's new "Idle"
-state), **Gate [3n]** requires the contract to declare `restingStroke`, which activates Gate [3l]
-to lock the base border. So a newly-added borderless state can't slip in unnoticed: it makes the
-set mixed → [3n] fails until the resting state is declared → [3l] pins the render. Uniform
-components (all bordered or all borderless) pass automatically.
+**Multi-variant capture + Gate [3n]/[3o].** The snapshot records **every** variant's facts, not
+just the single `/default/i` one: `variantStroke` (per-variant root stroke) and `variantHeight`
+(per-variant height). **Gate [3n]** — a set with both a bordered and a borderless variant (the
+shape that hid node's new "Idle" state) must declare `restingStroke`, which activates Gate [3l]
+to lock the base border. **Gate [3o]** — a set whose variants have different heights (e.g. toast
+loading=48/success=32) must cover each non-base height in the contract's `states` map, so a new
+height-varying state can't render against the wrong height. Uniform components pass automatically.
+
+**Visual-regression advisory mode (Gate [2] de-noise).** The pixel screenshot compares the LIVE
+DS frame to a stored PNG — so a change means the *designer edited the frame*, not that the code
+regressed (structural code↔DS geometry is the `frameGeom` checks' job). Set `ds-config.json →
+visualRegression.mode: "advisory"` and a changed frame **auto-updates the baseline** (the PNG diff
+stays git-visible for review) and reports it, instead of blocking the audit. Default stays
+`blocking` for backward compatibility.
+
+**DS orphan-token report (`bound-check`).** An orphan = a token in the DS variable snapshot bound
+to **nothing** — not to a frame node (`bound-tokens.json`) nor a component variant
+(`component-state-tokens.json`). Two tiers: **orphan-but-used** (⚠️ / ❌ under
+`orphanUsedStrict`) — the code declares its CSS var, so the DS abandoned a token the code still
+styles with (the `node/border/default` class); and **orphan** (ℹ️) — unused on both sides, a DS
+cleanup candidate. Advisory by default because the "bound" set can't always distinguish a stale
+token from a legit interaction state with no variant (focus, selected+hover); triage confirmed
+ones into `ds-config.json → knownOrphanExceptions`.
 
 ```js
 // Frame-geometry capture — run per DS layout frame, save to figma-frame-geometry.snapshot.json
