@@ -817,6 +817,18 @@ async function bootstrapConfig() {
     });
   }
 
+  // A snapshot can be fresh and still be useless: if a capture returns nothing, the
+  // file is written with only its _updated stamp, every consuming gate silently
+  // checks zero items, and the audit reports green. Age alone cannot see that —
+  // count the real entries too. Metadata keys are _-prefixed by convention.
+  function snapshotEntryCount(file, key = null) {
+    try {
+      const snap = JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
+      const scope = key ? (snap[key] ?? {}) : snap;
+      return Object.keys(scope).filter((k) => !k.startsWith('_')).length;
+    } catch { return null; }
+  }
+
   function snapshotAge(file) {
     try {
       const snap = JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
@@ -957,6 +969,23 @@ async function bootstrapConfig() {
       }
     } else {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
+    }
+
+    // Empty-but-fresh guard: a snapshot with no entries makes its consuming gate a
+    // silent no-op, which is worse than a stale one — stale data still gets checked.
+    for (const [file, key, consumer] of [
+      [SNAP_VARS, 'color', 'Gate [3] token parity'],
+      [SNAP_STRUCT, 'components', 'Gate [10] component structure'],
+      [SNAP_COMP_PROPS, null, 'Gate [10g] annotations + component properties'],
+      ['bound-tokens.json', null, 'Gate [4] bound-token coverage'],
+      ['component-state-tokens.json', null, 'Gate [11] state coverage'],
+    ]) {
+      if (!existsSync(join(ROOT, file))) continue;
+      const n = snapshotEntryCount(file, key);
+      if (n === 0) {
+        lines.push(C.red(`${file} has 0 entries — ${consumer} is checking nothing. Re-run the Phase 1 capture that writes it.`));
+        warn = true;
+      }
     }
 
     // Walk snapshots consumed by Gates [4] (bound-check) and [11]/[6] (state-check,

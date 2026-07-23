@@ -750,7 +750,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 
 | Gate | Script | Group | What it checks |
 |---|---|---|---|
-| [1]  | inline | **Freshness** | **Freshness** — Snapshot files pulled today and compiled outputs not older than source. Always ✅ after Phase 1 runs. |
+| [1]  | inline | **Freshness** | **Freshness** — Snapshot files pulled today and compiled outputs not older than source. Also fails any snapshot that is **fresh but empty**: a capture that returns nothing writes a file holding only its `_updated` stamp, which makes its consuming gate a silent no-op while the audit still reports green. Age alone cannot see that, so the entry count is checked too. Always ✅ after Phase 1 runs. |
 | [2]  | `visual-regression-check.mjs` | **Freshness** | **Visual regression** — Live Figma frame screenshot matches the stored reference. Skips if `FIGMA_TOKEN` isn't set or no frames are configured. |
 | [3]  | `parity-check.mjs` | **Tokens** | **Token parity** — Every token across every mode matches Figma. NEW SKIP = token in Figma but no CSS var yet — treat as ❌. `⏳ PENDING FIGMA SYNC` when code matches the upstream DS source but the primary snapshot has a newer value (not a code bug). |
 | [4]  | `bound-check.mjs` | **Tokens** | **Bound-token coverage** — Every token actively used in the Figma frames has a CSS variable. Runs at full strength on any plan against `bound-tokens.json`; staleness of that file surfaces in Gate [1], not here. |
