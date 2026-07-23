@@ -1313,6 +1313,50 @@ export const ICON_SYMBOLS = {
 
 ---
 
+## Engine Evolution — closing the loop on every miss
+
+Every audit that finds a real divergence is also evidence about the audit itself.
+Two questions must be answered before the run is closed, and the second is the one
+that gets skipped:
+
+1. **Does the project need a new contract entry?** (assertion, exemption, snapshot
+   field) — this hardens *this* project. Already covered by the Audit Rules above.
+2. **Could the engine have caught it in any project?** — if yes, the gate is
+   incomplete and fixing only the contract leaves every other consumer exposed.
+
+Ask (2) explicitly, per finding. Most answers are "no, project-specific" — that's
+fine and expected. When the answer is yes, the same session must:
+
+- fix it in the gate script, driven by config/contract values, never a project name
+- add or extend the check so the same class of miss fails next time
+- update this doc and `README.md` in the **same commit** as the code
+- commit and push to the engine repo before moving on
+
+**Worked example (2026-07-23).** A project's `figma-component-props.snapshot.json`
+held only its `_updated` stamp because an earlier capture had returned nothing.
+Gate [1] validated age and existence, so it reported "✓ updated today" while Gate
+[10g] silently checked zero annotations — a real DS annotation went unverified for
+weeks and the audit stayed green throughout.
+
+The project-level fix was to re-run the capture. The engine-level fix was the one
+that mattered: Gate [1] now counts non-metadata entries in every snapshot and fails
+a file that is fresh but empty, naming the gate left checking nothing. A stale
+snapshot is bad; an empty one is worse, because stale data still gets checked.
+
+**The test for a good engine fix:** it must be expressible without naming the
+project that surfaced it. If the fix needs a hardcoded component, token or path,
+it belongs in that project's `structure-contract.mjs`, not here.
+
+**What must never be auto-fixed.** Declaration gaps — undocumented broad rules,
+missing contract entries, state exemptions, unacknowledged annotations — encode a
+human's reason for a deliberate divergence. Generating them from whatever the code
+currently does converts the audit into a rubber stamp: it would have recorded "the
+code uses the retired token, noted" and hidden a DS state change instead of
+surfacing it. Auto-fix mechanical value divergences only (`--fix`); everything else
+must fail until a person decides.
+
+---
+
 ## End-of-Run Confidence Summary
 
 After every run, report this table so the practitioner knows exactly what the audit guarantees:
