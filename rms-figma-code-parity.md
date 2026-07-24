@@ -1301,6 +1301,18 @@ export const ICON_SYMBOLS = {
 };
 ```
 
+### Path comparison tolerates render noise
+
+Figma re-renders SVG exports on demand, and the coordinates it emits differ in the last
+decimal places between renders of an unchanged component (`2.15065` one minute,
+`2.15072` the next). Exact string comparison therefore reports "changed in Figma" for
+sub-micron noise — and a gate that cries wolf is a gate people stop reading.
+
+Path comparison matches the command sequence exactly and the numbers within
+`iconCheck.pathTolerance` (default `0.01`, far below one device pixel at any icon size).
+A genuine edit moves geometry by orders of magnitude more, and any change to the command
+sequence or token count still fails outright.
+
 ### One sprite sheet — no per-plugin symbols
 
 Once `paths.sharedIconSources` is configured, that declares the intent to keep a single

@@ -67,6 +67,42 @@ function normalizePath(d) {
   return d.replace(/\s+/g, ' ').trim();
 }
 
+// Figma re-renders SVG exports on demand and the coordinates it emits vary in the
+// last decimal places between renders of an unchanged component (2.15065 vs 2.15072).
+// Exact string comparison therefore reports "changed in Figma" for noise, which trains
+// people to ignore this gate. Compare the command sequence exactly and the numbers
+// within a tolerance far below one device pixel.
+const PATH_TOLERANCE = cfg.iconCheck?.pathTolerance ?? 0.01;
+
+function pathTokens(d) {
+  return normalizePath(d).match(/[A-Za-z]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) ?? [];
+}
+
+function pathsEquivalent(a, b, tol = PATH_TOLERANCE) {
+  const ta = pathTokens(a), tb = pathTokens(b);
+  if (ta.length !== tb.length) return false;
+  for (let i = 0; i < ta.length; i++) {
+    const na = parseFloat(ta[i]), nb = parseFloat(tb[i]);
+    if (Number.isNaN(na) || Number.isNaN(nb)) {
+      if (ta[i] !== tb[i]) return false;          // command letters must match exactly
+    } else if (Math.abs(na - nb) > tol) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pathListsEquivalent(liveArr, snapArr) {
+  if (liveArr.length !== snapArr.length) return false;
+  const remaining = [...snapArr];
+  for (const lp of liveArr) {
+    const hit = remaining.findIndex(sp => pathsEquivalent(lp, sp));
+    if (hit === -1) return false;
+    remaining.splice(hit, 1);
+  }
+  return true;
+}
+
 function extractPathDs(svgText) {
   const re = /\bd="([^"]+)"/g;
   const ds = [];
@@ -130,10 +166,8 @@ for (const batch of batches) {
     const livePaths = extractPathDs(svgText);
     const snapPaths = (entry.paths ?? []).map(normalizePath);
 
-    // Compare order-independently
-    const liveSorted = [...livePaths].sort();
-    const snapSorted = [...snapPaths].sort();
-    const match      = JSON.stringify(liveSorted) === JSON.stringify(snapSorted);
+    // Compare order-independently, tolerating Figma's render-to-render float noise
+    const match = pathListsEquivalent(livePaths, snapPaths);
 
     if (match) {
       checked.push(iconId);
