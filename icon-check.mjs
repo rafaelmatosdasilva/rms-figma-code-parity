@@ -45,10 +45,19 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const HTML_SOURCES = [
-  ...(cfg.paths?.pluginCSS        ?? []).filter(f => existsSync(join(ROOT, f)) && f.endsWith('.html')),
-  ...(cfg.paths?.sharedIconSources ?? []).filter(f => existsSync(join(ROOT, f))),
-];
+const PLUGIN_SOURCES = (cfg.paths?.pluginCSS ?? [])
+  .filter(f => existsSync(join(ROOT, f)) && f.endsWith('.html'));
+const SHARED_SOURCES = (cfg.paths?.sharedIconSources ?? [])
+  .filter(f => existsSync(join(ROOT, f)));
+
+const HTML_SOURCES = [...PLUGIN_SOURCES, ...SHARED_SOURCES];
+
+// Configuring sharedIconSources declares the intent to keep one icon sheet. Once that
+// exists, a symbol defined inside an individual plugin is a fork waiting to happen: it
+// sits outside the shared sheet, drifts from the DS copy of the same icon, and every
+// other plugin silently keeps the old artwork. Exempt specific ids only deliberately.
+const CENTRALIZED       = SHARED_SOURCES.length > 0 && cfg.iconCheck?.allowPerPluginSymbols !== true;
+const PER_PLUGIN_EXEMPT = new Set(cfg.iconCheck?.perPluginSymbolExemptions ?? []);
 
 // ── Load ICON_SYMBOLS from structure-contract.mjs ─────────────────────────────
 let ALLOWED = {};
@@ -135,6 +144,7 @@ const dsNameUnknown    = [];
 const staleNameFails   = [];
 const staleWaivers     = [];
 const nodeIdFails      = [];
+const decentralized    = [];
 const seenIds          = new Set();
 
 for (const srcPath of HTML_SOURCES) {
@@ -148,6 +158,13 @@ for (const srcPath of HTML_SOURCES) {
     const id  = idMatch[1];
     const val = ALLOWED[id];
     seenIds.add(id);
+
+    if (CENTRALIZED && PLUGIN_SOURCES.includes(srcPath) && !PER_PLUGIN_EXEMPT.has(id)) {
+      const alsoShared = SHARED_SOURCES.some(s =>
+        new RegExp(`<symbol\\s[^>]*id=["']${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`)
+          .test(readFileSync(join(ROOT, s), 'utf8')));
+      decentralized.push({ id, file: srcPath, duplicate: alsoShared });
+    }
 
     if (!val) {
       undocumented.push({ id, file: srcPath });
@@ -288,6 +305,7 @@ const allFails = [
   ...staleWaivers.map(r => ({ ...r, kind: 'staleWaiver' })),
   ...nodeIdFails.map(r => ({ ...r, kind: 'nodeId' })),
   ...orphaned.map(r => ({ ...r, kind: 'orphaned' })),
+  ...decentralized.map(r => ({ ...r, kind: 'decentralized' })),
 ];
 
 if (allFails.length === 0) {
@@ -398,6 +416,22 @@ if (nodeIdFails.length) {
     console.log(`      nodeId field: ${r.fieldNode}  —  desc says: ${r.descNode}`);
     console.log(`      → One of the two was copy-pasted from another icon. Verify against Figma`);
     console.log(`        and make both agree.\n`);
+  }
+}
+
+if (decentralized.length) {
+  console.log(`❌ PER-PLUGIN SYMBOL  ${decentralized.length}  (icon defined outside the shared sprite sheet)\n`);
+  for (const r of decentralized) {
+    console.log(`   ❌ "#${r.id}"  defined in ${r.file}`);
+    if (r.duplicate) {
+      console.log(`      A symbol with this id ALSO exists in the shared sheet — the two will drift,`);
+      console.log(`      and which one wins depends on document order. Delete the plugin-local copy.`);
+    } else {
+      console.log(`      → Move the <symbol> into: ${SHARED_SOURCES.join(', ')}`);
+      console.log(`        Icons defined per plugin can't be reused, and a DS update fixes only one copy.`);
+    }
+    console.log(`      (Deliberate exception? add the id to iconCheck.perPluginSymbolExemptions,`);
+    console.log(`       or set iconCheck.allowPerPluginSymbols: true to opt out entirely.)\n`);
   }
 }
 

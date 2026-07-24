@@ -82,7 +82,7 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 |---|---|
 | 12 | **HTML structure snapshot** — Have any ids, component classes, or icon refs changed since the last accepted baseline? |
 | 13 | **Slot parity** — Does every declared button slot use the exact DS icon and component class the Figma spec calls for? (Two-phase: declared slots + exhaustiveness scan for undeclared ones.) |
-| 14 | **Icon contract** — Are all SVG icons documented (with Figma node IDs), named after the DS component they come from, using the exact path data from Figma, and still matching the live Figma export? Four-part check: symbol docs → sprite id ↔ DS component name → path verification → live freshness. |
+| 14 | **Icon contract** — Are all SVG icons centralized in one sprite sheet, documented (with Figma node IDs), named after the DS component they come from, using the exact path data from Figma, and still matching the live Figma export? Four-part check: symbol docs → sprite id ↔ DS component name → path verification → live freshness. |
 
 **Animation** — do motion values match?
 | # | What it checks |

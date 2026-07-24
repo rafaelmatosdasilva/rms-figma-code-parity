@@ -1301,6 +1301,17 @@ export const ICON_SYMBOLS = {
 };
 ```
 
+### One sprite sheet — no per-plugin symbols
+
+Once `paths.sharedIconSources` is configured, that declares the intent to keep a single
+icon sheet, and any `<symbol>` defined inside an individual plugin file fails as
+**`PER-PLUGIN SYMBOL`**. A plugin-local icon can't be reused, a DS update fixes only
+that one copy, and when the id also exists in the shared sheet the two silently drift —
+which one renders comes down to document order.
+
+Opt out per icon with `iconCheck.perPluginSymbolExemptions: ['icon-x']`, or entirely
+with `iconCheck.allowPerPluginSymbols: true`.
+
 ### The sprite id must derive from the DS component name
 
 A DS entry's sprite id is checked against the name of the Figma component it claims to
