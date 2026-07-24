@@ -11,6 +11,15 @@
 //     Object:  { desc: 'DS ICON — ...', transform?: 'rotate(-45)' }
 //              transform — if set, symbol must contain <g transform="..."> matching value
 //
+//   Every DS entry's sprite id must derive from its DS component's own name
+//   ("Icon/Fit" → #icon-fit). Name authority is the Figma snapshot, then a declared
+//   dsName, then the name parsed out of desc. A deliberate difference must be
+//   declared with idDiffersFromDsName: '<reason>'. This catches the rename class of
+//   miss: an icon renamed in Figma, or an entry pointing at the wrong component,
+//   both of which leave the contract documenting one icon while the code ships
+//   another — invisible to path checks, which only compare against the node the
+//   (possibly wrong) entry names.
+//
 //   The viewBox attribute on <symbol> is the icon's container — it is verified against
 //   the Figma snapshot automatically. Render size (<svg width height>) is a design
 //   decision and is not policed; the viewBox + path data checks ensure the correct
@@ -52,6 +61,47 @@ function entryDesc(val)        { return typeof val === 'string' ? val : val.desc
 function entryTransform(val)   { return typeof val === 'string' ? null  : (val.transform   ?? null); }
 function entryStrokeNone(val)  { return typeof val === 'string' ? false : (val.strokeNone  ?? false); }
 function entryStrokeBased(val) { return typeof val === 'string' ? false : (val.strokeBased ?? false); }
+function entryNodeId(val)      { return typeof val === 'string' ? null  : (val.nodeId      ?? null); }
+function entryDsName(val)      { return typeof val === 'string' ? null  : (val.dsName      ?? null); }
+function entryIdWaiver(val)    { return typeof val === 'string' ? null  : (val.idDiffersFromDsName ?? null); }
+function isDsEntry(val)        { return /^DS ICON\b/.test(entryDesc(val) ?? ''); }
+
+// ── DS component name → expected sprite id ───────────────────────────────────
+// The sprite id must be derivable from the DS component's own name, so a renamed
+// or mis-sourced icon cannot hide behind a stale contract key. Purely mechanical:
+//   "Icon/Fit"                  → icon-fit
+//   "Icon/arrowRight"           → icon-arrow-right
+//   "Icon/check size=small"     → icon-check      (variant assignments dropped)
+//   "Icon/object/component"     → icon-component  (last path segment wins)
+const SPRITE_PREFIX = cfg.iconCheck?.spriteIdPrefix ?? 'icon-';
+
+function spriteIdFromDsName(name) {
+  let s = String(name ?? '').trim();
+  if (!s) return null;
+  s = s.replace(/\b[\w-]+=[\w-]+\b/g, ' ');          // drop variant assignments (size=small)
+  const seg = s.split('/').filter(w => w.trim()).pop() ?? '';
+  const kebab = seg
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')          // camelCase → kebab
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^A-Za-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .toLowerCase()
+    .replace(/^-|-$/g, '');
+  return kebab ? `${SPRITE_PREFIX}${kebab}` : null;
+}
+
+// Pull the DS component name out of a "DS ICON — <name> node <id>; ..." description.
+function dsNameFromDesc(desc) {
+  const m = /^DS ICON\s*[—–-]\s*(.+?)\s+node\s+[\d:\-]+/.exec(desc ?? '');
+  return m ? m[1].trim() : null;
+}
+
+function normalizeNodeId(id) { return String(id ?? '').replace(/[:\-]/g, ''); }
+
+function nodeIdFromDesc(desc) {
+  const m = /\bnode\s+([\d]+[:\-][\d]+)/.exec(desc ?? '');
+  return m ? m[1] : null;
+}
 
 // ── Extract <symbol id="...">...</symbol> blocks from HTML files ──────────────
 // Captures the full symbol body so we can check for transform attributes.
@@ -80,6 +130,12 @@ const strokeFails      = [];
 const strokeBasedFails = [];
 const pathFails        = [];
 const viewBoxFails     = [];
+const dsNameFails      = [];
+const dsNameUnknown    = [];
+const staleNameFails   = [];
+const staleWaivers     = [];
+const nodeIdFails      = [];
+const seenIds          = new Set();
 
 for (const srcPath of HTML_SOURCES) {
   const text = readFileSync(join(ROOT, srcPath), 'utf8');
@@ -91,6 +147,7 @@ for (const srcPath of HTML_SOURCES) {
     if (!idMatch) continue;
     const id  = idMatch[1];
     const val = ALLOWED[id];
+    seenIds.add(id);
 
     if (!val) {
       undocumented.push({ id, file: srcPath });
@@ -132,6 +189,43 @@ for (const srcPath of HTML_SOURCES) {
       }
     }
 
+    // ── DS component name must match the sprite id ──────────────────────────
+    // A sprite id that no longer derives from its DS component's name means the
+    // icon was renamed in Figma, or the entry points at the wrong component. Both
+    // leave the contract describing one icon while the code ships another.
+    // Name authority: Figma snapshot > declared dsName > parsed from desc.
+    if (isDsEntry(val)) {
+      const snapName  = iconSnap[id]?.name ?? null;
+      const declared  = entryDsName(val);
+      const descName  = dsNameFromDesc(entryDesc(val));
+      const dsName    = snapName ?? declared ?? descName;
+      const waiver    = entryIdWaiver(val);
+
+      // A declared name that contradicts live Figma is stale documentation.
+      if (snapName && declared && snapName !== declared) {
+        staleNameFails.push({ id, file: srcPath, snapName, declared });
+      }
+
+      if (!dsName) {
+        dsNameUnknown.push({ id, file: srcPath, desc: entryDesc(val) });
+      } else {
+        const expected = spriteIdFromDsName(dsName);
+        if (expected && expected !== id && !waiver) {
+          dsNameFails.push({ id, file: srcPath, dsName, expected,
+                             source: snapName ? 'figma snapshot' : declared ? 'dsName' : 'desc' });
+        } else if (expected && expected === id && waiver) {
+          staleWaivers.push({ id, file: srcPath, dsName, waiver });
+        }
+      }
+
+      // The node id quoted in the prose must match the machine-readable field.
+      const fieldNode = entryNodeId(val);
+      const descNode  = nodeIdFromDesc(entryDesc(val));
+      if (fieldNode && descNode && normalizeNodeId(fieldNode) !== normalizeNodeId(descNode)) {
+        nodeIdFails.push({ id, file: srcPath, fieldNode, descNode });
+      }
+    }
+
     // ── Path comparison against Figma snapshot ──────────────────────────────
     const snapEntry = iconSnap[id];
     if (snapEntry) {
@@ -160,6 +254,14 @@ for (const srcPath of HTML_SOURCES) {
 }
 
 
+// ── Orphaned DS contract entries ─────────────────────────────────────────────
+// A DS entry whose key matches no <symbol> anywhere is debris — usually the old
+// half of a rename. Left in place it keeps "documenting" an icon that no longer
+// ships, while the renamed sprite reads as undocumented.
+const orphaned = Object.entries(ALLOWED)
+  .filter(([id, val]) => isDsEntry(val) && !seenIds.has(id))
+  .map(([id, val]) => ({ id, desc: entryDesc(val) }));
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── SVG symbol audit (Hard Rule #15) ───────────────────────────────\n');
 
@@ -180,6 +282,12 @@ const allFails = [
   ...strokeFails.map(r => ({ ...r, kind: 'stroke' })),
   ...viewBoxFails.map(r => ({ ...r, kind: 'viewBox' })),
   ...pathFails.map(r => ({ ...r, kind: 'path' })),
+  ...dsNameFails.map(r => ({ ...r, kind: 'dsName' })),
+  ...dsNameUnknown.map(r => ({ ...r, kind: 'dsNameUnknown' })),
+  ...staleNameFails.map(r => ({ ...r, kind: 'staleName' })),
+  ...staleWaivers.map(r => ({ ...r, kind: 'staleWaiver' })),
+  ...nodeIdFails.map(r => ({ ...r, kind: 'nodeId' })),
+  ...orphaned.map(r => ({ ...r, kind: 'orphaned' })),
 ];
 
 if (allFails.length === 0) {
@@ -236,6 +344,70 @@ if (viewBoxFails.length) {
     console.log(`      Figma export: viewBox="${r.expected}"  —  code has: viewBox="${r.actual}"`);
     console.log(`      → The symbol viewBox must match the Figma node dimensions exactly.`);
     console.log(`        Update the <symbol viewBox="..."> attribute.\n`);
+  }
+}
+
+if (dsNameFails.length) {
+  console.log(`❌ SPRITE ID ≠ DS NAME  ${dsNameFails.length}  (sprite id does not derive from its DS component name)\n`);
+  for (const r of dsNameFails) {
+    console.log(`   ❌ "#${r.id}"  in ${r.file}`);
+    console.log(`      DS component (${r.source}): "${r.dsName}"  →  expected sprite id "#${r.expected}"`);
+    console.log(`      → The id and the DS component have drifted apart. Either:`);
+    console.log(`        • rename the sprite to "#${r.expected}" (and every <use href="#${r.id}">), or`);
+    console.log(`        • point the entry at the DS component this sprite really is, or`);
+    console.log(`        • if the difference is deliberate, declare it:`);
+    console.log(`          idDiffersFromDsName: '<why this id intentionally differs>'\n`);
+  }
+}
+
+if (dsNameUnknown.length) {
+  console.log(`❌ DS NAME UNKNOWN  ${dsNameUnknown.length}  (DS entry with no resolvable component name)\n`);
+  for (const r of dsNameUnknown) {
+    console.log(`   ❌ "#${r.id}"  in ${r.file}`);
+    console.log(`      desc: ${r.desc}`);
+    console.log(`      → The name could not be read from the snapshot or parsed from the description,`);
+    console.log(`        so the sprite id is verified against nothing. Add the component's exact`);
+    console.log(`        Figma name: dsName: 'Icon/Example'\n`);
+  }
+}
+
+if (staleNameFails.length) {
+  console.log(`❌ STALE DS NAME  ${staleNameFails.length}  (declared dsName contradicts live Figma)\n`);
+  for (const r of staleNameFails) {
+    console.log(`   ❌ "#${r.id}"  in ${r.file}`);
+    console.log(`      Figma snapshot: "${r.snapName}"  —  contract declares: "${r.declared}"`);
+    console.log(`      → The component was renamed in Figma. Update dsName to match, and check`);
+    console.log(`        whether the sprite id should follow the rename too.\n`);
+  }
+}
+
+if (staleWaivers.length) {
+  console.log(`❌ STALE WAIVER  ${staleWaivers.length}  (idDiffersFromDsName declared, but the id matches)\n`);
+  for (const r of staleWaivers) {
+    console.log(`   ❌ "#${r.id}"  in ${r.file}`);
+    console.log(`      DS name "${r.dsName}" derives to "#${r.id}" — the waiver is no longer needed.`);
+    console.log(`      Reason on file: ${r.waiver}`);
+    console.log(`      → Remove idDiffersFromDsName so a future real divergence still fails.\n`);
+  }
+}
+
+if (nodeIdFails.length) {
+  console.log(`❌ NODE ID MISMATCH  ${nodeIdFails.length}  (desc quotes a different node than the nodeId field)\n`);
+  for (const r of nodeIdFails) {
+    console.log(`   ❌ "#${r.id}"  in ${r.file}`);
+    console.log(`      nodeId field: ${r.fieldNode}  —  desc says: ${r.descNode}`);
+    console.log(`      → One of the two was copy-pasted from another icon. Verify against Figma`);
+    console.log(`        and make both agree.\n`);
+  }
+}
+
+if (orphaned.length) {
+  console.log(`❌ ORPHANED DS ENTRY  ${orphaned.length}  (contract entry with no matching <symbol>)\n`);
+  for (const r of orphaned) {
+    console.log(`   ❌ "#${r.id}"  declared but never defined`);
+    console.log(`      ${r.desc}`);
+    console.log(`      → Usually the old half of a rename. Delete the entry, or restore the symbol`);
+    console.log(`        if it was dropped by mistake.\n`);
   }
 }
 

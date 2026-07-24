@@ -763,7 +763,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [11] | `state-check.mjs` `state-binding-check.mjs` `component-selector-check.mjs` | **Structure** | **State coverage** — Three checks in one: (a) all Figma component states have tokens in code (`state-check`); (b) every `CONTRACT.propertyMap` state selector exists in CSS (`state-binding-check`); (c) state-suffix vars (`-hover`, `-selected`, `-disabled`, `-focus`, `-checked`) only appear inside selectors with a matching state indicator (`component-selector-check`). Intentional exceptions go in `ds-config.json → knownStateExemptions`. |
 | [12] | `html-structure-check.mjs` | **Markup** | **HTML structure snapshot** — Fingerprint includes: element IDs, DS component classes on interactive elements, icon `<use href>` refs with context, and **button inner structure** (whether each id'd `<button>` has SVG, span children with their classes, and text content). Diffs against stored snapshot; any undeclared structural change is ❌. Accept: `node scripts/html-structure-check.mjs --accept`. |
 | [13] | `icon-slot-check.mjs` `component-slot-check.mjs` | **Markup** | **Slot parity** — Two-phase exhaustiveness check for both asset types: (a) icon slots — every slot in `ICON_USAGES` uses the exact DS icon specified; every `<button id="X">` with `<use href="#icon-">` must be declared; (b) component slots — every slot in `COMPONENT_USAGES` uses the correct DS component class; every button with a primary/secondary/tertiary/quaternary class must be declared. |
-| [14] | `pseudo-element-check.mjs` `icon-check.mjs` `icon-freshness-check.mjs` | **Markup** | **Icon contract** — Three-part check: (a) `::before`/`::after` pseudo-elements declared in the structure contract; (b) every SVG `<symbol>` in `ICON_SYMBOLS` — DS icons with Figma node ID, plugin icons marked `PLUGIN-SPECIFIC`, with path data verified against snapshot; (c) **live Figma freshness** — for every DS icon with a `nodeId`, fetches the live SVG from Figma REST API and compares path data against the snapshot. Requires `FIGMA_TOKEN`; part (c) skips if not set. |
+| [14] | `pseudo-element-check.mjs` `icon-check.mjs` `icon-freshness-check.mjs` | **Markup** | **Icon contract** — Three-part check: (a) `::before`/`::after` pseudo-elements declared in the structure contract; (b) every SVG `<symbol>` in `ICON_SYMBOLS` — DS icons with Figma node ID, plugin icons marked `PLUGIN-SPECIFIC`, with path data verified against snapshot, and **every DS sprite id derived from its DS component's name** (catches renames and wrong-component entries; deliberate differences need `idDiffersFromDsName`); (c) **live Figma freshness** — for every DS icon with a `nodeId`, fetches the live SVG from Figma REST API and compares path data against the snapshot. Requires `FIGMA_TOKEN`; part (c) skips if not set. |
 | [15] | `transition-check.mjs` | **Animation** | **Transition contract** — Every selector in `TRANSITION_CONTRACT` (structure-contract.mjs) must have a CSS `transition:` declaration containing each documented part (duration, easing, property). Catches animation drift before Figma EASING/TIMING tokens exist. |
 | [16] | `rendered-check.mjs` | **Rendered output** | **Rendered parity** — Launches headless Chrome via CDP (no npm deps; Node ≥ 22 built-in WebSocket), loads each built plugin `ui.html` from `file://`, and asserts `getComputedStyle` values from `RENDERED_ASSERTIONS` (structure-contract.mjs). Catches what static text analysis cannot: cascade/specificity surprises (a later rule silently overriding the DS base), wrong `var()` resolution, and stale builds. Components that only exist at runtime (toasts, list rows) are instantiated via the entry's `probe` HTML, injected into an absolutely-positioned hidden host so the app shell's flex layout cannot stretch/shrink them. Entries with `forcePseudo: ['hover']` (or `focus`/`active`) are measured under `CSS.forcePseudoState` — the only way to verify the geometry of pseudo-class rules (e.g. "content must not shift on hover": assert the `:hover` gap equals the default). **Color scheme is emulated per assertion** via `Emulation.setEmulatedMedia`, so a check on a mode-varying token (e.g. a dark-mode text color) can never silently flip with the host OS appearance — headless Chrome otherwise follows the machine's `prefers-color-scheme` (light on CI, often dark on a dev Mac). Each entry runs under its own `colorScheme: 'dark' \| 'light'`, defaulting to `ds-config.json → rendered.colorScheme` (else `'light'`, the `:root` base). Geometry assertions are mode-independent and need no `colorScheme`. **Two DS-sourced expected-value shortcuts** keep hand-typed pixels from going stale: `iconSizeOf: '<component>'` sources an icon width/height check from that component's `iconSize` in the structure snapshot (catches icon-size drift like the 12px→16px search icon), and `frameGeom: { node, path? }` sources a container padding/gap/height check from the named node's box in the **frame-geometry snapshot** (`figma-frame-geometry.snapshot.json` — per-container `h`/`pad[t,r,b,l]`/`gap` captured from the DS layout frame). `frameGeom` catches context/spacing bugs the component-only checks miss — e.g. the 7px `.mode-toggle-row` bottom padding that stacked on the first divider — and tracks the live frame automatically. Skips gracefully when Chrome is absent (`CHROME_PATH` to point at a binary). |
 | [17] | `contrast-check.mjs` | **Accessibility** | **Contrast parity** — Computes the WCAG 2.1 contrast ratio of every foreground token against its background, per mode, straight from the resolved hexes in `figma-vars.snapshot.json` (no rendering, deterministic). Pairs come from `parity-map.mjs → CONTRAST_PAIRS` (curated — these **hard-fail** below threshold) plus **auto-derived** pairs by naming convention (a component's `label`/`text`/`iconText`/`title`/`value`/`icon` tokens vs its `background` token — **advisory** by default, since alpha-tint backgrounds and cross-type components can mispair; set `ds-config.json → contrastStrict:true` to enforce). A pair whose fg and bg resolve to the same hex is an alpha/tint background it can't assess from the solid snapshot value → skipped. Threshold `ds-config.json → contrastMinRatio` (default 4.5); exempt a pair via `knownContrastExceptions: ["fg\|bg"]`. Surfaces low-contrast disabled/placeholder states and genuinely illegible pairs a token-only audit is blind to. |
@@ -1293,15 +1293,61 @@ export const ICON_SYMBOLS = {
 };
 ```
 
-**Object form:** use `{ desc, transform?, size?, strokeNone?, strokeBased? }` for DS icons that require additional checks:
+### The sprite id must derive from the DS component name
+
+A DS entry's sprite id is checked against the name of the Figma component it claims to
+come from. `"Icon/Fit"` must be `#icon-fit`; `"Icon/arrowRight"` must be
+`#icon-arrow-right`. The derivation is mechanical — last path segment, variant
+assignments (`size=small`) dropped, camelCase to kebab, prefixed with `icon-`
+(override via `iconCheck.spriteIdPrefix` in `ds-config.json`).
+
+Name authority, in order: the `name` field in `figma-icons.snapshot.json` (captured
+from Figma, so it tracks renames automatically) → a declared `dsName` → the name
+parsed out of `desc`. **Phase 1 must record `name` alongside `nodeId` when capturing
+icons** — without it the check falls back to human-typed prose, which is exactly what
+drifts.
+
+This closes the rename class of miss. Path and viewBox checks only compare an icon
+against the node its entry names, so they stay green when the entry names the wrong
+node — the code ships one icon while the contract documents another.
+
+Four failures come out of this:
+
+- **`SPRITE ID ≠ DS NAME`** — the id and the component have drifted. Rename the sprite,
+  repoint the entry, or declare the difference with
+  `idDiffersFromDsName: '<reason>'`.
+- **`DS NAME UNKNOWN`** — no name from any source, so the id is verified against
+  nothing. Add `dsName`. (A check that silently checks zero things is the worse bug.)
+- **`STALE DS NAME`** — a declared `dsName` contradicts the snapshot: renamed in Figma.
+- **`STALE WAIVER`** — an `idDiffersFromDsName` whose id now matches anyway. Remove it,
+  so a future real divergence still fails.
+
+Plus **`ORPHANED DS ENTRY`** — a DS entry whose key matches no `<symbol>` anywhere.
+That is usually the surviving half of a rename: the old key keeps "documenting" an
+icon that no longer ships while the renamed sprite reads as undocumented.
+
+**Never auto-generate `idDiffersFromDsName`.** It records a human's reason for a
+deliberate divergence. Deriving it from whatever the code currently does turns the
+gate into a rubber stamp — it would quietly bless a wrong icon instead of surfacing
+it. Transcribing a reason already written down in `desc` is fine; inventing one is
+not.
+
+**Object form:** use `{ desc, dsName?, idDiffersFromDsName?, transform?, size?, strokeNone?, strokeBased? }` for DS icons that require additional checks:
 
 - **`transform`** — when the Figma component wraps the SVG path in a rotation (visible as `-rotate-X` in the Figma component code). The gate verifies a `<g transform="...">` with that exact value is present inside the `<symbol>`. Prevents correct path + wrong orientation.
 - **`size`** — the DS-specified icon container size in pixels (e.g. `16`). The gate finds every `<svg width="N" height="N"><use href="#id">` in HTML files and verifies `N === size`. Catches icons rendered at the wrong pixel dimensions.
 - **`strokeNone: true`** — for fill-only DS icons that appear inside contexts with broad CSS stroke rules (e.g. `.buttonTertiary svg { stroke: var(--buttonTertiary-text) }`). The gate verifies the symbol body contains `stroke="none"` on a shape element. Without this, the CSS-inherited stroke adds unintended visual weight, making the icon appears thicker in button contexts than in other contexts (overlay labels, etc.).
 - **`strokeBased: true`** — for stroke-only DS icons (circle outlines, line icons). The gate verifies the `<symbol>` tag itself has `fill="none"`. Without this, replacing the stroke icon with a fill-based SVG would pass all size and color checks while looking completely different (hollow circle vs filled circle). Use this for any DS icon whose Figma BOOLEAN_OPERATION or path uses stroke rendering, not fill.
 
+- **`dsName`** — the DS component's exact Figma name, when the snapshot has no `name`
+  for it or the `desc` prose does not carry it in `<name> node <id>` form.
+- **`idDiffersFromDsName`** — a written reason why this sprite id deliberately does not
+  derive from the DS component name (e.g. two sprites drawn from one component at
+  different sizes). Required for any intentional divergence; never generated.
+
 **When the gate fails:**
 - Undocumented symbol → fetch from Figma, add contract entry
+- Sprite id ≠ DS name → rename the sprite, repoint the entry, or declare the waiver
 - Missing transform → wrap `<path>` in `<g transform="...">` matching the contract value
 - Wrong render size → update the `<svg width="N" height="N">` wrapping `<use href="#id">` to match the contract `size`
 - Missing stroke guard → add `stroke="none"` to the `<path>` inside the symbol
@@ -1342,6 +1388,23 @@ The project-level fix was to re-run the capture. The engine-level fix was the on
 that mattered: Gate [1] now counts non-metadata entries in every snapshot and fails
 a file that is fresh but empty, naming the gate left checking nothing. A stale
 snapshot is bad; an empty one is worse, because stale data still gets checked.
+
+**Worked example (2026-07-24).** Two new sprites were added to a plugin's shared icon
+sheet. Gate [14] flagged both as undocumented — correct, but it missed the more
+interesting half: the contract already held an entry for one of them under a stale key
+(`icon-zoom`) whose own description said `Icon/Fit`. The id and the DS component had
+been out of sync for as long as the entry existed, and no gate looked at the
+relationship between them. Auditing the rest of the sheet the same way turned up an
+entry pointing at `Icon/object/variable` — a component that does not exist in the DS
+file at all; the real component is `Icon/object/token`.
+
+Neither miss was detectable by the existing checks. Path and viewBox comparison starts
+from the node the entry names, so an entry naming the wrong node compares the icon
+against itself and passes. The project fix was to rename the key and document the new
+icons. The engine fix was to make the sprite id answerable to the DS component's own
+name, with the snapshot's captured `name` as the authority so a Figma rename shows up
+on the next refresh rather than whenever someone rereads the prose. Orphaned DS entries
+now fail too — a rename leaves debris at both ends, and only one end was visible.
 
 **The test for a good engine fix:** it must be expressible without naming the
 project that surfaced it. If the fix needs a hardcoded component, token or path,
