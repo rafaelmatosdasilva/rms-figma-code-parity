@@ -105,11 +105,21 @@ function spriteIdCandidates(name) {
   s = s.replace(/\b[\w-]+=[\w-]+\b/g, ' ');          // drop variant assignments (size=small)
 
   let segs = s.split('/').map(w => kebab(w)).filter(Boolean);
-  // A leading segment equal to the prefix root ("Icon" for "icon-") is the namespace
-  // marker, not part of the name — otherwise every id would start icon-icon-.
+  // The "Icon" namespace marker is not part of the name — otherwise every id would
+  // start icon-icon-. It appears either as its own path segment ("Icon/Fit") or fused
+  // into the first one ("Icon-Fit"); both spellings occur in real DS files, so strip
+  // either. Without this, renaming a component from Icon/Fit to Icon-Fit — a pure
+  // cosmetic edit in Figma — would fail a correctly-named sprite.
   const root = SPRITE_PREFIX.replace(/-+$/, '');
-  if (segs.length > 1 && segs[0] === root) segs = segs.slice(1);
-  if (!segs.length) return [];
+  if (segs.length > 1 && segs[0] === root) {
+    segs = segs.slice(1);
+  } else if (segs[0] === root && segs.length === 1) {
+    return [];                                       // name is just "Icon" — nothing to derive
+  }
+  if (segs.length && segs[0].startsWith(`${root}-`)) {
+    segs = [segs[0].slice(root.length + 1), ...segs.slice(1)];
+  }
+  if (!segs.length || !segs[0]) return [];
 
   const out = [];
   for (let i = segs.length - 1; i >= 0; i--) out.push(SPRITE_PREFIX + segs.slice(i).join('-'));
@@ -164,6 +174,7 @@ const staleNameFails   = [];
 const staleWaivers     = [];
 const nodeIdFails      = [];
 const decentralized    = [];
+const unsnapshotted    = [];
 const seenIds          = new Set();
 
 for (const srcPath of HTML_SOURCES) {
@@ -263,6 +274,14 @@ for (const srcPath of HTML_SOURCES) {
       }
     }
 
+    // A DS entry naming a Figma node but absent from the snapshot gets no path or
+    // viewBox verification at all, and nothing says so — the icon reads as "✅ DS" in
+    // the report while being checked against nothing. Same failure shape as a fresh
+    // but empty snapshot: the gap is invisible precisely because it looks fine.
+    if (isDsEntry(val) && entryNodeId(val) && Object.keys(iconSnap).length && !iconSnap[id]) {
+      unsnapshotted.push({ id, file: srcPath, nodeId: entryNodeId(val) });
+    }
+
     // ── Path comparison against Figma snapshot ──────────────────────────────
     const snapEntry = iconSnap[id];
     if (snapEntry) {
@@ -326,6 +345,7 @@ const allFails = [
   ...nodeIdFails.map(r => ({ ...r, kind: 'nodeId' })),
   ...orphaned.map(r => ({ ...r, kind: 'orphaned' })),
   ...decentralized.map(r => ({ ...r, kind: 'decentralized' })),
+  ...unsnapshotted.map(r => ({ ...r, kind: 'unsnapshotted' })),
 ];
 
 if (allFails.length === 0) {
@@ -436,6 +456,17 @@ if (nodeIdFails.length) {
     console.log(`      nodeId field: ${r.fieldNode}  —  desc says: ${r.descNode}`);
     console.log(`      → One of the two was copy-pasted from another icon. Verify against Figma`);
     console.log(`        and make both agree.\n`);
+  }
+}
+
+if (unsnapshotted.length) {
+  console.log(`❌ NOT SNAPSHOTTED  ${unsnapshotted.length}  (DS icon with a nodeId but no snapshot entry)\n`);
+  for (const r of unsnapshotted) {
+    console.log(`   \u274c "#${r.id}"  in ${r.file}`);
+    console.log(`      nodeId ${r.nodeId} is declared, but the icon snapshot has no entry for it,`);
+    console.log(`      so its path and viewBox are compared against nothing while the report`);
+    console.log(`      still shows it as a verified DS icon.`);
+    console.log(`      \u2192 Export it in Phase 1 so the snapshot carries name, viewBox and paths.\n`);
   }
 }
 

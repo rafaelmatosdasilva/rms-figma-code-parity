@@ -1301,6 +1301,16 @@ export const ICON_SYMBOLS = {
 };
 ```
 
+### Every DS entry must be in the snapshot
+
+A `DS ICON` entry that names a `nodeId` but has no `figma-icons.snapshot.json` entry is
+compared against nothing — no path check, no viewBox check — while still printing as a
+verified DS icon in the report. That is the same failure shape as a fresh-but-empty
+snapshot: invisible precisely because it looks fine.
+
+`NOT SNAPSHOTTED` fails those entries. Phase 1 must export every DS icon so the snapshot
+carries `name`, `viewBox` and `paths` for each.
+
 ### Path comparison tolerates render noise
 
 Figma re-renders SVG exports on demand, and the coordinates it emits differ in the last
