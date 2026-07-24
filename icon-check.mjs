@@ -84,20 +84,39 @@ function isDsEntry(val)        { return /^DS ICON\b/.test(entryDesc(val) ?? '');
 //   "Icon/object/component"     → icon-component  (last path segment wins)
 const SPRITE_PREFIX = cfg.iconCheck?.spriteIdPrefix ?? 'icon-';
 
-function spriteIdFromDsName(name) {
-  let s = String(name ?? '').trim();
-  if (!s) return null;
-  s = s.replace(/\b[\w-]+=[\w-]+\b/g, ' ');          // drop variant assignments (size=small)
-  const seg = s.split('/').filter(w => w.trim()).pop() ?? '';
-  const kebab = seg
+function kebab(seg) {
+  return String(seg)
     .replace(/([a-z0-9])([A-Z])/g, '$1-$2')          // camelCase → kebab
     .replace(/[\s_]+/g, '-')
     .replace(/[^A-Za-z0-9-]/g, '')
     .replace(/-+/g, '-')
     .toLowerCase()
     .replace(/^-|-$/g, '');
-  return kebab ? `${SPRITE_PREFIX}${kebab}` : null;
 }
+
+// A namespaced DS name has more than one faithful derivation, and which one is right
+// is a judgement the DS can't make for us: "Icon/var/color" could reasonably be
+// #icon-color or #icon-var-color, and dropping "var" loses real meaning. So accept any
+// suffix of the path — every candidate is genuinely derived from the DS name, and
+// demanding one exact form would force waivers onto correct, well-named icons.
+function spriteIdCandidates(name) {
+  let s = String(name ?? '').trim();
+  if (!s) return [];
+  s = s.replace(/\b[\w-]+=[\w-]+\b/g, ' ');          // drop variant assignments (size=small)
+
+  let segs = s.split('/').map(w => kebab(w)).filter(Boolean);
+  // A leading segment equal to the prefix root ("Icon" for "icon-") is the namespace
+  // marker, not part of the name — otherwise every id would start icon-icon-.
+  const root = SPRITE_PREFIX.replace(/-+$/, '');
+  if (segs.length > 1 && segs[0] === root) segs = segs.slice(1);
+  if (!segs.length) return [];
+
+  const out = [];
+  for (let i = segs.length - 1; i >= 0; i--) out.push(SPRITE_PREFIX + segs.slice(i).join('-'));
+  return out;                                        // shortest (most canonical) first
+}
+
+function spriteIdFromDsName(name) { return spriteIdCandidates(name)[0] ?? null; }
 
 // Pull the DS component name out of a "DS ICON — <name> node <id>; ..." description.
 function dsNameFromDesc(desc) {
@@ -226,11 +245,12 @@ for (const srcPath of HTML_SOURCES) {
       if (!dsName) {
         dsNameUnknown.push({ id, file: srcPath, desc: entryDesc(val) });
       } else {
-        const expected = spriteIdFromDsName(dsName);
-        if (expected && expected !== id && !waiver) {
-          dsNameFails.push({ id, file: srcPath, dsName, expected,
+        const candidates = spriteIdCandidates(dsName);
+        const derives    = candidates.includes(id);
+        if (candidates.length && !derives && !waiver) {
+          dsNameFails.push({ id, file: srcPath, dsName, expected: candidates.join('" or "#'),
                              source: snapName ? 'figma snapshot' : declared ? 'dsName' : 'desc' });
-        } else if (expected && expected === id && waiver) {
+        } else if (derives && waiver) {
           staleWaivers.push({ id, file: srcPath, dsName, waiver });
         }
       }
