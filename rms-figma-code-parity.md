@@ -115,6 +115,14 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 Both are machine-generated — never hand-edit. `component-state-tokens.json` and `bound-tokens.json` are auto-refreshed via REST on every `pnpm parity` run when `FIGMA_TOKEN` is set. When the REST API returns 403 (non-Enterprise plans), refresh both via the Plugin API walks and **commit them** — each carries an `_updated` stamp, Gate [1] tracks their freshness, and the consuming gates ([4], [10]) always run at full strength against the committed data.
 
+**A 403 has two very different causes and Gate [1] separates them.** If Figma's response
+says the token is invalid or expired, Gate [1] fails with `FIGMA_TOKEN rejected by Figma`
+— reissue the token; the stale snapshots underneath are a symptom, not the problem. Any
+other 403 is a genuine plan/scope limitation, and the stale snapshots are expected until
+you run the Plugin API capture. Treating an expired credential as a plan limitation is
+the dangerous confusion: every REST-backed refresh quietly stops while the audit reports
+a condition you cannot fix.
+
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `node scripts/audit.mjs --trend`.
 
 ---

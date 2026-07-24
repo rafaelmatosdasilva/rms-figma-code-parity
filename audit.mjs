@@ -55,6 +55,10 @@ const INIT_ONLY  = process.argv.includes('--init');
 // Gates that depend on live variable refresh use planLimited state instead of
 // pass/fail — they don't block the audit but clearly explain what couldn't run.
 let _figmaApiLimited = false;
+// Set when Figma rejects the credential itself (expired/revoked token), as opposed to
+// the plan or scope gating an endpoint. Kept separate so the audit prescribes the right
+// fix: a stale snapshot blamed on the plan hides a token that just needs reissuing.
+let _figmaAuthFailed = false;
 
 // ── ANSI helpers (available before config loads) ──────────────────────────────
 const isTTY = process.stdout.isTTY;
@@ -315,7 +319,14 @@ function buildVarIdMap(fileKey, token) {
       headers: { 'X-Figma-Token': token },
     });
     if (!res.ok) {
-      if (res.status === 403) _figmaApiLimited = true;
+      // A 403 means either "this plan/scope can't reach the endpoint" or "your token is
+      // no longer valid". They need opposite fixes — run the Plugin API capture vs.
+      // reissue FIGMA_TOKEN — so never collapse them into one message.
+      if (res.status === 403) {
+        const body = await res.text().catch(() => '');
+        if (/invalid token|token.*expired|expired.*token/i.test(body)) _figmaAuthFailed = true;
+        else                                                          _figmaApiLimited = true;
+      }
       throw new Error(`variables/local returned ${res.status}`);
     }
     const { meta } = await res.json();
@@ -945,6 +956,17 @@ async function bootstrapConfig() {
     const compProps = snapshotAge(SNAP_COMP_PROPS);
     const lines  = [];
     let warn     = false;
+
+    // An invalid credential must never be excused as a plan limitation — that reads as
+    // "nothing to do here" while every REST-backed refresh silently stops running.
+    if (_figmaAuthFailed) {
+      lines.push(C.red('❌ FIGMA_TOKEN rejected by Figma (invalid or expired)'));
+      lines.push(C.red('   Every REST-backed snapshot refresh and Gate [14] icon freshness is'));
+      lines.push(C.red('   skipped until it is reissued — stale data below is a consequence, not'));
+      lines.push(C.red('   a plan limitation. Reissue at figma.com → Settings → Personal access'));
+      lines.push(C.red('   tokens (needs file_content:read) and update .env / CI secrets.'));
+      warn = true;
+    }
 
     let varsPlanLimited = false;
     if (vars === null) {
