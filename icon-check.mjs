@@ -121,6 +121,12 @@ function spriteIdCandidates(name) {
   }
   if (!segs.length || !segs[0]) return [];
 
+  const full = SPRITE_PREFIX + segs.join('-');
+  // Hard rule (iconCheck.exactName): the sprite id must be the EXACT full Figma name —
+  // no short forms. A project can opt in when its DS uses one canonical name per icon
+  // and never wants a component renamed silently behind a shorter alias.
+  if (cfg.iconCheck?.exactName) return [full];
+
   const out = [];
   for (let i = segs.length - 1; i >= 0; i--) out.push(SPRITE_PREFIX + segs.slice(i).join('-'));
   return out;                                        // shortest (most canonical) first
