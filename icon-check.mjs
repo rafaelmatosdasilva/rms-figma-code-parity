@@ -368,6 +368,39 @@ for (const { id } of documented) {
   else deadIcons.push({ id });
 }
 
+// ── Render size on the DS grid ───────────────────────────────────────────────
+// The DS ships icons at a fixed set of sizes (e.g. 12/16/56). A DS icon rendered at
+// any other size is off-grid — it either upscales a small glyph blurry or crams a
+// large one. Enforced only when iconCheck.allowedSizes is configured. Covers both
+// static `<svg width=N height=N><use href="#dsicon">` and lookup tables written as
+// `href: '#dsicon', size: N`.
+const ALLOWED_SIZES = cfg.iconCheck?.allowedSizes ?? null;
+const sizeFails = [];
+if (ALLOWED_SIZES) {
+  const dsIds = new Set(documented.filter(r => r.desc.startsWith('DS ICON')).map(r => r.id));
+  const idAlt = [...dsIds].map(i => i.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  if (idAlt) {
+    let raw = '';
+    for (const f of REF_SOURCES) raw += '\n' + readFileSync(join(ROOT, f), 'utf8');
+    // (a) <svg …><use href="#id"> — width/height may sit anywhere in the <svg> tag
+    const svgRe = new RegExp(`<svg\\b([^>]*)>\\s*<use[^>]*href="#(${idAlt})"`, 'g');
+    for (let m; (m = svgRe.exec(raw)); ) {
+      const tag = m[1];
+      const w = +(/\bwidth="(\d+)"/.exec(tag)?.[1] ?? NaN);
+      const h = +(/\bheight="(\d+)"/.exec(tag)?.[1] ?? NaN);
+      if (Number.isNaN(w) && Number.isNaN(h)) continue;   // sized by CSS, not policed here
+      if (!ALLOWED_SIZES.includes(w) || !ALLOWED_SIZES.includes(h))
+        sizeFails.push({ id: m[2], size: w === h ? `${w}` : `${w}×${h}`, form: '<svg><use>' });
+    }
+    // (b) href: '#id', size: N   (lookup tables)
+    const tblRe = new RegExp(`href:\\s*['"\`]#(${idAlt})['"\`]\\s*,\\s*size:\\s*(\\d+)`, 'g');
+    for (let m; (m = tblRe.exec(raw)); ) {
+      const n = +m[2];
+      if (!ALLOWED_SIZES.includes(n)) sizeFails.push({ id: m[1], size: `${n}`, form: 'size:' });
+    }
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── SVG symbol audit (Hard Rule #15) ───────────────────────────────\n');
 
@@ -401,6 +434,7 @@ const allFails = [
   ...decentralized.map(r => ({ ...r, kind: 'decentralized' })),
   ...unsnapshotted.map(r => ({ ...r, kind: 'unsnapshotted' })),
   ...deadIcons.map(r => ({ ...r, kind: 'dead' })),
+  ...sizeFails.map(r => ({ ...r, kind: 'size' })),
 ];
 
 if (allFails.length === 0) {
@@ -523,6 +557,14 @@ if (unsnapshotted.length) {
     console.log(`      still shows it as a verified DS icon.`);
     console.log(`      \u2192 Export it in Phase 1 so the snapshot carries name, viewBox and paths.\n`);
   }
+}
+
+if (sizeFails.length) {
+  console.log(`❌ OFF-GRID SIZE  ${sizeFails.length}  (DS icon rendered at a size not in ${JSON.stringify(ALLOWED_SIZES)})\n`);
+  for (const r of sizeFails) {
+    console.log(`   ❌ "#${r.id}"  rendered at ${r.size}px  (${r.form})`);
+  }
+  console.log(`      → The DS ships icons only at ${ALLOWED_SIZES.join('/')}px. Snap each render size to one of those.\n`);
 }
 
 if (deadIcons.length) {

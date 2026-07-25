@@ -1343,6 +1343,16 @@ Path comparison matches the command sequence exactly and the numbers within
 A genuine edit moves geometry by orders of magnitude more, and any change to the command
 sequence or token count still fails outright.
 
+### On-grid render sizes (`iconCheck.allowedSizes`)
+
+A DS ships icons at a fixed size set (e.g. `[12, 16, 56]`). Rendering a DS icon at any
+other `<svg width/height>` is off-grid — it upscales a small glyph blurry or crams a large
+one. When `iconCheck.allowedSizes` is set, `OFF-GRID SIZE` fails any DS-icon render size
+outside it, covering both static `<svg …><use href="#id">` (width/height anywhere in the
+tag) and lookup tables written `href: '#id', size: N`. Sizes set purely in CSS are not
+policed. Dynamically-built sizes (`'<svg width="' + n`) are invisible to this static scan —
+keep the builder's output on-grid by construction.
+
 ### Exact-name mode (`iconCheck.exactName`)
 
 By default the gate accepts any faithful suffix of a namespaced DS name — `Icon/var/color`
