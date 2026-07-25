@@ -318,8 +318,56 @@ const orphaned = Object.entries(ALLOWED)
   .filter(([id, val]) => isDsEntry(val) && !seenIds.has(id))
   .map(([id, val]) => ({ id, desc: entryDesc(val) }));
 
+// ── Dead icons — defined but never referenced ────────────────────────────────
+// A <symbol> nothing renders is dead weight that still has to be kept in sync with
+// the DS. The recurring shape this session: an icon left behind when its feature was
+// removed, or written into an element that is never shown. Nothing flagged them
+// because the audit checks that icons match the DS, not that anything uses them.
+//
+// Usage = the id appears, as a literal, anywhere in the reference corpus outside its
+// own <symbol> definition (covers <use href="#id">, lookup tables, and the JS strings
+// that build markup). Ids assembled by concatenation ('#icon-' + name) can't be seen
+// literally, so when that pattern is present the affected ids are reported as a note,
+// never failed — a false "dead" is worse than a missed one.
+const DEAD_EXEMPT = new Set(cfg.iconCheck?.deadIconExemptions ?? []);
+
+// Reference corpus: scanned HTML/JS sources, plus any extra globs the project lists
+// (e.g. plugin controller JS that renders icon markup).
+const REF_SOURCES = [
+  ...HTML_SOURCES,
+  ...(cfg.iconCheck?.usageSources ?? []).filter(f => existsSync(join(ROOT, f))),
+];
+let corpus = '';
+for (const f of REF_SOURCES) corpus += '\n' + readFileSync(join(ROOT, f), 'utf8');
+// Strip every <symbol …>…</symbol> so an icon's own definition never counts as use.
+const corpusNoDefs = corpus.replace(/<symbol\s[^>]*>[\s\S]*?<\/symbol>/g, ' ');
+
+// Does the project build icon ids dynamically? Only a concrete prefix counts —
+// '#icon-arrow-' + dir exempts the icon-arrow-* family. A bare '#' + variable is too
+// weak a signal to exempt anything: in practice its values come from a lookup whose
+// literal ids appear in source anyway, so they resolve as used without special-casing,
+// and treating bare-hash concat as "whole namespace dynamic" would mask every dead
+// icon (as it did for icon-scan/arrow-down/star).
+const dynamicPrefixes = [];
+for (const m of corpus.matchAll(/["'`]#(icon-[a-z0-9-]*-)["'`]?\s*\+/gi)) dynamicPrefixes.push(m[1]);
+for (const m of corpus.matchAll(/#(icon-[a-z0-9-]*-)\$\{/g))            dynamicPrefixes.push(m[1]);
+const couldBeDynamic = id => dynamicPrefixes.some(p => id.startsWith(p));
+
+const deadIcons = [], dynamicMaybe = [];
+for (const { id } of documented) {
+  if (DEAD_EXEMPT.has(id)) continue;
+  const re = new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (re.test(corpusNoDefs)) continue;              // referenced somewhere → alive
+  if (couldBeDynamic(id)) dynamicMaybe.push(id);    // maybe built at runtime → note only
+  else deadIcons.push({ id });
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── SVG symbol audit (Hard Rule #15) ───────────────────────────────\n');
+
+if (dynamicMaybe.length) {
+  console.log(`ℹ️  ${dynamicMaybe.length} icon(s) referenced only via dynamic id construction — not usage-checked: ${dynamicMaybe.map(i => '#' + i).join(', ')}\n`);
+}
 
 if (documented.length) {
   console.log(`✅ DOCUMENTED  ${documented.length}  (SVG symbols declared and verified in contract)`);
@@ -346,6 +394,7 @@ const allFails = [
   ...orphaned.map(r => ({ ...r, kind: 'orphaned' })),
   ...decentralized.map(r => ({ ...r, kind: 'decentralized' })),
   ...unsnapshotted.map(r => ({ ...r, kind: 'unsnapshotted' })),
+  ...deadIcons.map(r => ({ ...r, kind: 'dead' })),
 ];
 
 if (allFails.length === 0) {
@@ -467,6 +516,16 @@ if (unsnapshotted.length) {
     console.log(`      so its path and viewBox are compared against nothing while the report`);
     console.log(`      still shows it as a verified DS icon.`);
     console.log(`      \u2192 Export it in Phase 1 so the snapshot carries name, viewBox and paths.\n`);
+  }
+}
+
+if (deadIcons.length) {
+  console.log(`❌ DEAD ICON  ${deadIcons.length}  (symbol defined but never referenced)\n`);
+  for (const r of deadIcons) {
+    console.log(`   ❌ "#${r.id}"  is defined but no <use href="#${r.id}">, lookup, or JS string references it`);
+    console.log(`      → Delete the <symbol> and its ICON_SYMBOLS entry. If it is referenced in a way this`);
+    console.log(`        check can't see, add it to iconCheck.deadIconExemptions with a note, or list the`);
+    console.log(`        rendering file in iconCheck.usageSources.\n`);
   }
 }
 

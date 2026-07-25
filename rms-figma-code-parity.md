@@ -1301,6 +1301,26 @@ export const ICON_SYMBOLS = {
 };
 ```
 
+### Dead icons — defined but never rendered
+
+A `<symbol>` that nothing references still has to be kept in sync with the DS forever,
+and it hides the fact that a feature was removed. `DEAD ICON` fails any documented symbol
+whose id appears nowhere in the reference corpus (scanned HTML/JS, plus
+`iconCheck.usageSources`) outside its own definition — no `<use href>`, no lookup table,
+no JS string.
+
+Ids built by concatenation are handled: a concrete prefix like `'#icon-arrow-' + dir`
+exempts the `icon-arrow-*` family (reported as a note, never failed), because those
+literals never appear whole. A bare `'#' + variable` is deliberately *not* treated as
+dynamic — it would exempt everything and mask every dead icon; in practice its values
+come from a lookup whose literal ids are in source anyway. Genuine exceptions go in
+`iconCheck.deadIconExemptions` with a note.
+
+This is a cleanup routine, not just a guard: on its first run against a real project it
+found three symbols (`icon-scan`, `icon-arrow-down`, `icon-star`) that no built plugin
+rendered — including two that had just been faithfully wired to the DS. An icon audit
+that only checks fidelity to Figma will happily verify an icon nothing uses.
+
 ### Every DS entry must be in the snapshot
 
 A `DS ICON` entry that names a `nodeId` but has no `figma-icons.snapshot.json` entry is
