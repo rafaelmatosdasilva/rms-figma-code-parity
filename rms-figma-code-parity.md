@@ -1301,6 +1301,17 @@ export const ICON_SYMBOLS = {
 };
 ```
 
+### Icon-slot container sizes (`iconCheck.iconSlotSelectors`)
+
+The `<svg>` render size is only half the story: the div that wraps an icon has its own
+fixed `width`/`height`, and if that box is off-grid it constrains the icon no matter what
+the svg says — a 14px slot held a 16px glyph overflowing while 12px ones looked undersized,
+and the render-size scan never saw it because it's a CSS rule, not an svg attribute. List
+the slot selectors in `iconCheck.iconSlotSelectors`; `OFF-GRID SLOT` checks each rule's
+`width`/`height` against the same derived grid, and also fails a selector that matches no
+CSS rule (so the list can't silently rot). Same grid as the render-size check — no second
+source of truth.
+
 ### Dead icons — defined but never rendered
 
 A `<symbol>` that nothing references still has to be kept in sync with the DS forever,

@@ -414,6 +414,34 @@ if (ALLOWED_SIZES && ALLOWED_SIZES.length) {
   }
 }
 
+// ── Icon-slot container sizes on the DS grid ─────────────────────────────────
+// An icon slot (the div wrapping the <svg><use>) has its own fixed width/height. If that
+// box is off-grid, it constrains the icon regardless of the svg's own size — a 14px slot
+// held a 16px component overflowing and 12px vars looking undersized, and neither showed
+// up in the render-size scan because it's a CSS rule, not an <svg> attribute. Selectors
+// come from iconCheck.iconSlotSelectors; sizes are checked against the same derived grid.
+const SLOT_SELECTORS = cfg.iconCheck?.iconSlotSelectors ?? [];
+const slotFails = [];
+if (ALLOWED_SIZES && ALLOWED_SIZES.length && SLOT_SELECTORS.length) {
+  let css = '';
+  const cssFiles = [...HTML_SOURCES, cfg.paths?.themeCSS].filter(Boolean);
+  for (const f of cssFiles) if (existsSync(join(ROOT, f))) css += '\n' + readFileSync(join(ROOT, f), 'utf8');
+  for (const sel of SLOT_SELECTORS) {
+    const escd = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const blockRe = new RegExp(`(?:^|[,{}])\\s*${escd}\\s*\\{([^}]*)\\}`, 'g');
+    let seen = false, m;
+    while ((m = blockRe.exec(css))) {
+      seen = true;
+      for (const dim of ['width', 'height']) {
+        const dm = new RegExp(`\\b${dim}:\\s*(\\d+)px`).exec(m[1]);
+        if (dm && !ALLOWED_SIZES.includes(+dm[1]))
+          slotFails.push({ sel, dim, size: +dm[1] });
+      }
+    }
+    if (!seen) slotFails.push({ sel, missing: true });
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── SVG symbol audit (Hard Rule #15) ───────────────────────────────\n');
 
@@ -448,6 +476,7 @@ const allFails = [
   ...unsnapshotted.map(r => ({ ...r, kind: 'unsnapshotted' })),
   ...deadIcons.map(r => ({ ...r, kind: 'dead' })),
   ...sizeFails.map(r => ({ ...r, kind: 'size' })),
+  ...slotFails.map(r => ({ ...r, kind: 'slot' })),
 ];
 
 if (allFails.length === 0) {
@@ -578,6 +607,15 @@ if (sizeFails.length) {
     console.log(`   ❌ "#${r.id}"  rendered at ${r.size}px  (${r.form})`);
   }
   console.log(`      → The DS ships icons only at ${ALLOWED_SIZES.join('/')}px. Snap each render size to one of those.\n`);
+}
+
+if (slotFails.length) {
+  console.log(`❌ OFF-GRID SLOT  ${slotFails.length}  (icon-slot container size not in ${JSON.stringify(ALLOWED_SIZES)})\n`);
+  for (const r of slotFails) {
+    if (r.missing) console.log(`   ❌ "${r.sel}"  declared in iconCheck.iconSlotSelectors but no CSS rule found`);
+    else           console.log(`   ❌ "${r.sel}"  ${r.dim}: ${r.size}px  — off the icon grid`);
+  }
+  console.log(`      → Snap the slot's width/height to a DS icon size (${ALLOWED_SIZES.join('/')}px), or drop the fixed size.\n`);
 }
 
 if (deadIcons.length) {
