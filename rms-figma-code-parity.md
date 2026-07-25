@@ -1343,15 +1343,19 @@ Path comparison matches the command sequence exactly and the numbers within
 A genuine edit moves geometry by orders of magnitude more, and any change to the command
 sequence or token count still fails outright.
 
-### On-grid render sizes (`iconCheck.allowedSizes`)
+### On-grid render sizes (`iconCheck.enforceIconSizes`)
 
-A DS ships icons at a fixed size set (e.g. `[12, 16, 56]`). Rendering a DS icon at any
-other `<svg width/height>` is off-grid — it upscales a small glyph blurry or crams a large
-one. When `iconCheck.allowedSizes` is set, `OFF-GRID SIZE` fails any DS-icon render size
-outside it, covering both static `<svg …><use href="#id">` (width/height anywhere in the
-tag) and lookup tables written `href: '#id', size: N`. Sizes set purely in CSS are not
-policed. Dynamically-built sizes (`'<svg width="' + n`) are invisible to this static scan —
-keep the builder's output on-grid by construction.
+A DS ships icons at a fixed set of frame sizes; rendering one off-grid upscales or crams
+it. The allowed set is **not hardcoded** — it is derived as the union of every DS icon's
+own frame size, read from the snapshot viewBox ("0 0 16 16" → 16) captured during the
+Figma scan. Add a 24px icon to the DS and 24 is allowed automatically; nothing to edit.
+
+Enable with `iconCheck.enforceIconSizes: true`. `OFF-GRID SIZE` then fails any DS-icon
+render size outside the derived set, covering static `<svg …><use href="#id">`
+(width/height anywhere in the tag) and lookup tables `href: '#id', size: N`. CSS-only
+sizes are not policed; dynamically-built sizes (`'<svg width="' + n`) are invisible to the
+static scan — keep the builder on-grid by construction. `iconCheck.allowedSizes` can pin
+an explicit set, but derivation is the default and the point.
 
 ### Exact-name mode (`iconCheck.exactName`)
 

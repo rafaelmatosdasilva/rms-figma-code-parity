@@ -369,14 +369,27 @@ for (const { id } of documented) {
 }
 
 // ── Render size on the DS grid ───────────────────────────────────────────────
-// The DS ships icons at a fixed set of sizes (e.g. 12/16/56). A DS icon rendered at
-// any other size is off-grid — it either upscales a small glyph blurry or crams a
-// large one. Enforced only when iconCheck.allowedSizes is configured. Covers both
-// static `<svg width=N height=N><use href="#dsicon">` and lookup tables written as
-// `href: '#dsicon', size: N`.
-const ALLOWED_SIZES = cfg.iconCheck?.allowedSizes ?? null;
+// The DS ships icons at a fixed set of frame sizes. A DS icon rendered at any other
+// `<svg width/height>` is off-grid — it upscales a small glyph blurry or crams a large
+// one. The allowed set is NEVER hardcoded: it is the union of every DS icon's own frame
+// size, read straight from the snapshot viewBox ("0 0 16 16" → 16) captured during the
+// Figma scan. Add a 24px icon to the DS and 24 becomes allowed automatically. An
+// explicit iconCheck.allowedSizes may override, but derivation is the default.
+// Enabled by iconCheck.enforceIconSizes. Covers static `<svg …><use href="#dsicon">`
+// and lookup tables written `href: '#dsicon', size: N`.
+let ALLOWED_SIZES = cfg.iconCheck?.allowedSizes ?? null;
+if (!ALLOWED_SIZES && cfg.iconCheck?.enforceIconSizes) {
+  const set = new Set();
+  for (const v of Object.values(iconSnap)) {
+    if (!v?.viewBox) continue;
+    const [, , w, h] = String(v.viewBox).split(/\s+/).map(Number);
+    if (w > 0) set.add(w);
+    if (h > 0) set.add(h);
+  }
+  ALLOWED_SIZES = [...set].sort((a, b) => a - b);
+}
 const sizeFails = [];
-if (ALLOWED_SIZES) {
+if (ALLOWED_SIZES && ALLOWED_SIZES.length) {
   const dsIds = new Set(documented.filter(r => r.desc.startsWith('DS ICON')).map(r => r.id));
   const idAlt = [...dsIds].map(i => i.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
   if (idAlt) {
