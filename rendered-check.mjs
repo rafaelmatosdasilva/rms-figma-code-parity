@@ -287,8 +287,13 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     const { root } = await send('DOM.getDocument', {}, sessionId);
     for (const a of pseudoAsserts) {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: a.colorScheme ?? DEFAULT_SCHEME }] }, sessionId);
-      const label = `${plugin} ${a.selector}:${a.forcePseudo.join(':')} → ${a.prop}`;
-      const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: a.selector }, sessionId);
+      // forcePseudoOn lets the pseudo-class land on a DIFFERENT element than the one
+      // measured — e.g. hovering a row and asserting a button inside it keeps its own
+      // colour. Without it a parent-hover rule can silently outrank a child rule and
+      // no assertion can see it. Defaults to the measured selector.
+      const forceSel = a.forcePseudoOn || a.selector;
+      const label = `${plugin} ${forceSel}:${a.forcePseudo.join(':')} → ${a.selector} ${a.prop}`;
+      const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: forceSel }, sessionId);
       if (!nodeId) { FAIL.push(`${label}: selector not found (probe missing?)`); continue; }
       await send('CSS.forcePseudoState', { nodeId, forcedPseudoClasses: a.forcePseudo }, sessionId);
       const pr = await send('Runtime.evaluate', {
