@@ -1121,8 +1121,49 @@ async function bootstrapConfig() {
       : allSourceFiles();
     const scanArgs    = ['-n', '-E'];
 
+    // ── Block-comment resolution ───────────────────────────────────────────────
+    // grep hands back `file:line:text`, which carries no comment state. Re-scan the
+    // file once, tracking /* … */ across lines, and record which line numbers sit
+    // inside a comment. Language-agnostic: /* … */ means the same in CSS, JS and
+    // the <style>/<script> blocks of an HTML file, which is everything we scan.
+    // String literals containing "/*" are not special-cased — a false "inside
+    // comment" only ever suppresses a finding, and a hardcoded colour hidden in
+    // such a string is caught by the quoted-hex rule below.
+    const _commentLines = new Map();
+    function insideBlockComment(hitLine) {
+      const m = /^(.+?):(\d+):/.exec(hitLine);
+      if (!m) return false;
+      const file = m[1], lineNo = Number(m[2]);
+      let marks = _commentLines.get(file);
+      if (!marks) {
+        marks = new Set();
+        let src;
+        try { src = readFileSync(file, 'utf8'); } catch { _commentLines.set(file, marks); return false; }
+        let open = false;
+        src.split('\n').forEach((text, idx) => {
+          let i = 0, sawCode = false, startedOpen = open;
+          while (i < text.length) {
+            if (!open && text.startsWith('/*', i)) { open = true; i += 2; continue; }
+            if (open && text.startsWith('*/', i)) { open = false; i += 2; continue; }
+            if (!open && text[i].trim()) sawCode = true;
+            i += 1;
+          }
+          // Inside for the whole line, or a continuation that closes with no code after.
+          if ((startedOpen || open) && !sawCode) marks.add(idx + 1);
+        });
+        _commentLines.set(file, marks);
+      }
+      return marks.has(lineNo);
+    }
+
     // Shared legitimacy filter
     function isLegitimate(line) {
+      // A literal written INSIDE a /* … */ block is prose, not a declaration. The
+      // per-line strips below only see a comment that opens and closes on the same
+      // line, so an interior line of a multi-line comment ("#ffffff light, #171717
+      // dark") used to register as a hardcoded colour. Resolve the real comment
+      // state from the file itself.
+      if (insideBlockComment(line)) return true;
       const codePart = line.replace(/^[^:]+:\d+:\s*/, '');
       // CSS variable declarations (--name: value) — catches inline `:root { --var: #hex; }` too
       if (/--[a-zA-Z][\w-]*\s*:/.test(codePart)) return true;
@@ -1227,7 +1268,7 @@ async function bootstrapConfig() {
     // Document intentional shadows in ds-config.json → knownHardcodedExceptions.
     const shadowR    = sh('grep', ['-n', '-E', 'box-shadow\\s*:.*rgba\\s*\\(', ...allFiles]);
     const shadowHits = (shadowR.stdout || '').split('\n').filter(l => {
-      if (!l.trim()) return false;
+      if (!l.trim() || insideBlockComment(l)) return false;
       const code    = l.replace(/^[^:]+:\d+:\s*/, '');
       const stripped = code.replace(/\/\*[^*]*\*\//g, '');
       if (/--[a-zA-Z][\w-]*\s*:/.test(code)) return false;
