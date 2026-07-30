@@ -73,6 +73,32 @@ for (const r of rows.sort((a, b) => a.score - b.score)) {
   const d = r.dims;
   console.log(`   ${r.comp.padEnd(20)}   ${yn(d.contract)}       ${yn(d.selector)}       ${yn(d.rendered)}       ${yn(d.baseVars)}       ${yn(d.variants)}${r.unimpl ? '   (unimplemented)' : ''}`);
 }
+// ── Mode coverage of rendered assertions ──────────────────────────────────────
+// A RENDERED_ASSERTIONS entry pins ONE colorScheme, so it guards one mode only. When
+// the token behind it resolves differently per mode (an alias can point at a different
+// primitive in each), the unasserted mode is unguarded and drifts silently — a real
+// case: node/icon/hover was asserted in dark only, and its light value sat on a stale
+// alias for a week. Generic: the mode list comes from the snapshot, never hardcoded.
+let SNAP_MODES = [];
+try {
+  const snapVars = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8'));
+  SNAP_MODES = Object.keys(snapVars.color ?? {});
+} catch { /* no snapshot → skip this dimension */ }
+
+const assertKey = a => [a.plugin ?? '', a.selector ?? '', a.prop ?? '',
+  (a.forcePseudo ?? []).join('+'), a.forcePseudoOn ?? ''].join(' | ');
+const modesByAssert = new Map();
+for (const a of RENDERED) {
+  if (!a.colorScheme) continue; // mode-agnostic assertion — nothing to pair
+  if (!modesByAssert.has(assertKey(a))) modesByAssert.set(assertKey(a), new Set());
+  modesByAssert.get(assertKey(a)).add(a.colorScheme);
+}
+const modeBlind = SNAP_MODES.length > 1
+  ? [...modesByAssert.entries()]
+      .map(([k, seen]) => ({ k, missing: SNAP_MODES.filter(m => !seen.has(m)) }))
+      .filter(x => x.missing.length)
+  : [];
+
 const covered = rows.filter(r => !r.unimpl && r.score > 0).length;
 const total = rows.filter(r => !r.unimpl).length;
 console.log(`\n✅ MODELLED   ${covered}/${total} DS components have at least one check`);
@@ -81,13 +107,28 @@ console.log(`ℹ️  SINGLE-VARIANT ${noVariants.length}  (no per-variant captur
 if (noRendered.length) console.log(`     → ${noRendered.map(r => r.comp).join(', ')}`);
 if (noVariants.length) console.log(`     → ${noVariants.map(r => r.comp).join(', ')}`);
 
+const modeStrict = cfg.renderedModeStrict === true;
+if (SNAP_MODES.length > 1) {
+  if (modeBlind.length) {
+    console.log(`\n${modeStrict ? '❌' : 'ℹ️ '} MODE-BLIND ${modeBlind.length}  (rendered assertion covers some modes, not all of ${SNAP_MODES.join('/')})`);
+    for (const x of modeBlind) console.log(`     → ${x.k}   missing: ${x.missing.join(', ')}`);
+    console.log('   If the token behind it resolves per mode, the missing mode is unguarded — add the sibling assertion.');
+  } else {
+    console.log(`✅ MODE COVERAGE  every mode-pinned rendered assertion covers all ${SNAP_MODES.length} modes (${SNAP_MODES.join('/')})`);
+  }
+}
+
 if (gaps.length) {
   const strict = cfg.coverageStrict === true;
   console.log(`\n${strict ? '❌' : '⚠️ '} UNCHECKED (${gaps.length}) — DS component modelled by NOTHING (no contract, selector, or assertion):`);
   for (const r of gaps) console.log(`  ${strict ? '❌' : '⚠️ '} ${r.comp}`);
   console.log('   Add a CONTRACT entry (+ selector/assertions), or list it in ds-config knownUnimplementedComponents.');
   console.log('');
-  process.exit(strict ? 1 : 0);
+  process.exit(strict || (modeStrict && modeBlind.length) ? 1 : 0);
+}
+if (modeStrict && modeBlind.length) {
+  console.log('\n❌ Mode-blind rendered assertions above (ds-config renderedModeStrict:true).\n');
+  process.exit(1);
 }
 console.log('\nEvery DS component is modelled by at least one check. ✓\n');
 process.exit(0);

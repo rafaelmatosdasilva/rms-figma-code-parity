@@ -1,13 +1,49 @@
-# /rms-figma-code-parity — Figma DS ↔ Code Parity
+# /rms-figma-code-parity — Figma-to-Code Parity and Implementation Assurance
 
-**What it does:** Audits whether the CSS codebase faithfully implements the DS Figma file.
-Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (18 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
+**What it does:** A Figma-to-code parity *and implementation assurance* skill. Parity is the
+core — token values, alias chains, structure, bound tokens — but the audit is deliberately
+broader than that, and the name undersells it. Across 18 gates it also covers:
+
+| Dimension | What it assures |
+|---|---|
+| **Parity** | Token values, alias chains per mode, structure, bound tokens, icons, states |
+| **Freshness** | Snapshots and build output are current, so you never audit a stale picture of the DS |
+| **CSS hygiene** | No unused variables, no hardcoded values, no parent rules overriding child components |
+| **Accessibility** | WCAG contrast per mode, computed from the resolved token hexes |
+| **Audit coverage** | Which DS components and states the audit actually reached — so gaps are visible, not silent |
+
+Outputs an HTML report with a gate summary banner and a per-dimension token table
+(Color / Sizing / Typography). Fix anything red before declaring parity.
 
 > **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
 
 Full parity workflow in one command. Phase 1 (live Figma refresh) always runs before Phase 2 (code audit) — you can never accidentally audit against a stale snapshot.
 
 > **Phase 1 is never skipped** — unless you ran `/rms-figma-code-parity` earlier in this same conversation and the snapshot was updated then. A same-day snapshot from a *prior session or context window* is not safe — renames and additions since that run would be invisible without a fresh query. If you are resuming after a context summary, compaction, or a new conversation, always re-query.
+
+> **A single-mode read is never enough.** When someone hands you a Figma link and asks
+> for the value behind it, `get_variable_defs` (and any Dev Mode read) resolves only the
+> mode the frame is *currently* displaying. Acting on that one value silently guesses
+> every other mode. Always resolve the variable across **all** modes of its collection,
+> following the alias chain in each one — the same variable can alias different
+> primitives per mode. Read it with the Plugin API rather than a Dev Mode value:
+>
+> ```js
+> const v    = await figma.variables.getVariableByIdAsync(varId);
+> const coll = await figma.variables.getVariableCollectionByIdAsync(v.variableCollectionId);
+> for (const m of coll.modes) { /* v.valuesByMode[m.modeId] — recurse on VARIABLE_ALIAS */ }
+> ```
+>
+> Real case (2026-07-30): `node/icon/hover/color` read from a dark frame returned
+> `#b8b8b8`. It actually aliases `node/icon/selected/color`, which resolves to
+> Neutral 300 in dark but Neutral **400** (`#595959`) in light. Patching from the
+> single dark read would have left light on the old, unrelated value.
+
+> **Every mode-varying token needs a rendered assertion per mode.** A `RENDERED_ASSERTIONS`
+> entry pins one `colorScheme`. If the token resolves differently per mode and only one mode
+> is asserted, the other is unguarded and will drift undetected — which is exactly how the
+> light-mode hover colour above went stale. When you add an assertion for a colour that
+> varies by mode, add the sibling assertion for the other mode in the same commit.
 
 ## Usage
 
@@ -775,7 +811,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [15] | `transition-check.mjs` | **Animation** | **Transition contract** — Every selector in `TRANSITION_CONTRACT` (structure-contract.mjs) must have a CSS `transition:` declaration containing each documented part (duration, easing, property). Catches animation drift before Figma EASING/TIMING tokens exist. |
 | [16] | `rendered-check.mjs` | **Rendered output** | **Rendered parity** — Launches headless Chrome via CDP (no npm deps; Node ≥ 22 built-in WebSocket), loads each built plugin `ui.html` from `file://`, and asserts `getComputedStyle` values from `RENDERED_ASSERTIONS` (structure-contract.mjs). Catches what static text analysis cannot: cascade/specificity surprises (a later rule silently overriding the DS base), wrong `var()` resolution, and stale builds. Components that only exist at runtime (toasts, list rows) are instantiated via the entry's `probe` HTML, injected into an absolutely-positioned hidden host so the app shell's flex layout cannot stretch/shrink them. Entries with `forcePseudo: ['hover']` (or `focus`/`active`) are measured under `CSS.forcePseudoState` — the only way to verify the geometry of pseudo-class rules (e.g. "content must not shift on hover": assert the `:hover` gap equals the default). Add `forcePseudoOn: '<selector>'` to put the pseudo-class on a DIFFERENT element than the one measured — hover a row, assert a button inside it. Without it a parent rule such as `.row:hover svg` (0,2,1) can silently outrank a child rule like `.action-btn svg` (0,1,1) and no assertion can see it, because forcing `:hover` on the measured element never matches the parent selector. **Color scheme is emulated per assertion** via `Emulation.setEmulatedMedia`, so a check on a mode-varying token (e.g. a dark-mode text color) can never silently flip with the host OS appearance — headless Chrome otherwise follows the machine's `prefers-color-scheme` (light on CI, often dark on a dev Mac). Each entry runs under its own `colorScheme: 'dark' \| 'light'`, defaulting to `ds-config.json → rendered.colorScheme` (else `'light'`, the `:root` base). Geometry assertions are mode-independent and need no `colorScheme`. **Two DS-sourced expected-value shortcuts** keep hand-typed pixels from going stale: `iconSizeOf: '<component>'` sources an icon width/height check from that component's `iconSize` in the structure snapshot (catches icon-size drift like the 12px→16px search icon), and `frameGeom: { node, path? }` sources a container padding/gap/height check from the named node's box in the **frame-geometry snapshot** (`figma-frame-geometry.snapshot.json` — per-container `h`/`pad[t,r,b,l]`/`gap` captured from the DS layout frame). `frameGeom` catches context/spacing bugs the component-only checks miss — e.g. the 7px `.mode-toggle-row` bottom padding that stacked on the first divider — and tracks the live frame automatically. Skips gracefully when Chrome is absent (`CHROME_PATH` to point at a binary). |
 | [17] | `contrast-check.mjs` | **Accessibility** | **Contrast parity** — Computes the WCAG 2.1 contrast ratio of every foreground token against its background, per mode, straight from the resolved hexes in `figma-vars.snapshot.json` (no rendering, deterministic). Pairs come from `parity-map.mjs → CONTRAST_PAIRS` (curated — these **hard-fail** below threshold) plus **auto-derived** pairs by naming convention (a component's `label`/`text`/`iconText`/`title`/`value`/`icon` tokens vs its `background` token — **advisory** by default, since alpha-tint backgrounds and cross-type components can mispair; set `ds-config.json → contrastStrict:true` to enforce). A pair whose fg and bg resolve to the same hex is an alpha/tint background it can't assess from the solid snapshot value → skipped. Threshold `ds-config.json → contrastMinRatio` (default 4.5); exempt a pair via `knownContrastExceptions: ["fg\|bg"]`. Surfaces low-contrast disabled/placeholder states and genuinely illegible pairs a token-only audit is blind to. |
-| [18] | `coverage-check.mjs` | **Meta** | **Coverage meta-gate** — The one gate that checks the audit *itself*. Cross-references every DS component in the structure snapshot against the checks the contract declares (CONTRACT entry, CSS selector map, RENDERED_ASSERTIONS/FRAME_GEOMETRY_MAP/CROSS_PLUGIN, CSS_BASE_RULE_VARS, per-variant capture) and prints a coverage matrix. Surfaces the blind spots the other 17 gates can't: a DS component modelled by **nothing** (advisory, or fail under `coverageStrict:true` — unless in `knownUnimplementedComponents`), components with **no rendered/browser assertion** (geometry only checked statically), and **single-variant** components with no per-variant capture (sibling states invisible). This is how a newly-added DS component or state stops being silently unchecked. |
+| [18] | `coverage-check.mjs` | **Meta** | **Coverage meta-gate** — The one gate that checks the audit *itself*. Cross-references every DS component in the structure snapshot against the checks the contract declares (CONTRACT entry, CSS selector map, RENDERED_ASSERTIONS/FRAME_GEOMETRY_MAP/CROSS_PLUGIN, CSS_BASE_RULE_VARS, per-variant capture) and prints a coverage matrix. Surfaces the blind spots the other 17 gates can't: a DS component modelled by **nothing** (advisory, or fail under `coverageStrict:true` — unless in `knownUnimplementedComponents`), components with **no rendered/browser assertion** (geometry only checked statically), and **single-variant** components with no per-variant capture (sibling states invisible). This is how a newly-added DS component or state stops being silently unchecked. Also reports **MODE-BLIND** assertions — a `RENDERED_ASSERTIONS` entry pinned to one `colorScheme` when the snapshot has several modes, so the unasserted mode has no browser-level guard. Mode list comes from the snapshot (never hardcoded light/dark); advisory by default, fail under `renderedModeStrict:true`. Note the token *value* in every mode is already covered by gate [3] — this dimension is about which CSS rule wins, so it matters where a cascade/specificity conflict could resolve differently per mode. |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
