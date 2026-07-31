@@ -677,7 +677,19 @@ For every changed or new token:
 
 ## Phase 1 — Step 5: Update snapshots
 
-Write fresh live data to both files. **Always stamp `_updated` to today's date on both snapshots**, even when no changes were detected — this is what tells Gate [1] the data is fresh. Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query — it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
+Write fresh live data to both files. **Always stamp `_updated` to today's date on both snapshots**, even when no changes were detected — this is what tells Gate [1] the data is fresh.
+
+> **Also stamp `_figmaVersion` on the vars snapshot.** Fetch it with
+> `GET /v1/files/{key}?depth=1` (the `version` field) and write it alongside `_updated`.
+> Age answers "when did we capture?"; only the version answers "has the file changed
+> since?" — and that is the question that matters. A snapshot taken an hour ago reads
+> "✓ updated today" while the designer has since added tokens, and every downstream gate
+> then verifies the code against a DS that no longer exists, passing green the whole way.
+> Gate [1] compares the two and fails when they diverge. The endpoint works on **every
+> plan**, including those where `variables/local` returns 403, so this is the one reliable
+> DS-drift signal available without Enterprise. Stamp it only after confirming the capture
+> matches the file — stamping a version you did not actually capture asserts a freshness
+> that is not there. Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query — it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
 
 **Projects with upstream source cross-check (`figmaSourceKey` set):** After querying the primary file (`figmaFileKey`), also query the upstream DS source file (`figmaSourceKey`) using the same variable script. Write the source results to `figma-vars.snapshot.json` under a `"source"` key alongside the normal `"color"` key. The source data does not replace the primary data — both are written:
 ```json

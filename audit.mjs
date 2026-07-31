@@ -59,6 +59,35 @@ let _figmaApiLimited = false;
 // the plan or scope gating an endpoint. Kept separate so the audit prescribes the right
 // fix: a stale snapshot blamed on the plan hides a token that just needs reissuing.
 let _figmaAuthFailed = false;
+// The DS file's `version` id at the moment this run started, from
+// GET /v1/files/:key?depth=1 — the ONE Figma endpoint that reports "has this file
+// changed" on every plan, including the ones where variables/local 403s. Compared
+// against the `_figmaVersion` recorded in the vars snapshot, it answers the question
+// snapshot AGE cannot: a snapshot captured an hour ago is stale the moment the
+// designer touches the file, and until now nothing noticed until someone re-ran
+// Phase 1 by hand. null when unfetched (no token / network error).
+let _figmaFileVersion = null;
+let _figmaFileModified = null;
+
+async function fetchFigmaFileVersion(fileKey, token) {
+  if (!token || !fileKey) return;
+  try {
+    // depth=1 keeps the payload to the document node — no page or child traversal.
+    const res = await fetch(`https://api.figma.com/v1/files/${fileKey}?depth=1`, {
+      headers: { 'X-Figma-Token': token },
+    });
+    if (!res.ok) {
+      if (res.status === 403 || res.status === 401) {
+        const body = await res.text();
+        if (/invalid token|token.*expired|expired.*token/i.test(body)) _figmaAuthFailed = true;
+      }
+      return;
+    }
+    const j = await res.json();
+    _figmaFileVersion  = j.version ?? null;
+    _figmaFileModified = j.lastModified ?? null;
+  } catch { /* offline — leave null, gate reports "could not check" */ }
+}
 
 // ── ANSI helpers (available before config loads) ──────────────────────────────
 const isTTY = process.stdout.isTTY;
@@ -975,6 +1004,30 @@ async function bootstrapConfig() {
       warn = true;
     }
 
+    // ── Has the DS file changed since the snapshot was captured? ──────────────
+    // Age alone cannot answer this. A snapshot taken an hour ago reads "✓ updated
+    // today" while the designer has since added tokens or moved a primitive, and
+    // every downstream gate then verifies the code against a DS that no longer
+    // exists — passing green the whole way. Comparing the file's `version` id is
+    // exact (it is monotonic per edit) and works on every plan.
+    if (_figmaFileVersion) {
+      let snapVersion = null;
+      try { snapVersion = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'))._figmaVersion ?? null; } catch { /* handled below */ }
+      if (!snapVersion) {
+        lines.push(C.yellow('⚠️  vars snapshot has no _figmaVersion stamp — cannot tell whether the DS'));
+        lines.push(C.yellow('    changed since it was captured. Re-run Phase 1 to record one.'));
+      } else if (String(snapVersion) !== String(_figmaFileVersion)) {
+        lines.push(C.red('❌ The DS file has been edited since this snapshot was captured'));
+        lines.push(C.red(`   snapshot version ${snapVersion} → file is now ${_figmaFileVersion}`));
+        if (_figmaFileModified) lines.push(C.red(`   last modified ${_figmaFileModified}`));
+        lines.push(C.red('   Token values, structure and icons below are being checked against a'));
+        lines.push(C.red('   stale picture of the DS. Run /rms-figma-code-parity (Phase 1) to refresh.'));
+        warn = true;
+      } else {
+        lines.push('DS file unchanged since capture ✓ (version matches)');
+      }
+    }
+
     let varsPlanLimited = false;
     if (vars === null) {
       lines.push(C.red(`${SNAP_VARS} missing — run /rms-parity Phase 1`)); warn = true;
@@ -1335,6 +1388,7 @@ async function bootstrapConfig() {
     // These refreshers write independent files and only share the memoized buildVarIdMap
     // fetch — run them concurrently instead of serially (they were ~7s of a 12s audit).
     await Promise.all([
+      fetchFigmaFileVersion(figmaFileKey, figmaToken),
       refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
       refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
       refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
