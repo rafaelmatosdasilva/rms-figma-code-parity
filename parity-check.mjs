@@ -304,6 +304,36 @@ function parseMediaQueries(cssText) {
 // ── Load snapshot ─────────────────────────────────────────────────────────────
 const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 
+// ── Primitive ramp: derived from the snapshot, not restated in parity-map ────
+// The ramp used to be hand-maintained in parity-map.mjs (NEUTRAL_LIGHT / NEUTRAL_DARK)
+// while the same numbers also lived in the token CSS and in Figma — three copies that
+// drift independently. When a DS primitive moves, updating the CSS alone leaves the
+// resolver comparing against the old hex and every token aliasing that primitive fails,
+// pointing at the tokens rather than at the stale map.
+//
+// When Phase 1 captures a `primitives` section, it wins: the snapshot is the closest
+// thing to Figma we have. parity-map stays as the fallback for projects that have not
+// refreshed yet, so this is backwards-compatible.
+//
+// Keys are the trailing number of the primitive's name ("primitives/Neutral 800" → 800)
+// to match NEUTRAL_VAR_RE's capture group. Override the extraction with
+// `figma.primitiveKeyRe` in ds-config.json if a DS names its ramp differently.
+if (snap.primitives && typeof snap.primitives === 'object') {
+  const keyRe = cfg.figma?.primitiveKeyRe ? new RegExp(cfg.figma.primitiveKeyRe) : /(\d+)\s*$/;
+  MODES.forEach((m, i) => {
+    const src = snap.primitives[m.snapshotKey] ?? snap.primitives[m.name];
+    if (!src || typeof src !== 'object') return;
+    const derived = {};
+    for (const [name, hex] of Object.entries(src)) {
+      const k = String(name).match(keyRe)?.[1];
+      if (k && hex) derived[k] = hex;
+    }
+    // Merge over the parity-map values rather than replacing wholesale, so a primitive
+    // the capture missed still resolves from the map instead of silently vanishing.
+    if (Object.keys(derived).length) neutralMaps[i] = { ...neutralMaps[i], ...derived };
+  });
+}
+
 // Source snapshot (DS library file) — populated by Phase 1 when figmaSourceKey is set.
 // When present, value mismatches are cross-checked: if source matches CSS, the consumer
 // file just has a pending library update → PENDING_FIGMA_SYNC (not a gate failure).

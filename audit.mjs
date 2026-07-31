@@ -793,6 +793,12 @@ async function bootstrapConfig() {
   const PLUGINS     = cfg.paths?.plugins            ?? [];
   const KNOWN_UNUSED     = new Set(cfg.knownUnusedVars         ?? []);
   const KNOWN_FS_EXCEPTS = cfg.knownHardcodedExceptions        ?? cfg.knownFontSizeExceptions ?? [];
+  // Indices of exceptions that suppressed at least one real line this run. Everything
+  // else is either stale (the code it excused is gone) or was never needed.
+  const _exceptHits = new Set();
+  // findIndex → record + report truthiness in one step, so every call site that
+  // consults the exception list also contributes to the staleness audit.
+  const markExceptHit = (i) => { if (i !== -1) { _exceptHits.add(i); return true; } return false; };
 
   // Directories and files to never scan for var() references or hardcoded values.
   const SCAN_EXCLUDE_DIRS = new Set([
@@ -1240,12 +1246,14 @@ async function bootstrapConfig() {
       if (/\bstyle\s*=\s*["'`{]/.test(codePart)) return true;
       // JS innerHTML / insertAdjacentHTML / template literal building HTML
       if (/innerHTML\s*[+=]|insertAdjacentHTML/.test(codePart)) return true;
-      // Known exceptions from ds-config.json
-      if (KNOWN_FS_EXCEPTS.some(e => {
+      // Known exceptions from ds-config.json. Record which ones actually fire so the
+      // list itself can be audited — an exemption nobody can see is how drift hides.
+      const hitIdx = KNOWN_FS_EXCEPTS.findIndex(e => {
         if (typeof e === 'string') return line.includes(e);
         return (!e.file || line.includes(e.file)) &&
                (!e.pattern || new RegExp(e.pattern).test(stripped));
-      })) return true;
+      });
+      if (hitIdx !== -1) { _exceptHits.add(hitIdx); return true; }
       return false;
     }
 
@@ -1296,11 +1304,11 @@ async function bootstrapConfig() {
       if (/^\s*(\/\/|\*)/.test(code)) return false;
       if (/[`"'][^`"']*:\s*[^`"']*[`"']/.test(code)) return false;
       if (/innerHTML\s*[+=]|insertAdjacentHTML/.test(code)) return false;
-      if (KNOWN_FS_EXCEPTS.some(e => {
+      if (markExceptHit(KNOWN_FS_EXCEPTS.findIndex(e => {
         if (typeof e === 'string') return l.includes(e);
         const stripped = code.replace(/\/\*[^*]*\*\//g, '');
         return (!e.file || l.includes(e.file)) && (!e.pattern || new RegExp(e.pattern).test(stripped));
-      })) return false;
+      }))) return false;
       return true;
     });
 
@@ -1316,10 +1324,10 @@ async function bootstrapConfig() {
       const code = l.replace(/^[^:]+:\d+:\s*/, '');
       const hasHardcodedColor = /%23[0-9a-fA-F]{3,8}|#[0-9a-fA-F]{3,8}\b|stroke=(%27|')(?!currentColor)[^%27'#]+|fill=(%27|')(?!currentColor|none)[^%27'#]+/.test(code);
       if (!hasHardcodedColor) return false;
-      if (KNOWN_FS_EXCEPTS.some(e => {
+      if (markExceptHit(KNOWN_FS_EXCEPTS.findIndex(e => {
         if (typeof e === 'string') return l.includes(e);
         return (!e.file || l.includes(e.file)) && (!e.pattern || new RegExp(e.pattern).test(code));
-      })) return false;
+      }))) return false;
       return true;
     });
 
@@ -1335,20 +1343,52 @@ async function bootstrapConfig() {
       if (/^\s*(\/\/|\*)/.test(code)) return false;
       if (/[`"'][^`"']*:\s*[^`"']*[`"']/.test(code)) return false;
       if (/innerHTML\s*[+=]|insertAdjacentHTML/.test(code)) return false;
-      if (KNOWN_FS_EXCEPTS.some(e => {
+      if (markExceptHit(KNOWN_FS_EXCEPTS.findIndex(e => {
         if (typeof e === 'string') return l.includes(e);
         return (!e.file || l.includes(e.file)) && (!e.pattern || new RegExp(e.pattern).test(stripped));
-      })) return false;
+      }))) return false;
       return true;
     });
 
     const hits = [...new Set([...hexHits, ...numHits, ...mixHits, ...vwHits, ...svgUriHits, ...shadowHits])];
+
+    // ── Audit the exception list itself ──────────────────────────────────────
+    // Every other exemption list in this engine is validated; this one was only ever
+    // read. Two ways it rots, both of which hide real drift indefinitely:
+    //
+    //   STALE — the code it excused is gone, so the entry now silently pre-approves
+    //           whatever similar value appears next.
+    //   BROAD — a bare substring like "gap: 6px" exempts that value in EVERY file,
+    //           including the design-system base. Scoping it to a file or anchoring
+    //           the pattern keeps the exemption to the case a human actually reviewed.
+    const exceptNotes = [];
+    const stale = KNOWN_FS_EXCEPTS
+      .map((e, i) => [e, i])
+      .filter(([, i]) => !_exceptHits.has(i))
+      .map(([e]) => (typeof e === 'string' ? e : (e.pattern ?? e.file ?? JSON.stringify(e))));
+    // A bare string with no file scope and no anchor matches anywhere in the repo.
+    const broad = KNOWN_FS_EXCEPTS.filter(e => typeof e === 'string' && /^[a-z-]+\s*:/.test(e));
+
+    if (stale.length) {
+      exceptNotes.push(C.yellow(`⚠️  ${stale.length} unused exception(s) in knownHardcodedExceptions — the code they excused is gone:`));
+      for (const e of stale.slice(0, 40)) exceptNotes.push(C.dim(`     ${e}`));
+      if (stale.length > 40) exceptNotes.push(C.dim(`     …and ${stale.length - 40} more`));
+      exceptNotes.push(C.dim('     Remove them, or they pre-approve the next value that looks like this.'));
+    }
+    if (broad.length) {
+      exceptNotes.push(C.yellow(`⚠️  ${broad.length} exception(s) apply repo-wide (bare substring, no file scope):`));
+      for (const e of broad.slice(0, 8)) exceptNotes.push(C.dim(`     "${e}"`));
+      if (broad.length > 8) exceptNotes.push(C.dim(`     …and ${broad.length - 8} more`));
+      exceptNotes.push(C.dim('     Prefer { file, pattern } so the exemption covers only the reviewed case.'));
+    }
+
     const pass  = hits.length === 0;
     return {
       pass,
-      lines: pass
-        ? ['✅ Clean']
-        : [`❌ ${hits.length} hit(s):`, ...hits.slice(0, 20).map(l => '  ' + l)],
+      lines: [
+        ...(pass ? ['✅ Clean'] : [`❌ ${hits.length} hit(s):`, ...hits.slice(0, 20).map(l => '  ' + l)]),
+        ...exceptNotes,
+      ],
     };
   }
 

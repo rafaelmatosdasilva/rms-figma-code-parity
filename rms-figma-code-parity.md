@@ -869,6 +869,28 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
+**The exception list is audited too.** `knownHardcodedExceptions` used to be write-only —
+every other exemption map in this engine is validated, that one was merely read. Two ways it
+rots, both of which hide real drift indefinitely:
+
+- **STALE** — the code an entry excused is gone, so it now silently pre-approves whatever
+  similar value appears next. On its first run this found 14 dead entries in a mature project,
+  several masking spacing that did not match the DS scale at all.
+- **BROAD** — a bare substring like `"gap: 6px"` exempts that value in *every* file, including
+  the design-system base. Prefer `{ file, pattern }` so an exemption covers only the case a
+  human actually reviewed.
+
+Both are advisory warnings printed under Gate [8]. To verify a stale entry is really dead,
+delete it and re-run: if nothing resurfaces, it was.
+
+**Primitive ramp comes from the snapshot.** When Phase 1 captures a `primitives` section,
+`parity-check.mjs` derives the neutral ramp from it and `NEUTRAL_LIGHT`/`NEUTRAL_DARK` in
+`parity-map.mjs` become a fallback. Before this, the same numbers lived in the token CSS, in
+parity-map and in Figma — three copies that drift apart, and moving a DS primitive would fail
+every token aliasing it while pointing at the tokens rather than the stale map. Keys are the
+trailing number of the primitive name (`primitives/Neutral 800` → `800`); override the
+extraction with `figma.primitiveKeyRe` in `ds-config.json`.
+
 **Curated contrast pairs:** add unambiguous solid-on-solid pairs to `parity-map.mjs` as
 `export const CONTRAST_PAIRS = [{ fg: 'semantic/content/primary/color', bg: 'semantic/background/color', min: 4.5, note: '…' }]`.
 These hard-fail below `min`, so only add pairs whose background is a solid (non-alpha) fill.
