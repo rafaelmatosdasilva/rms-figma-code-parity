@@ -284,6 +284,21 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
       return true;
     })()`;
     await send('Runtime.evaluate', { expression: injectExpr, returnByValue: true }, sessionId);
+    // Kill transitions before measuring. getComputedStyle reports the CURRENT
+    // animated value, so a property with a transition (e.g. `border-color 0.15s`)
+    // still reads as the RESTING colour the instant a pseudo-state is forced —
+    // the assertion then fails against a value the user never sees at rest. This
+    // is timing, not cascade, so waiting would only trade one flake for another.
+    await send('Runtime.evaluate', {
+      expression: `(() => {
+        const s = document.createElement('style');
+        s.id = '__parity_no_transitions__';
+        s.textContent = '*,*::before,*::after{transition:none !important;animation:none !important}';
+        document.head.appendChild(s);
+        return true;
+      })()`,
+      returnByValue: true,
+    }, sessionId);
     const { root } = await send('DOM.getDocument', {}, sessionId);
     for (const a of pseudoAsserts) {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: a.colorScheme ?? DEFAULT_SCHEME }] }, sessionId);
