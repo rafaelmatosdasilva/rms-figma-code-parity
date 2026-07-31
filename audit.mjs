@@ -30,7 +30,7 @@
 import readline                                                  from 'readline';
 import { spawn, spawnSync }                                      from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync,
-         writeFileSync, copyFileSync }                           from 'fs';
+         writeFileSync, copyFileSync, mkdirSync }                from 'fs';
 import { join, dirname, resolve, relative }                     from 'path';
 import { fileURLToPath }                                        from 'url';
 import { buildReport }                                          from './report-html.mjs';
@@ -792,6 +792,27 @@ async function bootstrapConfig() {
   const PLUGIN_CSS  = cfg.paths?.pluginCSS          ?? [];
   const PLUGINS     = cfg.paths?.plugins            ?? [];
   const KNOWN_UNUSED     = new Set(cfg.knownUnusedVars         ?? []);
+
+// ── Full findings on disk ─────────────────────────────────────────────────────
+// Every list here is capped so the terminal stays readable, but a capped list is a
+// half-truth: "80 hit(s)" that prints 20 sends you off to write your own scanner to
+// see the rest — which is exactly what happened. Write the complete list next to the
+// summary and name the file, so nothing is ever only-partly reported.
+const _overflowDir = join(ROOT, '.parity-out');
+const _overflowFiles = [];
+function reportFull(label, items, shown) {
+  if (items.length <= shown) return [];
+  try {
+    if (!existsSync(_overflowDir)) mkdirSync(_overflowDir, { recursive: true });
+    const file = join(_overflowDir, `${label.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.txt`);
+    writeFileSync(file, items.join('\n') + '\n');
+    _overflowFiles.push(file);
+    return [C.dim(`     … ${items.length - shown} more — full list: ${relative(ROOT, file)}`)];
+  } catch {
+    return [C.dim(`     … ${items.length - shown} more (could not write the full list)`)];
+  }
+}
+
   const KNOWN_FS_EXCEPTS = cfg.knownHardcodedExceptions        ?? cfg.knownFontSizeExceptions ?? [];
   // Indices of exceptions that suppressed at least one real line this run. Everything
   // else is either stale (the code it excused is gone) or was never needed.
@@ -1159,7 +1180,64 @@ async function bootstrapConfig() {
     )];
     const undeclared = usedNoFallback.filter(v => !declaredAll.has(v));
 
-    const pass   = unused.length === 0 && undeclared.length === 0;
+    // ── Dead CSS classes ──────────────────────────────────────────────────────
+    // Unused VARIABLES were checked; unused RULES were not. A whole class can be a
+    // stale copy of a DS component — styled, maintained, resized during refactors —
+    // while nothing on screen has ever carried it. Found exactly that in a real
+    // project only because someone asked "where does this render?".
+    //
+    // Method: a class is "used" if its name appears anywhere OUTSIDE a stylesheet.
+    // Stripping the CSS from every file leaves markup, JS strings and template
+    // literals — which is where a class legitimately gets applied. A definition that
+    // never shows up there is styling nothing.
+    //
+    // Advisory by default: class names are routinely composed at runtime
+    // ('tier-' + level), and a heuristic that blocks a build on a guess gets muted.
+    // Set ds-config.json → deadCssStrict:true to enforce.
+    const deadCssExempt = new Set(cfg.knownDeadCssExceptions ?? []);
+    const defined = new Map();  // class -> first file it is defined in
+    const usageParts = [];
+    for (const f of allSourceFiles()) {
+      let text;
+      try { text = readFileSync(f, 'utf8'); } catch { continue; }
+      const rel = relative(ROOT, f);
+      // The stylesheet portion: a .css file entirely, or each <style> block in HTML.
+      const cssChunks = /\.(css|scss)$/.test(f)
+        ? [text]
+        : [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]);
+      for (const chunk of cssChunks) {
+        // Selector position only: a class token that precedes a combinator, comma or
+        // the opening brace of a rule. Avoids matching '.foo' inside a value or URL.
+        for (const m of chunk.matchAll(/(^|[\s,>+~(])\.(-?[_a-zA-Z][\w-]*)(?=[\s,>+~){:.\[]|$)/gm)) {
+          if (!defined.has(m[2])) defined.set(m[2], rel);
+        }
+      }
+      // Everything that is not a stylesheet is potential usage.
+      let rest = text;
+      for (const chunk of cssChunks) rest = rest.replace(chunk, ' ');
+      usageParts.push(rest);
+    }
+    const usageCorpus = usageParts.join('\n');
+    // Class names composed at runtime legitimise the whole family. The prefix is
+    // rarely a standalone literal — it is the tail of a longer string, as in
+    //   '<div class="buttonList issue-item t-' + iss.type + '">'
+    // so take the trailing name-ish fragment of any string spliced with + or ${…}.
+    const dynamicPrefixes = [
+      // '…prefix-' +   and   "…prefix-" +
+      ...[...usageCorpus.matchAll(/['"]([^'"]*?)['"]\s*\+/g)].map(m => m[1]),
+      // `…prefix-${expr}`
+      ...[...usageCorpus.matchAll(/([^`$}]*)\$\{/g)].map(m => m[1]),
+    ]
+      .map(frag => frag.match(/([a-zA-Z][\w-]*-)$/)?.[1])
+      .filter(Boolean);
+    const deadClasses = [...defined.entries()]
+      .filter(([c]) => !deadCssExempt.has(c))
+      .filter(([c]) => !new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(usageCorpus))
+      .filter(([c]) => !dynamicPrefixes.some(p => c.startsWith(p)))
+      .map(([c, f]) => `.${c}  (${f})`);
+
+    const deadStrict = cfg.deadCssStrict === true;
+    const pass   = unused.length === 0 && undeclared.length === 0 && (!deadStrict || deadClasses.length === 0);
     const scanned = allSourceFiles().length;
     const lines = [];
     lines.push(unused.length === 0
@@ -1168,6 +1246,15 @@ async function bootstrapConfig() {
     lines.push(undeclared.length === 0
       ? `✅ 0 undeclared vars  (every fallback-less var() resolves to a declaration)`
       : `❌ ${undeclared.length} undeclared var() usage(s) — renamed/deleted vars still referenced: ${undeclared.join(', ')}`);
+    if (deadClasses.length === 0) {
+      lines.push('✅ 0 dead CSS classes  (every rule matches something in the markup)');
+    } else {
+      lines.push((deadStrict ? C.red : C.yellow)(
+        `${deadStrict ? '❌' : '⚠️ '} ${deadClasses.length} CSS class(es) defined but never applied:`));
+      for (const d of deadClasses.slice(0, 15)) lines.push(C.dim(`     ${d}`));
+      lines.push(...reportFull('dead-css-classes', deadClasses, 15));
+      lines.push(C.dim('     Delete them, or add to ds-config.json → knownDeadCssExceptions.'));
+    }
     return { pass, lines };
   }
 
@@ -1371,22 +1458,91 @@ async function bootstrapConfig() {
 
     if (stale.length) {
       exceptNotes.push(C.yellow(`⚠️  ${stale.length} unused exception(s) in knownHardcodedExceptions — the code they excused is gone:`));
-      for (const e of stale.slice(0, 40)) exceptNotes.push(C.dim(`     ${e}`));
-      if (stale.length > 40) exceptNotes.push(C.dim(`     …and ${stale.length - 40} more`));
+      for (const e of stale.slice(0, 20)) exceptNotes.push(C.dim(`     ${e}`));
+      exceptNotes.push(...reportFull('stale-exceptions', stale, 20));
       exceptNotes.push(C.dim('     Remove them, or they pre-approve the next value that looks like this.'));
     }
     if (broad.length) {
       exceptNotes.push(C.yellow(`⚠️  ${broad.length} exception(s) apply repo-wide (bare substring, no file scope):`));
       for (const e of broad.slice(0, 8)) exceptNotes.push(C.dim(`     "${e}"`));
-      if (broad.length > 8) exceptNotes.push(C.dim(`     …and ${broad.length - 8} more`));
+      exceptNotes.push(...reportFull('broad-exceptions', broad, 8));
       exceptNotes.push(C.dim('     Prefer { file, pattern } so the exemption covers only the reviewed case.'));
+    }
+
+    // ── Suggest the nearest DS step for each off-scale spacing literal ───────
+    // The gate already knows the literal and the DS scale; making the reader look up
+    // every number by hand turns a mechanical fix into an investigation. Suggest only —
+    // spacing is a design decision, and "nearest" is not always "right".
+    let dsSteps = [];
+    try {
+      const snapSizing = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8')).sizing ?? {};
+      const byValue = new Map();
+      for (const [name, raw] of Object.entries(snapSizing)) {
+        const n = parseFloat(raw);
+        if (!Number.isFinite(n) || n === 0) continue;
+        if (!byValue.has(n)) byValue.set(n, []);
+        byValue.get(n).push(name);
+      }
+      dsSteps = [...byValue.entries()].sort((a, b) => a[0] - b[0]);
+    } catch { /* no snapshot — skip suggestions entirely */ }
+
+    const SPACING_PROP = /(?:^|[;{\s])(padding|margin|gap|row-gap|column-gap|inset|border-radius)[a-z-]*\s*:/i;
+    // Only offer tokens from the SCALE families. A component dimension that happens to
+    // be 6px is not a spacing step, and suggesting it invites a padding bound to an
+    // unrelated component's height. Families are matched by token-name prefix, so a DS
+    // that names them differently simply gets no suggestion rather than a wrong one.
+    const FAMILY = { radius: /^radii\//i, space: /^(gap|padding)\//i };
+    function stepsFor(isRadius) {
+      const re = isRadius ? FAMILY.radius : FAMILY.space;
+      return dsSteps
+        .map(([v, names]) => [v, names.filter(n => re.test(n))])
+        .filter(([, names]) => names.length);
+    }
+    function suggest(line) {
+      if (!dsSteps.length || !SPACING_PROP.test(line)) return null;
+      // Per DECLARATION, not per line: a single-line rule can hold both a padding and
+      // a border-radius, and choosing one family for the whole line offers radius
+      // steps for the padding — a confidently wrong answer.
+      const parts = [];
+      const seen = new Set();
+      for (const m of line.matchAll(/([a-z-]+)\s*:\s*([^;{}]+)/gi)) {
+        const prop = m[1].toLowerCase(), value = m[2];
+        if (!/^(padding|margin|gap|row-gap|column-gap|inset|border-radius)/.test(prop)) continue;
+        const steps = stepsFor(prop === 'border-radius');
+        if (!steps.length) continue;
+        for (const nm of value.matchAll(/(?<![\w.-])(\d+(?:\.\d+)?)px/g)) {
+          const n = parseFloat(nm[1]);
+          if (n === 0 || steps.some(([v]) => v === n)) continue;
+          const key = prop + n;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const below = [...steps].reverse().find(([v]) => v < n);
+          const above = steps.find(([v]) => v > n);
+          // Name the token from the matching family where one exists: suggesting
+          // gap/s for a padding is technically the right number under the wrong name.
+          const famRe = prop.startsWith('padding') ? /^padding\//i
+                      : prop.startsWith('gap') || prop.endsWith('gap') ? /^gap\//i
+                      : null;
+          const pick = names => (famRe && names.find(x => famRe.test(x))) || names[0];
+          const opts = [below, above].filter(Boolean).map(([v, names]) => `${v}px (${pick(names)})`);
+          if (opts.length) parts.push(`${prop} ${n}px → ${opts.join(' or ')}`);
+        }
+      }
+      return parts.length ? C.dim(`       ↳ ${parts.join(';  ')}`) : null;
+    }
+
+    const hitLines = [];
+    for (const h of hits.slice(0, 20)) {
+      hitLines.push('  ' + h);
+      const s2 = suggest(h);
+      if (s2) hitLines.push(s2);
     }
 
     const pass  = hits.length === 0;
     return {
       pass,
       lines: [
-        ...(pass ? ['✅ Clean'] : [`❌ ${hits.length} hit(s):`, ...hits.slice(0, 20).map(l => '  ' + l)]),
+        ...(pass ? ['✅ Clean'] : [`❌ ${hits.length} hit(s):`, ...hitLines, ...reportFull('hardcoded-values', hits, 20)]),
         ...exceptNotes,
       ],
     };

@@ -869,6 +869,37 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
+**Dead CSS classes (Gate [8], advisory).** Unused *variables* were checked; unused *rules*
+were not. A whole class can be a stale copy of a DS component — styled, maintained, even
+resized during refactors — while nothing on screen has ever carried it. A class counts as
+used if its name appears anywhere outside a stylesheet: stripping the CSS from every scanned
+file leaves markup, JS strings and template literals, which is where a class legitimately gets
+applied.
+
+Runtime-composed names are handled. The prefix is rarely a standalone literal — it is the tail
+of a longer string, as in `'<div class="buttonList issue-item t-' + iss.type`, so the trailing
+name fragment of any string spliced with `+` or `${…}` exempts that whole family. Advisory by
+default because this is a heuristic and a check that blocks a build on a guess gets muted; set
+`ds-config.json → deadCssStrict: true` to enforce, or list individual survivors in
+`knownDeadCssExceptions`.
+
+**Nearest-step suggestions for off-scale spacing.** When the hygiene scan flags a spacing
+literal, it prints the DS steps either side of it — `padding 7px → 4px (padding/xs) or 8px
+(padding/s)` — sourced from the snapshot's sizing tokens. Suggestions only: spacing is a design
+decision and "nearest" is not always "right", so two candidates are offered rather than one.
+Restricted to the `gap/`, `padding/` and `radii/` families and matched per declaration, so a
+component dimension that happens to be 6px is never offered as a spacing step, and a single-line
+rule holding both a padding and a border-radius gets the right family for each.
+
+**Truncated lists are written in full.** Every capped list also writes the complete set to
+`.parity-out/<name>.txt` and names the file. A capped list is a half-truth: "80 hit(s)" that
+prints 20 sends you off to write your own scanner — which is exactly what happened before this
+existed. Add `.parity-out` to the project's `.gitignore`.
+
+**Gate [3k] covers plugin CSS.** The stroke-width check used to give up when a component's
+selector was not in the theme file, which quietly exempted every component a plugin styles
+itself — precisely where a hardcoded border width survives unnoticed.
+
 **The exception list is audited too.** `knownHardcodedExceptions` used to be write-only —
 every other exemption map in this engine is validated, that one was merely read. Two ways it
 rots, both of which hide real drift indefinitely:

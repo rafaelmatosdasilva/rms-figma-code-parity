@@ -618,10 +618,17 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(compo
     const snapComp = components[comp];
     if (!snapComp?.strokeOnDefault) continue;
 
-    const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
+    // Look in the base first, then across the plugin files. A component whose rule
+    // lives in a plugin is still a DS component and still owes its border width to a
+    // token — skipping it was a blind spot, not a safety measure.
+    let mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
+    let foundIn   = 'theme';
+    if (!mainBlock && allCss) {
+      mainBlock = findBlock(allCss, selCfg.main, allIndex);
+      foundIn   = 'plugin CSS';
+    }
     if (!mainBlock) {
-      // Selector lives in a plugin-specific file — skip rather than false-fail.
-      STROKE_WIDTH_PASS.push(`${comp}/stroke-width (selector not in theme.css)`);
+      STROKE_WIDTH_PASS.push(`${comp}/stroke-width (selector not found in any configured CSS)`);
       continue;
     }
 
@@ -639,7 +646,7 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(compo
     // hardcoded width. Anything starting with `var(` is a token binding.
     const firstToken = borderVal.trim().split(/\s+/)[0];
     if (/^\d+(?:\.\d+)?px$/.test(firstToken)) {
-      STROKE_WIDTH_FAIL.push(`${comp}: border-width is hardcoded "${firstToken}" — use var(--thickness) or a sizing token var`);
+      STROKE_WIDTH_FAIL.push(`${comp}: border-width is hardcoded "${firstToken}" in ${foundIn} — use var(--thickness) or a sizing token var`);
     } else {
       STROKE_WIDTH_PASS.push(`${comp}/stroke-width`);
     }
