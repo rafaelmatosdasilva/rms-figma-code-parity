@@ -232,6 +232,13 @@ function aliasHopToVar(hop) {
   let v = ICON_TEXT_ALIAS ? hop.replace(/\/iconText\//g, '/text/') : hop;
   if (DROP_SEGMENTS.includes('color'))   v = v.replace(/\/color$/, '');
   if (DROP_SEGMENTS.includes('default')) v = v.replace(/\/default$/, '');
+  // An intermediate hop is a token in its own right, so it obeys the same EXPLICIT
+  // name overrides as a top-level one. Deriving it by convention alone makes every
+  // token that chains through a renamed semantic var report ALIAS FAIL — the CSS is
+  // correct, the expectation is not. Check both the dropped-suffix form and the raw
+  // hop, since EXPLICIT keys may be written either way.
+  if (Object.prototype.hasOwnProperty.call(EXPLICIT, v))   return EXPLICIT[v];
+  if (Object.prototype.hasOwnProperty.call(EXPLICIT, hop)) return EXPLICIT[hop];
   return '--' + v.replace(/\//g, '-');
 }
 
