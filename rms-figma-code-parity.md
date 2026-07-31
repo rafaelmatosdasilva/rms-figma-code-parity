@@ -216,12 +216,28 @@ return {
 
 ---
 
+> **Capture fidelity — a lossy capture is worse than a stale one.** A stale snapshot is
+> at least *correct as of its stamp*; a lossy one is wrong the moment it is written, and
+> it reports itself as fresh. Two losses are easy to introduce and hard to notice, because
+> both produce a plausible-looking value:
+>
+> - **Alpha.** A `toHex` over `{r,g,b}` alone flattens every translucent token to its
+>   opaque hex. An overlay/scrim token captured as `#f2f2f2` instead of `#f2f2f2e0` then
+>   "matches" opaque CSS and the gate confirms a divergence as correct. Always emit the
+>   alpha byte when `color.a < 1`.
+> - **Float noise.** Figma stores sizing as 32-bit floats, so a 1.2px stroke reads back as
+>   `1.2000000476837158`. Unrounded, every run diffs against the previous one and the
+>   snapshot churns forever. Round to 3dp.
+>
+> If a refreshed snapshot diffs against the stored one, rule out the capture before
+> concluding the DS changed — compare a token you know is untouched.
+
 ### Step 1b-single — Full query (≤190 tokens)
 
 Use this when `colorCount ≤ 190`. Returns everything in one call.
 
 ```js
-function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
+function toHex(c){const h=[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');const a=c.a===undefined?1:c.a;return '#'+h+(a>=1?'':Math.round(a*255).toString(16).padStart(2,'0'));}
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
@@ -242,7 +258,7 @@ for(const m of MODES){
   }
 }
 const sizingOut={};
-if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
+if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?(Math.round(val*1000)/1000)+'px':String(val??'');}}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
@@ -260,7 +276,7 @@ Run `Math.ceil(colorCount / 190)` calls, substituting `BATCH_START` and `BATCH_E
 ```js
 // Batch query — substitute BATCH_START and BATCH_END each iteration
 // Example: batch 0 → (0, 190), batch 1 → (190, 380), etc.
-function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
+function toHex(c){const h=[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');const a=c.a===undefined?1:c.a;return '#'+h+(a>=1?'':Math.round(a*255).toString(16).padStart(2,'0'));}
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
@@ -317,7 +333,7 @@ const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
 const SIZING_COLLECTION='Sizing'; // or null — fill from ds-config.json
 const sizingOut={};
-if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?val+'px':String(val??'');}}}
+if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?(Math.round(val*1000)/1000)+'px':String(val??'');}}}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
@@ -503,6 +519,17 @@ const nodes = {};
 // De-dupe identical entries per name; keep _path only where a name repeats.
 ```
 
+> **`paddingVar.tb` collapses two sides that can genuinely differ.** The field records one
+> variable for top *and* bottom, taken from `paddingTop` first. A component padded
+> `padding/l` on top and `padding/xs` on the bottom therefore snapshots as if both were
+> `padding/l`, and the contract copies that fiction. The height still reconciles (it is
+> measured, not derived), so nothing fails — the asymmetry is simply invisible.
+>
+> Until the field is split, spell both sides out in the CSS shorthand and add a contract
+> comment naming the real top/bottom tokens, so the next person reading `tb` does not
+> "correct" the CSS to match it. When a component's `h` cannot be explained by
+> `tb + content + tb`, suspect this first.
+
 Capture `childFramePadding` by walking direct FRAME children of the State=Default variant:
 
 ```js
@@ -585,7 +612,7 @@ Run this after Step 1b. Effect styles (drop shadow, inner shadow, blur) are capt
 // Effect styles capture — always safe (effect list is always small)
 const effectStyles=await figma.getLocalEffectStylesAsync();
 const effects={};
-function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
+function toHex(c){const h=[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');const a=c.a===undefined?1:c.a;return '#'+h+(a>=1?'':Math.round(a*255).toString(16).padStart(2,'0'));}
 for(const es of effectStyles){
   const efx=es.effects.filter(e=>e.visible!==false);
   if(!efx.length)continue;
@@ -769,12 +796,27 @@ function collectBound(node, out) {
 // Frame node IDs from ds-config.json frames[]
 const FRAME_IDS = ['308-10425', '42-210732', '106-36547']; // update per project
 const tokenSet = new Set();
-for (const id of FRAME_IDS) {
-  const node = await figma.getNodeByIdAsync(id);
-  if (node) collectBound(node, tokenSet);
+const missing = [];
+for (const raw of FRAME_IDS) {
+  // ds-config stores URL-style ids ("308-10425"); the Plugin API only resolves the
+  // colon form ("308:10425") and returns null — not an error — for the dashed one.
+  // Without this replace the walk finds nothing and writes an EMPTY snapshot that
+  // still looks fresh, which is exactly the failure Gate [1]'s empty-check exists for.
+  const node = await figma.getNodeByIdAsync(raw.replace(/-/g, ':'));
+  if (node) collectBound(node, tokenSet); else missing.push(raw);
 }
+// Fail loudly rather than writing an empty file that reads as a successful capture.
+if (missing.length) throw new Error('frames not found: ' + missing.join(', '));
+if (tokenSet.size === 0) throw new Error('walk found 0 bound tokens — refusing to write an empty snapshot');
 return { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
 ```
+
+> **Node ids: dashed vs colon.** Every `getNodeByIdAsync` call in these captures must
+> normalise `-` to `:`. Figma URLs and `ds-config.json` use the dashed form; the Plugin
+> API accepts only the colon form and answers `null` for anything else. Because `null`
+> is indistinguishable from "node deleted", a dashed id degrades silently into an empty
+> capture instead of an error. Normalise at the call site and throw when a configured
+> frame does not resolve.
 
 Save the returned JSON as `bound-tokens.json` at project root and commit it. The `_updated` stamp lets Gate [1] track the file's freshness — a stamp ≤24h old keeps Gate [4] fully green on any plan. Run this whenever DS frames change significantly.
 
@@ -1082,7 +1124,7 @@ function getVar(node, prop) {
   const ref = Array.isArray(bv) ? bv[0] : bv;
   return idToVar[ref?.id]?.name || null;
 }
-function toHex(c) { return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join(''); }
+function toHex(c) { const h=[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join(''); const a=c.a===undefined?1:c.a; return '#'+h+(a>=1?'':Math.round(a*255).toString(16).padStart(2,'0')); }
 function describe(n, depth=0) {
   const o = { id: n.id, name: n.name, type: n.type, w: Math.round(n.width), h: Math.round(n.height) };
   try { if (n.layoutMode) o.layoutMode = n.layoutMode; } catch{}
