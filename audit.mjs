@@ -1360,7 +1360,7 @@ async function bootstrapConfig() {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1376,6 +1376,7 @@ async function bootstrapConfig() {
     runScriptAsync('component-selector-check.mjs'),
     runScriptAsync('icon-slot-check.mjs'),
     runScriptAsync('component-slot-check.mjs'),
+    runScriptAsync('form-control-check.mjs'),
     runScriptAsync('html-structure-check.mjs'),
     runScriptAsync('transition-check.mjs'),
     runScriptAsync('icon-freshness-check.mjs'),
@@ -1417,8 +1418,8 @@ async function bootstrapConfig() {
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('HTML structure snapshot  (ids · component classes · icon refs)',
     parseGeneric(rHtmlStructure, /✅|❌/));
-  addGate('Slot parity  (icon slots · component slots)',
-    combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/)));
+  addGate('Slot parity  (icon slots · component slots · form controls)',
+    combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
   addGate('Icon contract  (symbol docs · path data · live Figma freshness)',
     combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/)));
 
