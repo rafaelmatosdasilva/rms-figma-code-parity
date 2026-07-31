@@ -786,6 +786,13 @@ async function bootstrapConfig() {
     ...(cfg.scanExcludeFilenames ?? []),
   ]);
 
+  // scanExcludeFilenames entries may use `*` wildcards (e.g. "preview-*.html"), so a
+  // project can exclude a family of generated files without listing each one. Exact
+  // names still match as before.
+  const SCAN_EXCLUDE_GLOBS = [...SCAN_EXCLUDE_FILENAMES]
+    .filter(n => n.includes('*'))
+    .map(n => new RegExp('^' + n.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'));
+
   function collectSourceFiles(dir = ROOT, results = []) {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return results; }
@@ -794,7 +801,7 @@ async function bootstrapConfig() {
       if (e.isDirectory()) {
         collectSourceFiles(join(dir, e.name), results);
       } else if (e.isFile()) {
-        if (SCAN_EXCLUDE_FILENAMES.has(e.name)) continue;
+        if (SCAN_EXCLUDE_FILENAMES.has(e.name) || SCAN_EXCLUDE_GLOBS.some(r => r.test(e.name))) continue;
         const dot = e.name.lastIndexOf('.');
         if (dot !== -1 && SCAN_EXTENSIONS.has(e.name.slice(dot))) {
           results.push(join(dir, e.name));
