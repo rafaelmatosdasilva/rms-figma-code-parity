@@ -1197,6 +1197,25 @@ function reportFull(label, items, shown) {
     const deadCssExempt = new Set(cfg.knownDeadCssExceptions ?? []);
     const defined = new Map();  // class -> first file it is defined in
     const usageParts = [];
+
+    // USAGE is searched far more widely than the hardcoded-value scan. scanExcludeDirs
+    // legitimately skips demo pages and drafts — full of literals nobody wants flagged —
+    // but a class those pages apply is emphatically not dead. The contract file counts
+    // too: a rendered assertion targeting a selector means deleting the rule breaks the
+    // audit. Narrowing usage to the scan set produces confident false positives; on the
+    // project this was built for it wrongly condemned classes used by a style guide.
+    const usageOnlyFiles = [];
+    (function walkAll(dir) {
+      let entries;
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (/^(node_modules|\.git|dist|build|coverage)$/.test(e.name) || e.name.startsWith('.parity-')) continue;
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walkAll(full);
+        else if (/\.(html|js|mjs|cjs|jsx|ts|tsx|vue|svelte|json|md)$/.test(e.name)) usageOnlyFiles.push(full);
+      }
+    })(ROOT);
+
     for (const f of allSourceFiles()) {
       let text;
       try { text = readFileSync(f, 'utf8'); } catch { continue; }
@@ -1206,13 +1225,30 @@ function reportFull(label, items, shown) {
         ? [text]
         : [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]);
       for (const chunk of cssChunks) {
+        // Strip comments first: a class named in prose ("replaces the former .infoBadge")
+        // is documentation, not a rule, and counting it as a definition reports it dead
+        // forever. Only real selectors should register as defined.
+        const noComments = chunk.replace(/\/\*[\s\S]*?\*\//g, ' ');
         // Selector position only: a class token that precedes a combinator, comma or
         // the opening brace of a rule. Avoids matching '.foo' inside a value or URL.
-        for (const m of chunk.matchAll(/(^|[\s,>+~(])\.(-?[_a-zA-Z][\w-]*)(?=[\s,>+~){:.\[]|$)/gm)) {
+        for (const m of noComments.matchAll(/(^|[\s,>+~(])\.(-?[_a-zA-Z][\w-]*)(?=[\s,>+~){:.\[]|$)/gm)) {
           if (!defined.has(m[2])) defined.set(m[2], rel);
         }
       }
       // Everything that is not a stylesheet is potential usage.
+      let rest = text;
+      for (const chunk of cssChunks) rest = rest.replace(chunk, ' ');
+      usageParts.push(rest);
+    }
+    // Second pass over the wider set, for files the scan set excludes.
+    const alreadyScanned = new Set(allSourceFiles());
+    for (const f of usageOnlyFiles) {
+      if (alreadyScanned.has(f)) continue;
+      let text;
+      try { text = readFileSync(f, 'utf8'); } catch { continue; }
+      const cssChunks = /\.(css|scss)$/.test(f)
+        ? [text]
+        : [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]);
       let rest = text;
       for (const chunk of cssChunks) rest = rest.replace(chunk, ' ');
       usageParts.push(rest);
