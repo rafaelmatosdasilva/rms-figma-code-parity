@@ -1658,6 +1658,30 @@ code uses the retired token, noted" and hidden a DS state change instead of
 surfacing it. Auto-fix mechanical value divergences only (`--fix`); everything else
 must fail until a person decides.
 
+**Worked example (2026-08-02) — the guard that had to stay a rendered assertion.**
+A `.buttonList svg { color: buttonList/iconPrimary }` broad rule silently dimmed a
+`.tooltipButton` nested inside a buttonList row: both rules are `.class tag` at equal
+specificity, and `.buttonList svg` came later in source, so it won for the badge's SVG
+— rendering it N500 `#5e5e5e` instead of the tooltipButton's own N300 `#bfbfbf`. Gate
+[9] had already passed `.buttonList svg` as "ISOLATED"; documenting a broad rule does
+not prove every sub-component nested under it survives.
+
+The tempting engine fix — a static check that flags any broad `.P tag` that could
+shadow a sub-component `.S tag` — was built and **thrown away**: it cannot know which
+components actually nest. It reported 18–156 findings, almost all impossible nestings
+(`.tooltipButton svg` "shadowing" `.empty-state svg`), because CSS alone has no DOM
+model, and here the real nesting is created in a JS template string the static HTML
+scan never sees either. A gate that noisy gets muted, which is worse than no gate.
+
+The correct guard is a **rendered assertion** measuring the sub-component's computed
+colour *in its parent context* (`selector: '.buttonList .tooltipButton svg'`, with a
+`probe` that nests them), one per mode. It uses the real cascade, so it is exact and
+silent until it actually regresses — verified by reverting the CSS fix and watching
+only those two assertions fail. The lesson: when the risk is a cascade/nesting
+outcome, the guard belongs in Gate [16] (rendered), not in a static selector scan.
+The isolation-fix override rules themselves are then documented in `ALLOWED_BROAD_RULES`
+as `ISOLATION FIX`.
+
 ---
 
 ## End-of-Run Confidence Summary
