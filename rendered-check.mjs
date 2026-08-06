@@ -112,6 +112,37 @@ try {
   });
 } catch { /* frame-geometry snapshot optional */ }
 
+// DS-sourced text styles: an assertion with `textStyle: '<name>'` verifies the element's
+// COMPUTED font-size, font-weight and line-height all match that named DS text style from
+// the typography snapshot. This catches the class of bug a static CSS scan can't see — an
+// element whose own rule looks fine but that inherits a heavier weight or a different size
+// from a container (a partial/hardcoded text style), and any drift from the DS type scale.
+// One entry expands into up to three per-property assertions; a style with no line-height
+// (e.g. an auto-leading tier) simply omits that one. Opt-in, so it never false-positives.
+try {
+  const varsPath = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
+  const typo = JSON.parse(readFileSync(join(ROOT, varsPath), 'utf8')).typography ?? {};
+  const expanded = [];
+  for (const a of ASSERTIONS) {
+    if (!a.textStyle) { expanded.push(a); continue; }
+    const style = typo[a.textStyle];
+    if (!style) {
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: textStyle '${a.textStyle}' not in the typography snapshot — assertion skipped`);
+      continue;
+    }
+    const byProp = { fontSize: style.size, fontWeight: style.weight, lineHeight: style.lh };
+    for (const [prop, expected] of Object.entries(byProp)) {
+      if (expected == null) continue;   // tier without this facet (e.g. auto line-height)
+      expanded.push({
+        plugin: a.plugin, selector: a.selector, probe: a.probe, colorScheme: a.colorScheme,
+        prop, expected: String(expected),
+        note: `${a.note ?? 'DS text style ' + a.textStyle} (${prop})`,
+      });
+    }
+  }
+  ASSERTIONS = expanded;
+} catch { /* vars snapshot optional — textStyle assertions simply won't resolve */ }
+
 if (!ASSERTIONS.length) {
   console.log('⏭  [16] rendered parity skipped — RENDERED_ASSERTIONS empty in structure-contract.mjs');
   process.exit(0);
