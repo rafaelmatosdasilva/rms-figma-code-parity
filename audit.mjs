@@ -89,6 +89,48 @@ async function fetchFigmaFileVersion(fileKey, token) {
   } catch { /* offline — leave null, gate reports "could not check" */ }
 }
 
+// Live DS component inventory — the set of COMPONENT_SET names plus standalone COMPONENT
+// names (variants of a set are excluded; the set name represents them). Both /component_sets
+// and /components work on every plan, unlike variables/local. Gate [1] diffs this against the
+// structure snapshot's component keys so a component ADDED to the DS (a new `loader`) or
+// REMOVED can never stay invisible just because the snapshot was captured with a partial
+// component list — the failure mode where a whole new component slips through unaudited.
+// null when unfetched (no token / network error): the check then reports "could not verify".
+let _liveComponentNames = null;
+
+async function fetchComponentInventory(fileKey, token, pageId) {
+  if (!token || !fileKey) return;
+  try {
+    const h = { 'X-Figma-Token': token };
+    // Preferred: enumerate the DS components PAGE node's top-level children via /nodes —
+    // works on every plan and, unlike /component_sets, sees UNPUBLISHED components (a DS
+    // file usually isn't published to a library, so /component_sets returns empty there).
+    if (pageId) {
+      const nRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(pageId)}&depth=1`, { headers: h });
+      if (nRes.ok) {
+        const { nodes } = await nRes.json();
+        const doc = nodes?.[pageId]?.document ?? Object.values(nodes ?? {})[0]?.document;
+        const kids = doc?.children ?? [];
+        const names = new Set(kids.filter(c => c.type === 'COMPONENT_SET' || c.type === 'COMPONENT').map(c => c.name));
+        if (names.size) { _liveComponentNames = names; return; }
+      }
+    }
+    // Fallback: published library endpoints (only populated for published DS files).
+    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
+    if (!csRes.ok) return;
+    const { meta: csMeta } = await csRes.json();
+    const names = new Set(Object.values(csMeta?.component_sets ?? {}).map(s => s.name));
+    const compRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, { headers: h });
+    if (compRes.ok) {
+      const { meta: compMeta } = await compRes.json();
+      for (const c of Object.values(compMeta?.components ?? {})) {
+        if (!c.containing_frame?.containingStateGroup) names.add(c.name);
+      }
+    }
+    if (names.size) _liveComponentNames = names;
+  } catch { /* offline — leave null */ }
+}
+
 // ── ANSI helpers (available before config loads) ──────────────────────────────
 const isTTY = process.stdout.isTTY;
 const C = {
@@ -1055,6 +1097,36 @@ function reportFull(label, items, shown) {
       }
     }
 
+    // ── Component inventory: has the DS gained or lost a whole component? ─────────
+    // A version bump says "something changed" but not what — and a new component whose
+    // tokens the code hasn't seen is the change most likely to slip through, because a
+    // token-value diff can't see a component the snapshot never listed. Diff the LIVE set
+    // of DS component names against the structure snapshot's keys so an added/removed
+    // component always surfaces by name. Genuinely-unused DS components go in
+    // knownUnimplementedComponents (the same exemption Gate [18] uses).
+    if (_liveComponentNames) {
+      let snapComps = [];
+      try { snapComps = Object.keys(JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8')).components ?? {}); } catch { /* struct snapshot missing — flagged elsewhere */ }
+      const known = new Set(cfg.knownUnimplementedComponents ?? []);
+      const snapSet = new Set(snapComps);
+      const added   = [...(_liveComponentNames)].filter(n => !snapSet.has(n) && !known.has(n)).sort();
+      const removed = snapComps.filter(n => !_liveComponentNames.has(n) && !known.has(n)).sort();
+      if (added.length) {
+        lines.push(C.red(`❌ ${added.length} DS component(s) not in the structure snapshot: ${added.join(', ')}`));
+        lines.push(C.red('   A new/unmodelled component is unaudited. Run Phase 1 Step 1c to capture it,'));
+        lines.push(C.red('   or list a genuinely-unused one in ds-config.json → knownUnimplementedComponents.'));
+        warn = true;
+      }
+      if (removed.length) {
+        lines.push(C.red(`❌ ${removed.length} snapshot component(s) no longer in the DS: ${removed.join(', ')}`));
+        lines.push(C.red('   Remove them from the snapshot/contract (or restore in Figma).'));
+        warn = true;
+      }
+      if (!added.length && !removed.length) lines.push(`DS component inventory matches the snapshot ✓ (${_liveComponentNames.size} components)`);
+    } else if (_figmaFileVersion) {
+      lines.push(C.dim('component inventory not checked (component list not fetched)'));
+    }
+
     let varsPlanLimited = false;
     if (vars === null) {
       lines.push(C.red(`${SNAP_VARS} missing — run /rms-parity Phase 1`)); warn = true;
@@ -1621,6 +1693,7 @@ function reportFull(label, items, shown) {
     // fetch — run them concurrently instead of serially (they were ~7s of a 12s audit).
     await Promise.all([
       fetchFigmaFileVersion(figmaFileKey, figmaToken),
+      fetchComponentInventory(figmaFileKey, figmaToken, cfg.figma?.componentsPage ?? cfg.componentsPage),
       refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
       refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
       refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
