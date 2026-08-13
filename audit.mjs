@@ -1374,12 +1374,19 @@ function reportFull(label, items, shown) {
     // as { file, pattern } objects or plain substring strings.
     // gate6ExcludeDirs allows scoping Gate [6] to DS package files only, excluding app consumers.
     const g6ExcludeDirs = new Set(cfg.gate6ExcludeDirs ?? []);
-    const scanTargets = g6ExcludeDirs.size > 0
-      ? allSourceFiles().filter(f => {
-          const rel = relative(ROOT, f).replace(/\\/g, '/');
-          return !rel.split('/').some(seg => g6ExcludeDirs.has(seg));
-        })
-      : allSourceFiles();
+    // Test files legitimately contain literal values that are NOT CSS — hex-like strings in
+    // assertions, colour codes in fixtures, regex patterns (e.g. /PANTONE#20485#20C/). They are
+    // never UI source, so the hardcoded-value scan skips them; otherwise a test string reads as
+    // a stray hardcoded colour. (This filter is scoped to the hardcoded scan, not var-usage.)
+    const isTestFile = (rel) =>
+      /(?:^|\/)(?:test|tests|__tests__|__mocks__|spec|e2e)\//.test(rel) ||
+      /\.(?:test|spec)\.[jt]sx?$/.test(rel);
+    const scanTargets = allSourceFiles().filter(f => {
+      const rel = relative(ROOT, f).replace(/\\/g, '/');
+      if (isTestFile(rel)) return false;
+      if (g6ExcludeDirs.size > 0 && rel.split('/').some(seg => g6ExcludeDirs.has(seg))) return false;
+      return true;
+    });
     const scanArgs    = ['-n', '-E'];
 
     // ── Block-comment resolution ───────────────────────────────────────────────

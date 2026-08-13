@@ -167,9 +167,12 @@ function extractPropVar(block, prop) {
   const val = m[1].trim();
   const allVars = [...val.matchAll(/var\((--[\w-]+)/g)].map(v => v[1]);
   if (!allVars.length) return null;
-  // For 'border' shorthand (width style color), the color var is always the last var().
-  // For all other properties, the first var() is the expected one.
-  return prop === 'border' ? allVars[allVars.length - 1] : allVars[0];
+  // For a border shorthand (`border`, `border-top|right|bottom|left` — each is width style
+  // color), the color var is always the LAST var(). `border-color`/`border-*-color`,
+  // `border-width`, `border-radius` etc. are single-purpose → first var(). For everything
+  // else, the first var() is the expected one.
+  const isBorderShorthand = /^border(-(top|right|bottom|left))?$/.test(prop);
+  return isBorderShorthand ? allVars[allVars.length - 1] : allVars[0];
 }
 
 function selectorExists(css, selector) {
@@ -517,10 +520,24 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
 // a bottom divider is correct (or vice versa).
 // To enable: add strokeSides: 'bottom' | 'all' to the component in CONTRACT.
 const BSIDES_FAIL = [], BSIDES_PASS = [];
+// A strokeful component that omits strokeSides used to be silently skipped — which is
+// exactly how a full-border ("border:") bug reaches a component that Figma strokes on
+// only one side (overflowList, 2026-08). So strokeSides is now MANDATORY whenever Figma
+// draws any stroke: an undeclared strokeful component fails here unless it is explicitly
+// parked in ds-config.json → knownUndeclaredStrokeSides (same escape-hatch pattern as the
+// other known* lists). Park entries are tech-debt, not exemptions — declare 'bottom'/'all'
+// per Figma as each is verified, and remove it from the list.
+const STROKESIDES_SKIP = new Set(cfg.knownUndeclaredStrokeSides ?? []);
 
 if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
   for (const [comp, contract] of Object.entries(CONTRACT)) {
-    if (!contract.strokeSides) continue;
+    if (!contract.strokeSides) {
+      const hasStroke = contract.strokeOnDefault || contract.strokeOnAnyState;
+      if (hasStroke && COMPONENT_CSS_SELECTORS[comp] && !STROKESIDES_SKIP.has(comp)) {
+        BSIDES_FAIL.push(`${comp}/stroke-sides: Figma strokes this component but the contract omits strokeSides — declare 'bottom' or 'all' (or park in knownUndeclaredStrokeSides) so the border side is actually checked`);
+      }
+      continue;
+    }
     const selCfg = COMPONENT_CSS_SELECTORS[comp];
     if (!selCfg) continue;
     const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
