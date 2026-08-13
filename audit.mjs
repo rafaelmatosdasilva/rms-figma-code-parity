@@ -1095,6 +1095,25 @@ function reportFull(label, items, shown) {
       } else {
         lines.push('DS file unchanged since capture ✓ (version matches)');
       }
+
+      // The STRUCTURE snapshot must be stamped at the same DS version as the vars snapshot.
+      // A token-value refresh alone cannot see a structural rebind (a component's padding,
+      // gap, or height binding changing) — so if only the vars snapshot is re-stamped, an
+      // actionBar padding change (2026-08) sails through green. Require the structure
+      // snapshot's own _figmaVersion to match the live file, so a version bump forces a full
+      // structure re-walk, not just a token refresh. Generic: every project stamps both.
+      let structVersion = null;
+      try { structVersion = JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8'))._figmaVersion ?? null; } catch { /* struct snapshot missing — flagged below */ }
+      if (structVersion == null) {
+        lines.push(C.yellow('⚠️  structure snapshot has no _figmaVersion stamp — a padding/gap/height'));
+        lines.push(C.yellow('    rebind cannot be detected. Re-run Phase 1 Step 1c to record one.'));
+      } else if (String(structVersion) !== String(_figmaFileVersion)) {
+        lines.push(C.red('❌ The structure snapshot is stale (captured at an older DS version)'));
+        lines.push(C.red(`   structure version ${structVersion} → file is now ${_figmaFileVersion}`));
+        lines.push(C.red('   A token refresh does not re-walk component geometry — re-run Phase 1'));
+        lines.push(C.red('   Step 1c so a padding/gap/height rebind can be caught.'));
+        warn = true;
+      }
     }
 
     // ── Component inventory: has the DS gained or lost a whole component? ─────────

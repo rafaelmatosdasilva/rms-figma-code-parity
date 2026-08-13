@@ -13,13 +13,18 @@
 //                    'before' = fill is on a child Background rect → CSS ::before
 //   innerRadiusVar — 'radii/token' or null
 //   strokeOnDefault — true if Figma State=Default has a stroke
-//   strokeSides    — 'bottom' | 'all'. Gate [3b] enforces which CSS border sides are used:
-//                    'bottom' → requires border-bottom, forbids the border: shorthand.
-//                    'all'    → requires the border: shorthand.
+//   strokeSides    — 'all' | 'top'|'right'|'bottom'|'left' | 'none'. Gate [3b] enforces which
+//                    CSS border sides are used:
+//                    'all'   → requires the border: shorthand.
+//                    <side>  → requires border-<side> and forbids the border: shorthand.
+//                    'none'  → the component draws NO border of its own (its stroke flag comes
+//                              from a nested sub-component or a consumer wrapper, not its frame);
+//                              documents that and skips the CSS side assertion.
 //                    MANDATORY whenever Figma draws any stroke (strokeOnDefault OR
 //                    strokeOnAnyState): a strokeful component that omits it FAILS Gate [3b],
 //                    unless parked in ds-config.json → knownUndeclaredStrokeSides. Omit only
-//                    when the component has no stroke in any state.
+//                    when the component has no stroke in any state. Read the DS component's
+//                    per-side strokeTopWeight/…/strokeLeftWeight to pick the value.
 //   hoverPill      — { innerH, radiusVar, insetH } (optional). When set, Gate [3d]
 //                    verifies the ::before pseudo-element geometry:
 //                      innerH    — pill height in px (outer h minus vertical inset × 2)

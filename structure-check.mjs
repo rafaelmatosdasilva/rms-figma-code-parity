@@ -518,49 +518,54 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
 //   'all'    → must have bare "border:" shorthand
 // This catches the specific class of bug where all-sides border is used when only
 // a bottom divider is correct (or vice versa).
-// To enable: add strokeSides: 'bottom' | 'all' to the component in CONTRACT.
+// strokeSides values:
+//   'all'                        — CSS must use the `border:` shorthand.
+//   'top'|'right'|'bottom'|'left'— CSS must use `border-<side>:` and NOT the shorthand.
+//   'none'                       — the component draws NO border of its own (its stroke flag
+//                                  comes from a nested sub-component or a consumer wrapper, not
+//                                  its own frame — e.g. dividerSection's nested buttonSecondary).
+//                                  Documents that and skips the CSS side assertion.
 const BSIDES_FAIL = [], BSIDES_PASS = [];
 // A strokeful component that omits strokeSides used to be silently skipped — which is
 // exactly how a full-border ("border:") bug reaches a component that Figma strokes on
 // only one side (overflowList, 2026-08). So strokeSides is now MANDATORY whenever Figma
 // draws any stroke: an undeclared strokeful component fails here unless it is explicitly
 // parked in ds-config.json → knownUndeclaredStrokeSides (same escape-hatch pattern as the
-// other known* lists). Park entries are tech-debt, not exemptions — declare 'bottom'/'all'
+// other known* lists). Park entries are tech-debt, not exemptions — declare the real value
 // per Figma as each is verified, and remove it from the list.
 const STROKESIDES_SKIP = new Set(cfg.knownUndeclaredStrokeSides ?? []);
+const SIDE_NAMES = new Set(['top', 'right', 'bottom', 'left']);
 
 if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
   for (const [comp, contract] of Object.entries(CONTRACT)) {
     if (!contract.strokeSides) {
       const hasStroke = contract.strokeOnDefault || contract.strokeOnAnyState;
       if (hasStroke && COMPONENT_CSS_SELECTORS[comp] && !STROKESIDES_SKIP.has(comp)) {
-        BSIDES_FAIL.push(`${comp}/stroke-sides: Figma strokes this component but the contract omits strokeSides — declare 'bottom' or 'all' (or park in knownUndeclaredStrokeSides) so the border side is actually checked`);
+        BSIDES_FAIL.push(`${comp}/stroke-sides: Figma strokes this component but the contract omits strokeSides — declare 'all', a single side ('top'|'right'|'bottom'|'left'), or 'none' if the stroke is only on a nested sub-component (or park in knownUndeclaredStrokeSides)`);
       }
       continue;
     }
+    // 'none' documents a component with no own border — nothing to assert in CSS.
+    if (contract.strokeSides === 'none') { BSIDES_PASS.push(`${comp}/stroke-sides (none — no own border)`); continue; }
     const selCfg = COMPONENT_CSS_SELECTORS[comp];
-    if (!selCfg) continue;
+    if (!selCfg) continue;   // declared but no base selector to verify against (plugin-side border)
     const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
     if (!mainBlock) { BSIDES_FAIL.push(`${comp}/stroke-sides: selector "${selCfg.main}" not found`); continue; }
 
-    // \bborder\s*: matches bare "border:" shorthand but NOT "border-bottom:", "border-radius:", etc.
+    // \bborder\s*: matches the bare "border:" shorthand but NOT "border-bottom:", "border-radius:", etc.
     const hasShorthand = /\bborder\s*:/.test(mainBlock);
-    const hasBottom    = /\bborder-bottom\s*:/.test(mainBlock);
 
-    if (contract.strokeSides === 'bottom') {
-      if (hasShorthand) {
-        BSIDES_FAIL.push(`${comp}/stroke-sides: CSS uses "border:" (all sides) — contract says border-bottom only`);
-      } else if (!hasBottom) {
-        BSIDES_FAIL.push(`${comp}/stroke-sides: CSS missing "border-bottom" — contract says bottom stroke only`);
-      } else {
-        BSIDES_PASS.push(`${comp}/stroke-sides`);
-      }
-    } else if (contract.strokeSides === 'all') {
-      if (!hasShorthand) {
-        BSIDES_FAIL.push(`${comp}/stroke-sides: CSS missing "border:" shorthand — contract says all-sides stroke`);
-      } else {
-        BSIDES_PASS.push(`${comp}/stroke-sides`);
-      }
+    if (contract.strokeSides === 'all') {
+      if (!hasShorthand) BSIDES_FAIL.push(`${comp}/stroke-sides: CSS missing "border:" shorthand — contract says all-sides stroke`);
+      else BSIDES_PASS.push(`${comp}/stroke-sides`);
+    } else if (SIDE_NAMES.has(contract.strokeSides)) {
+      const side = contract.strokeSides;
+      const hasSide = new RegExp(`\\bborder-${side}\\s*:`).test(mainBlock);
+      if (hasShorthand) BSIDES_FAIL.push(`${comp}/stroke-sides: CSS uses "border:" (all sides) — contract says border-${side} only`);
+      else if (!hasSide) BSIDES_FAIL.push(`${comp}/stroke-sides: CSS missing "border-${side}" — contract says ${side} stroke only`);
+      else BSIDES_PASS.push(`${comp}/stroke-sides`);
+    } else {
+      BSIDES_FAIL.push(`${comp}/stroke-sides: unknown strokeSides value "${contract.strokeSides}" — use 'all', 'top'|'right'|'bottom'|'left', or 'none'`);
     }
   }
 }
