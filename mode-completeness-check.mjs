@@ -18,6 +18,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { loadModes, buildResolver } from './mode-resolver.mjs';
 
 const ROOT = process.cwd();
 
@@ -32,43 +33,26 @@ const THEME_PATH  = THEME_PATHS[0];
 
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────
 let EXPLICIT = {}, SKIP_TOKENS = new Set();
-let NL = {}, ND = {}, NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
+let NL = {}, ND = {}, NEUTRAL_MAPS = null, NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 try {
   const map = await import(join(ROOT, 'parity-map.mjs'));
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;
   if (map.NEUTRAL_LIGHT)   NL              = map.NEUTRAL_LIGHT;
   if (map.NEUTRAL_DARK)    ND              = map.NEUTRAL_DARK;
+  if (map.NEUTRAL_MAPS)    NEUTRAL_MAPS    = map.NEUTRAL_MAPS;   // { <snapshotKey>: {100:'#..',…}, … } for 3+ modes
   if (map.NEUTRAL_VAR_RE)  NEUTRAL_VAR_RE  = map.NEUTRAL_VAR_RE;
 } catch { /* optional */ }
 
-// ── Parse token CSS (all configured files merged) ─────────────────────────────
+// ── Modes + resolver: every configured mode, not just light/dark ──────────────
+// The gate compares each mode-pair whose Figma values differ; the 2-mode (light/dark)
+// case is a subset, so this is byte-identical there. A DS with 3+ modes (compact,
+// high-contrast, breakpoints) is now fully covered instead of silently light-vs-dark only.
+const MODES = loadModes(cfg);
 const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
   .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n')
   .replace(/\/\*[\s\S]*?\*\//g, '');
-function parseVarBlock(block) {
-  const vars = {};
-  for (const m of block.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*):\s*([^;]+);/g))
-    vars['--' + m[1].trim()] = m[2].trim();
-  return vars;
-}
-const rootVars = parseVarBlock(rawCss.match(/:root\s*{([\s\S]*?)}/)?.[1] ?? '');
-const darkVars = parseVarBlock(
-  rawCss.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/)?.[1] ?? ''
-);
-
-function resolve(varName, mode, depth = 0) {
-  if (depth > 8) return null;
-  const nm = varName.match(NEUTRAL_VAR_RE);
-  if (nm) return (mode === 'light' ? NL : ND)[nm[1]] ?? null;
-  const raw = (mode === 'dark' && darkVars[varName]) ? darkVars[varName] : rootVars[varName];
-  if (!raw) return null;
-  const t = raw.trim();
-  const v = t.match(/^var\((--.+?)\)$/);
-  if (v) return resolve(v[1], mode, depth + 1);
-  if (/^#[0-9a-fA-F]{3,8}$/.test(t)) return t.toLowerCase();
-  return null;
-}
+const { resolve } = buildResolver(rawCss, MODES, { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE });
 
 function tokenToVar(token) {
   if (SKIP_TOKENS.has(token)) return null;
@@ -78,29 +62,46 @@ function tokenToVar(token) {
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
 const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
-const lightTokens = snap.color?.light ?? {};
-const darkTokens  = snap.color?.dark  ?? {};
+const modeTokens = Object.fromEntries(MODES.map(m => [m.snapshotKey, snap.color?.[m.snapshotKey] ?? {}]));
+const baseKey = MODES[0].snapshotKey;   // enumerate tokens from the first (base) mode
 
 // ── Check ─────────────────────────────────────────────────────────────────────
+// A token is STATIC (missing an override) when some pair of modes has DIFFERENT Figma
+// values but the CSS resolves to the SAME hex in both — i.e. one mode never overrode it.
 const MISSING = [], OK = [], SKIPPED = [];
 const seen = new Set();
+const figmaOf = (key, token) => modeTokens[key][token + '/color'] ?? modeTokens[key][token] ?? null;
 
-for (const [tokenKey, lightHex] of Object.entries(lightTokens)) {
+for (const tokenKey of Object.keys(modeTokens[baseKey])) {
   const token = tokenKey.replace(/\/color$/, '');
   if (seen.has(token)) continue;
   seen.add(token);
 
-  const darkHex = darkTokens[tokenKey] ?? darkTokens[token] ?? null;
-  if (!darkHex || lightHex === null || lightHex?.toLowerCase() === darkHex?.toLowerCase()) continue;
+  // Which mode-pairs differ in Figma? Only those need a CSS difference.
+  const figma = Object.fromEntries(MODES.map(m => [m.snapshotKey, figmaOf(m.snapshotKey, token)]));
+  const varying = MODES.some((a, i) => MODES.slice(i + 1).some((b) => {
+    const fa = figma[a.snapshotKey], fb = figma[b.snapshotKey];
+    return fa != null && fb != null && fa.toLowerCase() !== fb.toLowerCase();
+  }));
+  if (!varying) continue;
 
   const cssVar = tokenToVar(token);
   if (cssVar === null) { SKIPPED.push(`${token} (no CSS var — documented)`); continue; }
 
-  const cssLight = resolve(cssVar, 'light');
-  const cssDark  = resolve(cssVar, 'dark');
-
-  if (cssLight !== null && cssDark !== null && cssLight === cssDark) {
-    MISSING.push({ token, cssVar, figmaLight: lightHex, figmaDark: darkHex, cssResolved: cssLight });
+  const css = Object.fromEntries(MODES.map(m => [m.snapshotKey, resolve(cssVar, m.snapshotKey)]));
+  // Find a mode-pair that varies in Figma yet is identical (and resolvable) in CSS.
+  let staticPair = null;
+  for (let i = 0; i < MODES.length && !staticPair; i++) {
+    for (let j = i + 1; j < MODES.length; j++) {
+      const ka = MODES[i].snapshotKey, kb = MODES[j].snapshotKey;
+      const fa = figma[ka], fb = figma[kb];
+      if (fa == null || fb == null || fa.toLowerCase() === fb.toLowerCase()) continue;
+      if (css[ka] !== null && css[kb] !== null && css[ka] === css[kb]) { staticPair = [ka, kb]; break; }
+    }
+  }
+  if (staticPair) {
+    const [ka, kb] = staticPair;
+    MISSING.push({ token, cssVar, modeA: ka, modeB: kb, figmaA: figma[ka], figmaB: figma[kb], cssResolved: css[ka] });
   } else {
     OK.push(token);
   }
@@ -108,20 +109,21 @@ for (const [tokenKey, lightHex] of Object.entries(lightTokens)) {
 
 // ── Report ────────────────────────────────────────────────────────────────────
 const total = OK.length + MISSING.length;
-console.log(`\n✅ ADAPTS    ${OK.length}/${total}  (CSS resolves to different hex per mode)`);
-console.log(`❌ STATIC    ${MISSING.length}/${total}  (CSS same hex both modes — dark override missing)`);
-console.log(`⏭  SKIPPED   ${SKIPPED.length}  (no CSS var, documented)`);
+const modeLabel = MODES.map(m => m.snapshotKey).join('/');
+console.log(`\n✅ ADAPTS    ${OK.length}/${total}  (CSS resolves to different hex where Figma modes differ)`);
+console.log(`❌ STATIC    ${MISSING.length}/${total}  (CSS same hex across a differing mode-pair — override missing)`);
+console.log(`⏭  SKIPPED   ${SKIPPED.length}  (no CSS var, documented)   [modes: ${modeLabel}]`);
 
 if (MISSING.length) {
-  console.log('\n─── Missing dark mode adaptation ─────────────────────────────────');
+  console.log('\n─── Missing mode adaptation ──────────────────────────────────────');
   for (const m of MISSING) {
     console.log(`  ❌ ${m.token} → ${m.cssVar}`);
-    console.log(`       Figma: light=${m.figmaLight}  dark=${m.figmaDark}`);
-    console.log(`       CSS:   resolves to ${m.cssResolved} in both modes`);
+    console.log(`       Figma: ${m.modeA}=${m.figmaA}  ${m.modeB}=${m.figmaB}`);
+    console.log(`       CSS:   resolves to ${m.cssResolved} in both ${m.modeA} and ${m.modeB}`);
   }
   console.log('');
   process.exit(1);
 } else {
-  console.log('\nAll mode-variant tokens adapt correctly in CSS dark mode. ✓\n');
+  console.log(`\nAll mode-variant tokens adapt correctly across every configured mode (${modeLabel}). ✓\n`);
   process.exit(0);
 }

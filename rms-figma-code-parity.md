@@ -718,7 +718,16 @@ Write fresh live data to both files. **Always stamp `_updated` to today's date o
 > plan**, including those where `variables/local` returns 403, so this is the one reliable
 > DS-drift signal available without Enterprise. Stamp it only after confirming the capture
 > matches the file — stamping a version you did not actually capture asserts a freshness
-> that is not there. Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query — it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
+> that is not there. **Stamp BOTH the vars and the structure snapshot, and read the version
+> as the LAST step of Phase 1 (via REST), *after* all Plugin-API page navigations.** A
+> `use_figma`/Plugin-API capture calls `figma.setCurrentPageAsync(...)` to reach the
+> components page, and that current-page change persists — it bumps the file `version`. So a
+> version read *before* the capture's last navigation is already stale by the time you write
+> it, and the gate then fails on a bump the capture itself caused, not a designer edit.
+> Read the version once at the end and stamp it into both snapshots; do not run further
+> page-navigating reads afterward. (If the gate reports a version bump but a full re-walk
+> shows identical tokens AND structure, it was almost certainly a read-navigation bump —
+> re-stamp; it is not a content change.) Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query — it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
 
 **Projects with upstream source cross-check (`figmaSourceKey` set):** After querying the primary file (`figmaFileKey`), also query the upstream DS source file (`figmaSourceKey`) using the same variable script. Write the source results to `figma-vars.snapshot.json` under a `"source"` key alongside the normal `"color"` key. The source data does not replace the primary data — both are written:
 ```json

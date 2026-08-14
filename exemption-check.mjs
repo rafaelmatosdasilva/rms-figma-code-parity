@@ -20,6 +20,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
+import { loadModes, buildResolver } from './mode-resolver.mjs';
 
 const ROOT = process.cwd();
 
@@ -55,9 +56,10 @@ try {
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
 const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
+// Token universe = every token in every mode's color map + sizing (mode-agnostic).
+const _modeKeys = loadModes(cfg).map(m => m.snapshotKey);
 const snapTokens = new Set([
-  ...Object.keys(snap.color?.light ?? {}).map(t => t.replace(/\/color$/, '')),
-  ...Object.keys(snap.color?.dark  ?? {}).map(t => t.replace(/\/color$/, '')),
+  ..._modeKeys.flatMap(k => Object.keys(snap.color?.[k] ?? {}).map(t => t.replace(/\/color$/, ''))),
   ...Object.keys(snap.sizing ?? {}),
 ]);
 
@@ -78,40 +80,20 @@ for (const f of sources) {
   for (const m of txt.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);
 }
 
-// ── CSS color resolver ────────────────────────────────────────────────────────
-// Primitive scale from parity-map.mjs
+// ── CSS color resolver (shared, N-mode) ───────────────────────────────────────
+// Primitive scale + modes from parity-map.mjs / ds-config.json — no hardcoded light/dark.
 let map_; try { map_ = await import(join(ROOT, 'parity-map.mjs')); } catch {}
 const NL = map_?.NEUTRAL_LIGHT ?? {};
 const ND = map_?.NEUTRAL_DARK  ?? {};
+const NEUTRAL_MAPS = map_?.NEUTRAL_MAPS ?? null;
 const NEUTRAL_VAR_RE = map_?.NEUTRAL_VAR_RE ?? /^--neutral-(\d+)$/;
+const MODES = loadModes(cfg);
 
 const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
   .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n')
   .replace(/\/\*[\s\S]*?\*\//g, '');
-function parseVarBlock(block) {
-  const vars = {};
-  for (const m of block.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*):\s*([^;]+);/g))
-    vars['--' + m[1].trim()] = m[2].trim();
-  return vars;
-}
-const rootVars = parseVarBlock(rawCss.match(/:root\s*{([\s\S]*?)}/)?.[1] ?? '');
-const darkVars = parseVarBlock(
-  rawCss.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/)?.[1] ?? ''
-);
-
-function resolve(varName, mode, depth = 0) {
-  if (depth > 8) return null;
-  const nm = varName.match(NEUTRAL_VAR_RE);
-  if (nm) return (mode === 'light' ? NL : ND)[nm[1]] ?? null;
-  const raw = (mode === 'dark' && darkVars[varName]) ? darkVars[varName] : rootVars[varName];
-  if (!raw) return null;
-  const t = raw.trim();
-  const v = t.match(/^var\((--.+?)\)$/);
-  if (v) return resolve(v[1], mode, depth + 1);
-  if (/^#[0-9a-fA-F]{3,8}$/.test(t)) return t.toLowerCase();
-  return null;
-}
-function resolveScalar(varName, depth = 0) {
+const { resolve, rootVars } = buildResolver(rawCss, MODES, { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE });
+function resolveScalar(varName, depth = 0) {   // sizing (single-mode) resolver — reuses :root vars
   if (depth > 8) return null;
   const raw = rootVars[varName]; if (!raw) return null;
   const t = raw.trim();
@@ -155,7 +137,8 @@ for (const [token, cssVar] of Object.entries(EXPLICIT)) {
     BROKEN.push({ section: 'EXPLICIT', token, cssVar, reason: 'mapped CSS var not declared in theme.css' });
     continue;
   }
-  for (const mode of ['light', 'dark']) {
+  for (const m of MODES) {
+    const mode = m.snapshotKey;
     const figmaHex = snap.color?.[mode]?.[token] ?? snap.color?.[mode]?.[token + '/color'] ?? null;
     if (!figmaHex) continue;
     const cssHex = resolve(cssVar, mode);
