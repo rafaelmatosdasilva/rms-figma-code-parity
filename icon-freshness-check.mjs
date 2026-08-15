@@ -122,6 +122,43 @@ console.log(`\n─── Gate [17] — Icon snapshot freshness (${dsIcons.length
 const changed = [];
 const checked = [];
 
+// ── Icon RENAME check ─────────────────────────────────────────────────────────
+// Code references DS icons by their EXACT Figma name (`#icon-download` ↔ recorded name
+// 'Icon-download'; HARD RULE: icon ids = exact Figma names). If the DS renames the node
+// (same nodeId, new name — e.g. Icon-download → Icon-export), the code's id is stale and the
+// SVG-path check alone can miss it (a rename need not change the geometry). Fetch each icon
+// node's LIVE name via /nodes and flag any drift from the snapshot's recorded name.
+const renamed = [];
+{
+  const allIds = dsIcons.map(([, e]) => e.nodeId).filter(Boolean);
+  const liveNames = {};
+  for (let i = 0; i < allIds.length; i += 50) {
+    const slice = allIds.slice(i, i + 50);
+    const url = `https://api.figma.com/v1/files/${FILE_KEY}/nodes?ids=${encodeURIComponent(slice.join(','))}&depth=1`;
+    try {
+      const r = await fetch(url, { headers: { 'X-Figma-Token': TOKEN } });
+      if (!r.ok) { console.log(`   ⚠️  icon rename check skipped for a batch — /nodes ${r.status}`); continue; }
+      const json = await r.json();
+      for (const id of slice) { const doc = json.nodes?.[id]?.document; if (doc?.name) liveNames[id] = doc.name; }
+    } catch (e) { console.log(`   ⚠️  icon rename check network error: ${e.message}`); }
+  }
+  for (const [iconId, entry] of dsIcons) {
+    const live = liveNames[entry.nodeId];
+    if (!live || !entry.name) continue;
+    // A live name like "size=small" is a VARIANT PROPERTY, not an icon name — it means the
+    // nodeId now resolves into a component-set variant (the icon gained size variants); the
+    // icon's real name (the set) is unchanged, so this is a nodeId restructure, not a rename.
+    // Skip it here (the SVG-path check still exports the variant fine).
+    if (/^[\w-]+=/.test(live)) continue;
+    // Compare case-INSENSITIVELY: icon ids are case-normalised ('Icon-Fit' and 'Icon-fit'
+    // both derive to #icon-fit), so a pure case change is not a real id drift. Only a name
+    // change that would produce a DIFFERENT id (Icon-download → Icon-export) is flagged.
+    if (live.toLowerCase() !== entry.name.toLowerCase()) {
+      renamed.push({ iconId, nodeId: entry.nodeId, was: entry.name, now: live });
+    }
+  }
+}
+
 for (const batch of batches) {
   // Figma API accepts node IDs with either ':' or '-' as separator
   const idsParam = encodeURIComponent(batch.map(([, e]) => e.nodeId).join(','));
@@ -184,10 +221,21 @@ if (checked.length) {
   console.log();
 }
 
-if (!changed.length) {
-  console.log('All DS icon snapshots are fresh. ✓\n');
+if (renamed.length) {
+  console.log(`❌ RENAMED  ${renamed.length} icon(s) renamed in Figma (code references icons by exact name)`);
+  for (const r of renamed) {
+    console.log(`\n   ❌  #${r.iconId} (nodeId ${r.nodeId}): "${r.was}" → "${r.now}" in Figma`);
+    console.log(`      Rename the CSS/sprite id and the snapshot+contract dsName to match the new`);
+    console.log(`      Figma name (HARD RULE: icon ids = exact Figma names). e.g. #${r.iconId} → #${r.now.toLowerCase()}`);
+  }
+  console.log('');
+}
+
+if (!changed.length && !renamed.length) {
+  console.log('All DS icon snapshots are fresh (paths + names). ✓\n');
   process.exit(0);
 }
+if (!changed.length) process.exit(1);   // rename-only failure — report already printed above
 
 console.log(`❌ CHANGED  ${changed.length} icon(s) differ from live Figma`);
 for (const { iconId, nodeId, livePaths, snapPaths } of changed) {
