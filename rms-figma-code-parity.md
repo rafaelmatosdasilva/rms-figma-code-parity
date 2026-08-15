@@ -97,8 +97,14 @@ Once `ds-config.json` exists, extract:
 - `frames` — array of `{ name, nodeId }` — the DS frame(s) to audit
 - `figma.colorCollection` — name of the color variable collection (e.g. `"Color"`)
 - `figma.sizingCollection` — name of the sizing collection, if any (e.g. `"Sizing"`)
-- `figma.modes` — array of `{ name, snapshotKey, cssSelector }` defining all DS modes
+- `figma.modes` — array of `{ name, snapshotKey, cssSelector }` defining the DS **colour** modes
   - OR legacy: `figma.darkMode` / `figma.lightMode` (two-mode shorthand)
+- `figma.collections` *(optional)* — OTHER typed collections whose values change across their OWN mode axis, independent of colour (a sizing collection that changes per breakpoint, a string collection per locale). Each: `{ name, kind, modes: [{ name, snapshotKey, cssSelector }], explicit?, skip? }`.
+  - `kind` — `"color"` | `"scalar"` (px/number) | `"string"`. Decides how a resolved value is compared (hex vs literal).
+  - `modes` — this collection's own modes, each with its own `cssSelector`. Use `"media:(min-width: 768px)"` for breakpoint layers (`root` for the base/smallest, media overrides for the rest — mobile-first).
+  - `explicit` *(optional)* — `{ token: "--css-var" | null }` overrides for tokens whose var name isn't the default `--token/path→--token-path` (null = documented no-CSS-var skip).
+  - `skip` *(optional)* — array of tokens with no CSS var (documented).
+  - Declaring this lets Gate [5] verify per-breakpoint / per-locale overrides exist in CSS. A DS that omits it is unaffected (colour-only check, byte-identical).
 - `figma.primitivePrefix` — token path prefix to exclude from component token walks (e.g. `"primitives/"`)
 - `figma.componentsPage` *(optional)* — node id of the DS components page (e.g. `"1:439"`). Enables Gate [1]'s **component inventory** check: the live component list on that page is diffed against the structure snapshot so an added/removed DS component always surfaces by name. Without it, the check is skipped (a new component can slip through unaudited).
 - `figma.namingConvention` *(optional)* — overrides for how Figma token paths are converted to CSS var names:
@@ -147,7 +153,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 | File | Contents | Path (from ds-config.json) |
 |---|---|---|
-| `figma-vars.snapshot.json` | color (all modes), sizing, typography | `paths.snapshotVars` |
+| `figma-vars.snapshot.json` | color (all modes), sizing, typography, `modeVariants` (per-collection, per-mode non-colour maps) | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
 Both are machine-generated — never hand-edit. `component-state-tokens.json` and `bound-tokens.json` are auto-refreshed via REST on every `pnpm parity` run when `FIGMA_TOKEN` is set. When the REST API returns 403 (non-Enterprise plans), refresh both via the Plugin API walks and **commit them** — each carries an `_updated` stamp, Gate [1] tracks their freshness, and the consuming gates ([4], [10]) always run at full strength against the committed data.
@@ -258,12 +264,20 @@ for(const m of MODES){
     const chain=aliasChain(id,modeId); if(chain.length>0)aliasesOut[m.snapshotKey][v.name]=chain;
   }
 }
+function resolveScalarVal(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}if(val==null)return null;if(typeof val==='number')return (Math.round(val*1000)/1000)+'px';if(typeof val==='boolean')return String(val);if(typeof val==='object'&&'r'in val)return toHex(val);return String(val);}
 const sizingOut={};
-if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?(Math.round(val*1000)/1000)+'px':String(val??'');}}}
+if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;sizingOut[v.name]=resolveScalarVal(id,mid)??'';}}}
+// modeVariants — DS-agnostic: for every collection declared in ds-config → figma.collections that has
+// ≥2 modes, capture a per-mode map of ONLY the vars that actually differ across its modes (kept lean).
+// kind 'color' resolves to hex; 'scalar'/'string'/'boolean' resolve to the literal. This is what
+// lets Gate [5] check non-color, per-collection mode axes (breakpoint sizing, per-locale strings, …).
+const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',kind:'scalar',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+const modeVariantsOut={};
+for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const perMode={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;perMode[m.snapshotKey]=cc.kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(perMode).map(String)).size>1)vars[v.name]=perMode;}if(Object.keys(vars).length)modeVariantsOut[cc.name]={kind:cc.kind,modes:cc.modes,vars};}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
-return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,typography:typo};
+return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,typography:typo,modeVariants:modeVariantsOut};
 ```
 
 ---
@@ -333,12 +347,20 @@ const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
 const SIZING_COLLECTION='Sizing'; // or null — fill from ds-config.json
+function resolveScalarVal(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}if(val==null)return null;if(typeof val==='number')return (Math.round(val*1000)/1000)+'px';if(typeof val==='boolean')return String(val);if(typeof val==='object'&&'r'in val)return toHex(val);return String(val);}
 const sizingOut={};
-if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;let val=v.valuesByMode[mid]??Object.values(v.valuesByMode)[0];let d=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&d++<10){const a=idToVar[val.id];val=a?.valuesByMode[mid]??Object.values(a?.valuesByMode??{})[0];}sizingOut[v.name]=typeof val==='number'?(Math.round(val*1000)/1000)+'px':String(val??'');}}}
+if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;sizingOut[v.name]=resolveScalarVal(id,mid)??'';}}}
+// modeVariants — DS-agnostic: for every collection declared in ds-config → figma.collections that has
+// ≥2 modes, capture a per-mode map of ONLY the vars that actually differ across its modes (kept lean).
+// kind 'color' resolves to hex; 'scalar'/'string'/'boolean' resolve to the literal. This is what
+// lets Gate [5] check non-color, per-collection mode axes (breakpoint sizing, per-locale strings, …).
+const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',kind:'scalar',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+const modeVariantsOut={};
+for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const perMode={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;perMode[m.snapshotKey]=cc.kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(perMode).map(String)).size>1)vars[v.name]=perMode;}if(Object.keys(vars).length)modeVariantsOut[cc.name]={kind:cc.kind,modes:cc.modes,vars};}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
-return {sizing:sizingOut,typography:typo};
+return {sizing:sizingOut,typography:typo,modeVariants:modeVariantsOut};
 ```
 
 **Final assembly** (after all calls complete):

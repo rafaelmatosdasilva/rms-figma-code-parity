@@ -1,0 +1,10 @@
+{
+  "name": "rms-figma-code-parity",
+  "version": "1.0.0",
+  "description": "Figma-to-code parity engine (DS-agnostic gates).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}
