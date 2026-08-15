@@ -40,13 +40,13 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1 — Figma refresh** | Pulls the latest values from Figma (colors, sizes, fonts, component structure), shows you what changed since last time, and updates the local snapshot files. |
-| **2 — Code audit** | Runs 18 automated checks against your CSS and reports everything that doesn't match. |
+| **2 — Code audit** | Runs 20 automated checks against your CSS and reports everything that doesn't match. |
 
 You always audit against a fresh snapshot. There's no way to accidentally check against yesterday's design.
 
 ---
 
-## The 18 checks
+## The 20 checks
 
 Gates are grouped by theme so failures point you to the right layer immediately.
 
@@ -91,6 +91,8 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 | 16 | **Rendered parity** — Does the browser actually compute what the DS contract says? Headless Chrome loads each built plugin UI and asserts getComputedStyle values — catches cascade/specificity overrides, wrong var() resolution, and stale builds that static text analysis cannot see. |
 | 17 | **Contrast parity** — Do text and background colors meet WCAG contrast, per mode? Computes the ratio of every foreground token against its background straight from the resolved DS hexes — surfaces low-contrast/illegible pairs a token-only audit is blind to. |
 | 18 | **Coverage meta-gate** — What is the audit *not* checking? Cross-references every DS component against the checks the contract declares and prints a coverage matrix — surfaces components with no rendered assertion, no per-variant capture, or no model at all, so a new component/state can't stay silently unchecked. |
+| 19 | **Motion parity** *(opt-in)* — Do easing/duration variables match CSS? When a DS declares `figma.motion`, each motion token's Figma value is compared to its CSS var (normalised). No-op until configured. |
+| 20 | **Effect parity** *(opt-in)* — Do Figma shadow styles match CSS `box-shadow`? When a DS declares `figma.effects`, each effect style's canonical shadow is compared to its tokenised CSS var (hex/rgba normalised). No-op until configured. |
 
 ---
 
@@ -137,6 +139,8 @@ Gates are grouped by theme so failures point you to the right layer immediately.
   ✅  [16]  Rendered computed styles match the DS contract …Pass
   ✅  [17]  Text/background colors meet WCAG contrast per m…Pass
   ✅  [18]  Coverage — which DS components/states the audit…Pass
+  ✅  [19]  Motion tokens (easing · duration) match Figma —…Pass
+  ✅  [20]  Effect/shadow styles match CSS box-shadow — whe…Pass
 
 ────────────────────────────────────────────────────────────
 
@@ -158,9 +162,9 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  18/18 [██████████████████]
-  ❌  2026-06-16  11/12 [█████████████████░]
-  ✅  2026-06-17  18/18 [██████████████████]
+  ✅  2026-06-15  20/20 [████████████████████]
+  ❌  2026-06-16  11/12 [███████████████████░]
+  ✅  2026-06-17  20/20 [████████████████████]
 ────────────────────────────────────────────────────────────
 ```
 

@@ -105,6 +105,8 @@ Once `ds-config.json` exists, extract:
   - `explicit` *(optional)* — `{ token: "--css-var" | null }` overrides for tokens whose var name isn't the default `--token/path→--token-path` (null = documented no-CSS-var skip).
   - `skip` *(optional)* — array of tokens with no CSS var (documented).
   - Declaring this lets Gate [5] verify per-breakpoint / per-locale overrides exist in CSS. A DS that omits it is unaffected (colour-only check, byte-identical).
+- `figma.motion` *(optional)* — opt-in motion-token parity (easing + duration variables → CSS). `{ explicit?: { token: "--css-var" }, skip?: [token] }`. Tokens default to `--token-path`. No-op unless the snapshot has a `motion` map AND this is set.
+- `figma.effects` *(optional)* — opt-in effect-style parity (Figma shadow styles → CSS `box-shadow`). `{ explicit?: { styleName: "--css-var" }, skip?: [styleName] }`. Requires the shadow to be tokenised as a CSS var. No-op unless the snapshot has an `effects` map AND this is set.
 - `figma.primitivePrefix` — token path prefix to exclude from component token walks (e.g. `"primitives/"`)
 - `figma.componentsPage` *(optional)* — node id of the DS components page (e.g. `"1:439"`). Enables Gate [1]'s **component inventory** check: the live component list on that page is diffed against the structure snapshot so an added/removed DS component always surfaces by name. Without it, the check is skipped (a new component can slip through unaudited).
 - `figma.namingConvention` *(optional)* — overrides for how Figma token paths are converted to CSS var names:
@@ -175,7 +177,7 @@ a condition you cannot fix.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`node scripts/audit.mjs`** | **All 18 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 20 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -377,11 +379,40 @@ return {sizing:sizingOut,typography:typo,modeVariants:modeVariantsOut};
   color: { light, dark, /* other modes */ },
   aliases: aliasesOut,
   sizing: sizingOut,
-  typography: typo
+  typography: typo,
+  modeVariants: modeVariantsOut,   // per-collection, per-mode non-colour maps (optional)
+  motion: motionOut,               // easing/duration tokens (optional — Gate: Motion parity)
+  effects: effectsOut,             // shadow styles → box-shadow (optional — Gate: Effect parity)
 }
 ```
 
 > The snapshot `color` object has one key per mode (`snapshotKey`), e.g. `{ light: {...}, dark: {...}, "high-contrast": {...} }`.
+
+---
+
+## Phase 1 — Step 1b-motion-effects: motion + effects (optional, opt-in gates)
+
+Only needed if the DS has motion (easing/duration) variables or effect (shadow) styles you want
+parity-checked. Both gates are **no-ops unless captured AND declared** in `ds-config.json`
+(`figma.motion` / `figma.effects`). Merge `motion` and `effects` into the snapshot object.
+
+```js
+const collections=await figma.variables.getLocalVariableCollectionsAsync();
+const idToVar={};
+for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
+// Motion — EASING/TIMING variables → normalised CSS-comparable strings.
+function deref(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}return val;}
+function motionStr(val){if(val==null)return null;if(typeof val==='number')return val+'ms';const b=val.easingFunctionCubicBezier||val.cubicBezier||val.bezier;if(b&&('x1'in b))return `cubic-bezier(${b.x1}, ${b.y1}, ${b.x2}, ${b.y2})`;if('value'in val)return val.value+(val.unit==='MILLISECONDS'||!val.unit?'ms':'');return JSON.stringify(val);}
+const MOTION_COLLECTION='Motion'; // fill from figma.motion (or leave and let it match by type)
+const motionOut={};
+for(const c of collections){if(MOTION_COLLECTION&&c.name!==MOTION_COLLECTION)continue;const mid=c.modes[0].modeId;for(const id of c.variableIds){const v=idToVar[id];if(!v||(v.resolvedType!=='EASING'&&v.resolvedType!=='TIMING'))continue;const s=motionStr(deref(id,mid));if(s!=null)motionOut[v.name]=s;}}
+// Effects — local effect styles → canonical box-shadow "x y blur spread color[, …]".
+function rgba(c){return `rgba(${Math.round(c.r*255)}, ${Math.round(c.g*255)}, ${Math.round(c.b*255)}, ${+(c.a??1).toFixed(3)})`;}
+function effShadow(e){const p=[`${e.offset?.x??0}px`,`${e.offset?.y??0}px`,`${e.radius??0}px`];if(e.spread)p.push(`${e.spread}px`);p.push(rgba(e.color||{r:0,g:0,b:0,a:1}));if(e.type==='INNER_SHADOW')p.push('inset');return p.join(' ');}
+const effectsOut={};
+for(const st of await figma.getLocalEffectStylesAsync()){const sh=(st.effects||[]).filter(e=>e.type==='DROP_SHADOW'||e.type==='INNER_SHADOW').map(effShadow);if(sh.length)effectsOut[st.name]=sh.join(', ');}
+return {motion:motionOut,effects:effectsOut};
+```
 
 ---
 
@@ -904,13 +935,13 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. The
 
 ---
 
-## Phase 2 — Step 2: Run all 18 audit gates
+## Phase 2 — Step 2: Run all 20 audit gates
 
 ```bash
 node scripts/audit.mjs
 ```
 
-All 18 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 20 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1239,7 +1270,7 @@ return JSON.stringify(result, null, 2);
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 18 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
+| All 20 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
 

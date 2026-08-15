@@ -1745,7 +1745,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage, rMotion, rEffect] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1768,6 +1768,8 @@ function reportFull(label, items, shown) {
     runScriptAsync('rendered-check.mjs'),
     runScriptAsync('contrast-check.mjs'),
     runScriptAsync('coverage-check.mjs'),
+    runScriptAsync('motion-check.mjs'),
+    runScriptAsync('effect-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -1820,6 +1822,12 @@ function reportFull(label, items, shown) {
   addGate('Coverage meta  (which DS components/states the audit checks)',
     parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
 
+  // ── Motion & effects (opt-in — no-op unless configured) ─────────────────────────
+  addGate('Motion parity  (easing · duration variables → CSS)',
+    parseGeneric(rMotion, /MATCH|MISMATCH|SKIPPED|⏭/));
+  addGate('Effect parity  (shadow styles → CSS box-shadow)',
+    parseGeneric(rEffect, /MATCH|MISMATCH|SKIPPED|⏭/));
+
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
   console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
@@ -1864,6 +1872,9 @@ function reportFull(label, items, shown) {
     'Text/background colors meet WCAG contrast per mode',
     // Meta
     'Coverage — which DS components/states the audit actually checks',
+    // Motion & effects (opt-in)
+    'Motion tokens (easing · duration) match Figma — when configured',
+    'Effect/shadow styles match CSS box-shadow — when configured',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: gates consuming a stale snapshot pass against outdated data — DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity — the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',
