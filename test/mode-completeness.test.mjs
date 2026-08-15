@@ -70,7 +70,18 @@ test('fails when the sizing var varies in Figma but the CSS media override is mi
   const { code, out } = runGate({ themeCss, snapshot: SNAPSHOT, config: CONFIG });
   assert.equal(code, 1, out);
   assert.match(out, /\[Breakpoint\] gap\/m/);
-  assert.match(out, /resolves to 8px in both phone and tablet/);
+  assert.match(out, /tablet: Figma 12px, CSS 8px/);
+});
+
+test('catches a WRONG per-breakpoint value (adapts, but CSS ≠ Figma) — value parity beyond completeness', () => {
+  const themeCss = `
+    :root { --brand: #ff0000; --gap-m: 8px; }
+    @media (prefers-color-scheme: dark) { :root { --brand: #00ff00; } }
+    @media (min-width: 768px) { :root { --gap-m: 20px; } }
+  `; // gap-m DOES change per breakpoint, but to 20px — Figma says 12px
+  const { code, out } = runGate({ themeCss, snapshot: SNAPSHOT, config: CONFIG });
+  assert.equal(code, 1, out);
+  assert.match(out, /tablet: Figma 12px, CSS 20px/);
 });
 
 test('a mixed-type collection checks each var by its own kind (scalar + string vary light/dark)', () => {

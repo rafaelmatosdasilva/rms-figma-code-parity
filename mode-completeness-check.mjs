@@ -96,10 +96,16 @@ const CHECKABLE = [];
     figmaOf: (mk, token) => modeTokens[mk]?.[token + '/color'] ?? modeTokens[mk]?.[token] ?? null,
     tokenToVar: colorTokenToVar,
     kindOf: () => 'color',
+    // Colour value parity per mode is owned by Gate [2]/[3]; here we only check COMPLETENESS
+    // (does it adapt at all) so we don't double-report or regress the colour baseline.
+    valueParity: false,
   });
 }
 
 // 2) Declared collections, from the additive `modeVariants` section — each var carries its own kind.
+// These have no other per-mode value gate, so here we check VALUE parity per mode: each mode's CSS
+// must equal its Figma value. That subsumes completeness (a missing override leaves the base value
+// in the other mode → mismatch) AND catches wrong overrides.
 for (const col of COLLECTIONS) {
   const section = snap.modeVariants?.[col.name];
   if (!section || !section.vars) continue;   // not captured yet → nothing to check for this collection
@@ -110,6 +116,7 @@ for (const col of COLLECTIONS) {
     figmaOf: (mk, token) => section.vars[token]?.values?.[mk] ?? null,
     tokenToVar: (t) => nonColorTokenToVar(col, t),
     kindOf: (t) => section.vars[t]?.kind || 'scalar',
+    valueParity: true,
   });
 }
 
@@ -135,21 +142,34 @@ for (const c of CHECKABLE) {
     if (cssVar === null) { SKIPPED.push(`${c.label}:${token} (no CSS var — documented)`); continue; }
 
     const css = Object.fromEntries(modes.map(m => [m.snapshotKey, cssResolve(cssVar, m.snapshotKey)]));
-    // A static pair: differs in Figma, yet identical (and resolvable) in CSS → override missing.
-    let staticPair = null;
-    for (let i = 0; i < modes.length && !staticPair; i++) {
-      for (let j = i + 1; j < modes.length; j++) {
-        const ka = modes[i].snapshotKey, kb = modes[j].snapshotKey;
-        const fa = figma[ka], fb = figma[kb];
-        if (fa == null || fb == null || eq(String(fa), String(fb))) continue;
-        if (css[ka] != null && css[kb] != null && eq(String(css[ka]), String(css[kb]))) { staticPair = [ka, kb]; break; }
+
+    if (c.valueParity) {
+      // VALUE parity: every mode whose CSS resolves must equal its Figma value.
+      let bad = null;
+      for (const m of modes) {
+        const mk = m.snapshotKey, f = figma[mk], v = css[mk];
+        if (f == null || v == null) continue;   // unresolved / not represented in CSS → not this gate's failure
+        if (!eq(String(f), String(v))) { bad = { mode: mk, figmaVal: f, cssVal: v }; break; }
       }
-    }
-    if (staticPair) {
-      const [ka, kb] = staticPair;
-      MISSING.push({ label: c.label, token, cssVar, modeA: ka, modeB: kb, figmaA: figma[ka], figmaB: figma[kb], cssResolved: css[ka] });
+      if (bad) MISSING.push({ type: 'mismatch', label: c.label, token, cssVar, ...bad });
+      else OK.push(`${c.label}:${token}`);
     } else {
-      OK.push(`${c.label}:${token}`);
+      // COMPLETENESS: a static pair differs in Figma yet is identical (and resolvable) in CSS.
+      let staticPair = null;
+      for (let i = 0; i < modes.length && !staticPair; i++) {
+        for (let j = i + 1; j < modes.length; j++) {
+          const ka = modes[i].snapshotKey, kb = modes[j].snapshotKey;
+          const fa = figma[ka], fb = figma[kb];
+          if (fa == null || fb == null || eq(String(fa), String(fb))) continue;
+          if (css[ka] != null && css[kb] != null && eq(String(css[ka]), String(css[kb]))) { staticPair = [ka, kb]; break; }
+        }
+      }
+      if (staticPair) {
+        const [ka, kb] = staticPair;
+        MISSING.push({ type: 'static', label: c.label, token, cssVar, modeA: ka, modeB: kb, figmaA: figma[ka], figmaB: figma[kb], cssResolved: css[ka] });
+      } else {
+        OK.push(`${c.label}:${token}`);
+      }
     }
   }
 }
@@ -157,17 +177,21 @@ for (const c of CHECKABLE) {
 // ── Report ────────────────────────────────────────────────────────────────────
 const total = OK.length + MISSING.length;
 const axisLabel = CHECKABLE.map(c => `${c.label}[${c.modes.map(m => m.snapshotKey).join('/')}]`).join('  ');
-console.log(`\n✅ ADAPTS    ${OK.length}/${total}  (CSS resolves differently where Figma modes differ)`);
-console.log(`❌ STATIC    ${MISSING.length}/${total}  (CSS identical across a differing mode-pair — override missing)`);
+console.log(`\n✅ OK        ${OK.length}/${total}  (adapts across modes, and matches Figma per mode where value-checked)`);
+console.log(`❌ FAIL      ${MISSING.length}/${total}  (missing per-mode override, or CSS ≠ Figma in a mode)`);
 console.log(`⏭  SKIPPED   ${SKIPPED.length}  (no CSS var, documented)`);
 console.log(`   collections: ${axisLabel}`);
 
 if (MISSING.length) {
-  console.log('\n─── Missing mode adaptation ──────────────────────────────────────');
+  console.log('\n─── Mode failures ────────────────────────────────────────────────');
   for (const m of MISSING) {
     console.log(`  ❌ [${m.label}] ${m.token} → ${m.cssVar}`);
-    console.log(`       Figma: ${m.modeA}=${m.figmaA}  ${m.modeB}=${m.figmaB}`);
-    console.log(`       CSS:   resolves to ${m.cssResolved} in both ${m.modeA} and ${m.modeB}`);
+    if (m.type === 'mismatch') {
+      console.log(`       ${m.mode}: Figma ${m.figmaVal}, CSS ${m.cssVal}  (value mismatch)`);
+    } else {
+      console.log(`       Figma: ${m.modeA}=${m.figmaA}  ${m.modeB}=${m.figmaB}`);
+      console.log(`       CSS:   resolves to ${m.cssResolved} in both ${m.modeA} and ${m.modeB}  (override missing)`);
+    }
   }
   console.log('');
   process.exit(1);
