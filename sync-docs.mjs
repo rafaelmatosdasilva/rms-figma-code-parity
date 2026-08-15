@@ -28,10 +28,8 @@ const dim    = s => isTTY ? `\x1b[2m${s}\x1b[0m`  : s;
 // ── 1. Parse audit.mjs — source of truth ─────────────────────────────────────
 const auditSrc = readFileSync(join(DIR, 'audit.mjs'), 'utf8');
 
-// Extract gate labels from addGate('Label', ...) calls (in order)
+// Extract gate labels from addGate('Label', ...) calls (in order) — the authoritative gate list.
 const gateLabels  = [...auditSrc.matchAll(/addGate\(\s*'([^']+)'/g)].map(m => m[1].trim());
-// Extract script names from runScriptAsync('script.mjs') calls (in order)
-const scriptNames = [...auditSrc.matchAll(/runScriptAsync\(\s*'([^']+)'/g)].map(m => m[1].trim());
 
 // Extract GATE_PLAIN array from audit.mjs (plain-English gate names for summary table)
 const gatePlainMatch = auditSrc.match(/const GATE_PLAIN\s*=\s*\[([\s\S]*?)\];/);
@@ -48,13 +46,10 @@ if (planRiskMatch) {
   }
 }
 
-// Gates [1] and [5] are computed inline (combined from former inline gates 1+7 and 5+6)
-const INLINE_INDICES = new Set([0, 4]);
-const gates = gateLabels.map((label, i) => {
-  if (INLINE_INDICES.has(i)) return { n: i + 1, label, script: 'inline' };
-  const scriptIdx = [...Array(i).keys()].filter(j => !INLINE_INDICES.has(j)).length;
-  return { n: i + 1, label, script: scriptNames[scriptIdx] ?? '?' };
-});
+// One entry per addGate() call, in order. (We don't annotate each gate with its script file: the
+// addGate order and the runScriptAsync order differ, and some gates combine several scripts or run
+// inline — so any positional gate→script guess is wrong. The label is the source of truth.)
+const gates = gateLabels.map((label, i) => ({ n: i + 1, label }));
 
 const GATE_COUNT = gates.length;
 
@@ -132,7 +127,7 @@ function generateExampleOutput() {
 
 console.log(bold(`\nrms-figma-code-parity sync-docs — source of truth: ${GATE_COUNT} gates\n`));
 for (const g of gates) {
-  console.log(dim(`  [${String(g.n).padStart(2)}] ${g.label}  (${g.script})`));
+  console.log(dim(`  [${String(g.n).padStart(2)}] ${g.label}`));
 }
 console.log('');
 
