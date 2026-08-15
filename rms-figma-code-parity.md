@@ -267,13 +267,16 @@ for(const m of MODES){
 function resolveScalarVal(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}if(val==null)return null;if(typeof val==='number')return (Math.round(val*1000)/1000)+'px';if(typeof val==='boolean')return String(val);if(typeof val==='object'&&'r'in val)return toHex(val);return String(val);}
 const sizingOut={};
 if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;sizingOut[v.name]=resolveScalarVal(id,mid)??'';}}}
-// modeVariants — DS-agnostic: for every collection declared in ds-config → figma.collections that has
-// ≥2 modes, capture a per-mode map of ONLY the vars that actually differ across its modes (kept lean).
-// kind 'color' resolves to hex; 'scalar'/'string'/'boolean' resolve to the literal. This is what
-// lets Gate [5] check non-color, per-collection mode axes (breakpoint sizing, per-locale strings, …).
-const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',kind:'scalar',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+// modeVariants — DS-agnostic: for every collection in ds-config → figma.collections with ≥2 modes,
+// capture the vars that DIFFER across its modes, tagging EACH with its own kind (inferred from
+// resolvedType — a single collection may mix color/scalar/string/boolean). Colours of the colour
+// collection are skipped here (already in snap.color). Lets Gate [5] check non-colour, per-collection
+// mode axes (breakpoint sizing, per-locale strings) AND mixed-type collections (a Theme whose floats
+// and booleans also vary light↔dark).
+const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+const KIND={COLOR:'color',FLOAT:'scalar',STRING:'string',BOOLEAN:'boolean'};
 const modeVariantsOut={};
-for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const perMode={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;perMode[m.snapshotKey]=cc.kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(perMode).map(String)).size>1)vars[v.name]=perMode;}if(Object.keys(vars).length)modeVariantsOut[cc.name]={kind:cc.kind,modes:cc.modes,vars};}
+for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const kind=KIND[v.resolvedType]||'scalar';if(kind==='color'&&cc.name===COLOR_COLLECTION)continue;const values={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;values[m.snapshotKey]=kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(values).map(String)).size>1)vars[v.name]={kind,values};}if(Object.keys(vars).length)modeVariantsOut[cc.name]={modes:cc.modes,vars};}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}
@@ -346,17 +349,22 @@ Then fetch **sizing and typography** in one separate call (these collections are
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-const SIZING_COLLECTION='Sizing'; // or null — fill from ds-config.json
+const SIZING_COLLECTION='Sizing'; const COLOR_COLLECTION='Theme'; // fill from ds-config.json
+function toHex(c){const h=[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');return '#'+h;}
+function resolve(id,modeId,d=0){if(d>10)return null;const v=idToVar[id];if(!v)return null;const val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];if(!val)return null;if(val?.type==='VARIABLE_ALIAS')return resolve(val.id,modeId,d+1);if('r'in val)return toHex(val);return null;}
 function resolveScalarVal(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}if(val==null)return null;if(typeof val==='number')return (Math.round(val*1000)/1000)+'px';if(typeof val==='boolean')return String(val);if(typeof val==='object'&&'r'in val)return toHex(val);return String(val);}
 const sizingOut={};
 if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);if(sc){const mid=sc.modes[0].modeId;for(const id of sc.variableIds){const v=idToVar[id];if(!v)continue;sizingOut[v.name]=resolveScalarVal(id,mid)??'';}}}
-// modeVariants — DS-agnostic: for every collection declared in ds-config → figma.collections that has
-// ≥2 modes, capture a per-mode map of ONLY the vars that actually differ across its modes (kept lean).
-// kind 'color' resolves to hex; 'scalar'/'string'/'boolean' resolve to the literal. This is what
-// lets Gate [5] check non-color, per-collection mode axes (breakpoint sizing, per-locale strings, …).
-const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',kind:'scalar',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+// modeVariants — DS-agnostic: for every collection in ds-config → figma.collections with ≥2 modes,
+// capture the vars that DIFFER across its modes, tagging EACH with its own kind (inferred from
+// resolvedType — a single collection may mix color/scalar/string/boolean). Colours of the colour
+// collection are skipped here (already in snap.color). Lets Gate [5] check non-colour, per-collection
+// mode axes (breakpoint sizing, per-locale strings) AND mixed-type collections (a Theme whose floats
+// and booleans also vary light↔dark).
+const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+const KIND={COLOR:'color',FLOAT:'scalar',STRING:'string',BOOLEAN:'boolean'};
 const modeVariantsOut={};
-for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const perMode={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;perMode[m.snapshotKey]=cc.kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(perMode).map(String)).size>1)vars[v.name]=perMode;}if(Object.keys(vars).length)modeVariantsOut[cc.name]={kind:cc.kind,modes:cc.modes,vars};}
+for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const kind=KIND[v.resolvedType]||'scalar';if(kind==='color'&&cc.name===COLOR_COLLECTION)continue;const values={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;values[m.snapshotKey]=kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(values).map(String)).size>1)vars[v.name]={kind,values};}if(Object.keys(vars).length)modeVariantsOut[cc.name]={modes:cc.modes,vars};}
 const WEIGHT={'Thin':100,'Extra Light':200,'Light':300,'Regular':400,'Medium':500,'Semi Bold':600,'Bold':700,'Extra Bold':800,'Black':900};
 const styles=await figma.getLocalTextStylesAsync(); const typo={};
 for(const st of styles){const key=st.name.trim().toLowerCase().split('/').pop();const entry={size:Math.round(st.fontSize*10)/10+'px'};const w=WEIGHT[st.fontName.style];if(w)entry.weight=String(w);if(st.lineHeight?.unit==='PIXELS')entry.lh=Math.round(st.lineHeight.value*10)/10+'px';if(st.letterSpacing?.value)entry.ls=(st.letterSpacing.unit==='PERCENT'?Math.round(st.letterSpacing.value*100)/10000+'em':Math.round(st.letterSpacing.value*100)/100+'px');if(st.textCase&&st.textCase!=='ORIGINAL')entry.textTransform=(st.textCase==='UPPER'?'uppercase':st.textCase==='LOWER'?'lowercase':st.textCase.toLowerCase());typo[key]=entry;}

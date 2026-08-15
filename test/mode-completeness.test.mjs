@@ -45,9 +45,8 @@ const SNAPSHOT = {
   color: { light: { 'brand/color': '#ff0000' }, dark: { 'brand/color': '#00ff00' } },
   modeVariants: {
     Breakpoint: {
-      kind: 'scalar',
       modes: [{ name: 'Phone', snapshotKey: 'phone' }, { name: 'Tablet', snapshotKey: 'tablet' }],
-      vars: { 'gap/m': { phone: '8px', tablet: '12px' } },
+      vars: { 'gap/m': { kind: 'scalar', values: { phone: '8px', tablet: '12px' } } },
     },
   },
 };
@@ -72,6 +71,47 @@ test('fails when the sizing var varies in Figma but the CSS media override is mi
   assert.equal(code, 1, out);
   assert.match(out, /\[Breakpoint\] gap\/m/);
   assert.match(out, /resolves to 8px in both phone and tablet/);
+});
+
+test('a mixed-type collection checks each var by its own kind (scalar + string vary light/dark)', () => {
+  // A "Theme"-like collection sharing the light/dark axis, whose scalar and string vars also vary.
+  const config = {
+    paths: { themeCSS: 'theme.css', snapshotVars: 'figma-vars.snapshot.json' },
+    figma: {
+      colorCollection: 'Theme',
+      modes: [
+        { name: 'Light', snapshotKey: 'light', cssSelector: 'root' },
+        { name: 'Dark', snapshotKey: 'dark', cssSelector: 'dark-media' },
+      ],
+      collections: [
+        { name: 'Theme', modes: [
+          { name: 'Light', snapshotKey: 'light', cssSelector: 'root' },
+          { name: 'Dark', snapshotKey: 'dark', cssSelector: 'dark-media' },
+        ] },
+      ],
+    },
+  };
+  const snapshot = {
+    color: { light: {}, dark: {} },
+    modeVariants: {
+      Theme: {
+        modes: [{ name: 'Light', snapshotKey: 'light' }, { name: 'Dark', snapshotKey: 'dark' }],
+        vars: {
+          'ring/width': { kind: 'scalar', values: { light: '1px', dark: '2px' } },   // varies
+          'ring/label': { kind: 'string', values: { light: 'On', dark: 'Off' } },     // varies
+        },
+      },
+    },
+  };
+  // CSS overrides ring/width per mode but NOT ring/label → label is the only failure.
+  const themeCss = `
+    :root { --ring-width: 1px; --ring-label: On; }
+    @media (prefers-color-scheme: dark) { :root { --ring-width: 2px; } }
+  `;
+  const { code, out } = runGate({ themeCss, snapshot, config });
+  assert.equal(code, 1, out);
+  assert.match(out, /\[Theme\] ring\/label/);      // string var flagged
+  assert.doesNotMatch(out, /ring\/width/);          // scalar var adapted → not flagged
 });
 
 test('a DS with no declared collections runs the colour-only check unchanged', () => {

@@ -74,14 +74,17 @@ function nonColorTokenToVar(col, token) {
 const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
 
 // ── Build the unified list of checkable collections ───────────────────────────
-// Each entry is a self-describing unit: its modes, how to read a token's Figma value per mode,
-// how to map a token to a CSS var, how to resolve that var per mode, and how to compare two values.
+// Each entry is a self-describing unit: its modes, how to read a token's Figma value per mode, how
+// to map a token to a CSS var, and — PER TOKEN — its kind (a single collection may mix
+// color/scalar/string/boolean). Kind decides the comparison (hex vs literal) and the resolver.
 const eqHex     = (a, b) => a.toLowerCase() === b.toLowerCase();
 const eqLiteral = (a, b) => String(a).trim() === String(b).trim();
+const eqFor       = (kind) => (kind === 'color' ? eqHex : eqLiteral);
+const resolveFor  = (kind) => (kind === 'color' ? resolve : resolveRaw);
 
 const CHECKABLE = [];
 
-// 1) The colour axis (legacy behaviour, unchanged).
+// 1) The colour axis (legacy behaviour, unchanged) — every token is kind 'color'.
 {
   const modeTokens = Object.fromEntries(COLOR_MODES.map(m => [m.snapshotKey, snap.color?.[m.snapshotKey] ?? {}]));
   const baseKey = COLOR_MODES[0].snapshotKey;
@@ -92,24 +95,21 @@ const CHECKABLE = [];
     tokens,
     figmaOf: (mk, token) => modeTokens[mk]?.[token + '/color'] ?? modeTokens[mk]?.[token] ?? null,
     tokenToVar: colorTokenToVar,
-    cssResolve: (v, mk) => resolve(v, mk),
-    eq: eqHex,
+    kindOf: () => 'color',
   });
 }
 
-// 2) Declared non-colour collections, sourced from the additive `modeVariants` snapshot section.
+// 2) Declared collections, from the additive `modeVariants` section — each var carries its own kind.
 for (const col of COLLECTIONS) {
   const section = snap.modeVariants?.[col.name];
   if (!section || !section.vars) continue;   // not captured yet → nothing to check for this collection
-  const isColor = col.kind === 'color';
   CHECKABLE.push({
     label: col.name,
     modes: col.modes,
     tokens: Object.keys(section.vars),
-    figmaOf: (mk, token) => section.vars[token]?.[mk] ?? null,
+    figmaOf: (mk, token) => section.vars[token]?.values?.[mk] ?? null,
     tokenToVar: (t) => nonColorTokenToVar(col, t),
-    cssResolve: (v, mk) => (isColor ? resolve(v, mk) : resolveRaw(v, mk)),
-    eq: isColor ? eqHex : eqLiteral,
+    kindOf: (t) => section.vars[t]?.kind || 'scalar',
   });
 }
 
@@ -120,27 +120,29 @@ for (const c of CHECKABLE) {
   const { modes } = c;
   if (modes.length < 2) continue;   // single-mode collection can't vary
   for (const token of c.tokens) {
+    const kind = c.kindOf(token);
+    const eq = eqFor(kind), cssResolve = resolveFor(kind);
     const figma = Object.fromEntries(modes.map(m => [m.snapshotKey, c.figmaOf(m.snapshotKey, token)]));
 
     // Which mode-pairs differ in Figma? Only those require a CSS difference.
     const varying = modes.some((a, i) => modes.slice(i + 1).some((b) => {
       const fa = figma[a.snapshotKey], fb = figma[b.snapshotKey];
-      return fa != null && fb != null && !c.eq(String(fa), String(fb));
+      return fa != null && fb != null && !eq(String(fa), String(fb));
     }));
     if (!varying) continue;
 
     const cssVar = c.tokenToVar(token);
     if (cssVar === null) { SKIPPED.push(`${c.label}:${token} (no CSS var — documented)`); continue; }
 
-    const css = Object.fromEntries(modes.map(m => [m.snapshotKey, c.cssResolve(cssVar, m.snapshotKey)]));
+    const css = Object.fromEntries(modes.map(m => [m.snapshotKey, cssResolve(cssVar, m.snapshotKey)]));
     // A static pair: differs in Figma, yet identical (and resolvable) in CSS → override missing.
     let staticPair = null;
     for (let i = 0; i < modes.length && !staticPair; i++) {
       for (let j = i + 1; j < modes.length; j++) {
         const ka = modes[i].snapshotKey, kb = modes[j].snapshotKey;
         const fa = figma[ka], fb = figma[kb];
-        if (fa == null || fb == null || c.eq(String(fa), String(fb))) continue;
-        if (css[ka] != null && css[kb] != null && c.eq(String(css[ka]), String(css[kb]))) { staticPair = [ka, kb]; break; }
+        if (fa == null || fb == null || eq(String(fa), String(fb))) continue;
+        if (css[ka] != null && css[kb] != null && eq(String(css[ka]), String(css[kb]))) { staticPair = [ka, kb]; break; }
       }
     }
     if (staticPair) {
