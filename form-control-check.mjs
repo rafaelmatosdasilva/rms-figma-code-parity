@@ -46,11 +46,9 @@ try {
   if (Array.isArray(m.FORM_CONTROL_BINDINGS)) BINDINGS = m.FORM_CONTROL_BINDINGS;
 } catch { /* contract optional */ }
 
-if (!BINDINGS.length) {
-  console.log('⏭  [13c] FORM_CONTROL_BINDINGS not defined — skipping form-control check');
-  process.exit(0);
-}
-
+// NOTE: no early-exit on empty BINDINGS — the native-control-rendering check below is generic
+// (radio/checkbox can NEVER be a legit native control when a DS component exists) and runs for
+// every project regardless of whether token bindings are configured.
 const pluginCSS = cfg.paths?.pluginCSS ?? [];
 if (!pluginCSS.length) {
   console.log('⏭  [13c] no paths.pluginCSS configured — skipping form-control check');
@@ -103,7 +101,53 @@ function rules(css) {
   return out;
 }
 
-let pass = true, checked = 0, skipped = 0;
+let pass = true, checked = 0, skipped = 0, nativeChecked = 0;
+
+// ── Native form-control rendering (radio / checkbox) ──────────────────────────
+// A native <input type=radio|checkbox> CANNOT be visually restyled — the ONLY way to render a
+// DS radio/checkbox/switch is to visually SUPPRESS the native control (opacity:0 / clipped /
+// appearance:none) and draw a styled sibling that the :checked state drives. So a native
+// radio/checkbox the CSS never suppresses is rendering with browser chrome instead of the DS
+// component. (This is exactly the .radioButton-input-with-no-hiding-rule bug: the class was on
+// the input but had no CSS, so the browser drew a native red radio.) Generic, no config: when
+// a DS has these components, a bare native radio/checkbox is always wrong.
+const nativeExempt = new Set(cfg.knownNativeControlExceptions ?? []);
+const themePaths = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
+let mergedCss = '';
+for (const p of [...themePaths, ...pluginCSS]) {
+  const a = join(ROOT, p);
+  if (existsSync(a)) mergedCss += '\n' + readFileSync(a, 'utf8');
+}
+const mergedRules = rules(mergedCss.replace(/\/\*[\s\S]*?\*\//g, ''));
+// A genuine visual suppression — not merely position:absolute (which alone still renders the control).
+const SUPPRESS_RE = /(?:opacity\s*:\s*0(?![.\d])|display\s*:\s*none|visibility\s*:\s*hidden|(?:-webkit-)?appearance\s*:\s*none|clip(?:-path)?\s*:|(?:width|height)\s*:\s*1px)/i;
+const isSuppressed = (handles) =>
+  mergedRules.some(r => handles.some(h => isSubject(r.selector, h)) && SUPPRESS_RE.test(r.body));
+
+for (const rel of pluginCSS) {
+  const abs = join(ROOT, rel);
+  if (!existsSync(abs)) continue;
+  const src = readFileSync(abs, 'utf8');
+  for (const m of src.matchAll(/<input\b([^>]*)>/gi)) {
+    const attrs = m[1];
+    const type = (attrs.match(/\btype\s*=\s*["']([^"']+)["']/)?.[1] ?? 'text').toLowerCase();
+    if (type !== 'radio' && type !== 'checkbox') continue;
+    const id = attrs.match(/\bid\s*=\s*["']([^"']+)["']/)?.[1] ?? null;
+    const classes = (attrs.match(/\bclass\s*=\s*["']([^"']+)["']/)?.[1] ?? '').split(/\s+/).filter(Boolean);
+    const handles = [...classes.map(c => '.' + c), ...(id ? ['#' + id] : [])];
+    if (id && nativeExempt.has('#' + id)) { skipped++; continue; }
+    if (classes.some(c => nativeExempt.has('.' + c))) { skipped++; continue; }
+    nativeChecked++;
+    if (!isSuppressed(handles)) {
+      pass = false;
+      const comp = type === 'radio' ? 'radioButton' : 'checkbox';
+      const sibling = type === 'radio' ? '.radioButton-circle' : '.checkbox-box';
+      console.log(`❌ [13c] ${relative(ROOT, abs)} native <input type="${type}"> (${handles.join(', ') || 'no class/id'}) is not visually suppressed`);
+      console.log(`         → it renders with the browser's native control instead of the DS ${comp} component.`);
+      console.log(`         Hide the input (opacity:0 / clipped) and style a DS sibling (${sibling}) driven by :checked.`);
+    }
+  }
+}
 
 for (const rel of pluginCSS) {
   const abs = join(ROOT, rel);
@@ -169,6 +213,6 @@ for (const rel of pluginCSS) {
 }
 
 if (pass) {
-  console.log(`✅ [13c] ${checked} form-control declaration(s) bound to their DS component's tokens  (${skipped} element(s) skipped — DS class or exempt)`);
+  console.log(`✅ [13c] ${checked} form-control declaration(s) bound to their DS component's tokens; ${nativeChecked} native radio/checkbox suppressed (styled by a DS component)  (${skipped} skipped)`);
 }
 process.exit(pass ? 0 : 1);
