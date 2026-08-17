@@ -1426,17 +1426,24 @@ function reportFull(label, items, shown) {
         marks = new Set();
         let src;
         try { src = readFileSync(file, 'utf8'); } catch { _commentLines.set(file, marks); return false; }
-        let open = false;
+        // Track BOTH comment syntaxes: /* … */ (CSS/JS/<style>/<script>) and <!-- … -->
+        // (HTML source files — ui.src.html etc.). A px/hex literal written inside an HTML
+        // comment ("bare actionBar: 48px, padding/m") is prose, not a declaration, exactly
+        // like the /* … */ case. A stray "<!--" inside a string can only ever SUPPRESS a
+        // finding (never invent one), same safety argument as the /* rule.
+        let openC = false, openH = false;
         src.split('\n').forEach((text, idx) => {
-          let i = 0, sawCode = false, startedOpen = open;
+          let i = 0, sawCode = false; const startedOpen = openC || openH;
           while (i < text.length) {
-            if (!open && text.startsWith('/*', i)) { open = true; i += 2; continue; }
-            if (open && text.startsWith('*/', i)) { open = false; i += 2; continue; }
-            if (!open && text[i].trim()) sawCode = true;
+            if (!openC && !openH && text.startsWith('/*', i))   { openC = true; i += 2; continue; }
+            if (openC && text.startsWith('*/', i))              { openC = false; i += 2; continue; }
+            if (!openC && !openH && text.startsWith('<!--', i)) { openH = true; i += 4; continue; }
+            if (openH && text.startsWith('-->', i))             { openH = false; i += 3; continue; }
+            if (!openC && !openH && text[i].trim()) sawCode = true;
             i += 1;
           }
           // Inside for the whole line, or a continuation that closes with no code after.
-          if ((startedOpen || open) && !sawCode) marks.add(idx + 1);
+          if ((startedOpen || openC || openH) && !sawCode) marks.add(idx + 1);
         });
         _commentLines.set(file, marks);
       }
