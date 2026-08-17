@@ -128,7 +128,7 @@ Gates are grouped by theme so failures point you to the right layer immediately.
   ✅  [5]   Every token that changes between modes is handl…Pass
   ✅  [6]   All documented exceptions are still valid       Pass
   ✅  [7]   Every CSS variable maps back to a real Figma to…Pass
-  ✅  [8]   No unused CSS variables or hardcoded values     Pass
+  ✅  [8]   No unused CSS variables, hardcoded values, or s…Pass
   ✅  [9]   Child components are not overridden by parent C…Pass
   ✅  [10]  Component structure matches Figma (height, spac…Pass
   ✅  [11]  All component states are covered, wired, and in…Pass

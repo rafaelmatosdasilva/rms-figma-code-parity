@@ -1745,7 +1745,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage, rMotion, rEffect] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage, rMotion, rEffect, rContainment] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1770,6 +1770,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('coverage-check.mjs'),
     runScriptAsync('motion-check.mjs'),
     runScriptAsync('effect-check.mjs'),
+    runScriptAsync('container-containment-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -1791,8 +1792,8 @@ function reportFull(label, items, shown) {
     parseGeneric(rNaming, /TRACEABLE|UNINVENTED|UNDOCUMENTED/));
 
   // ── CSS quality ───────────────────────────────────────────────────────────────
-  addGate('CSS hygiene  (unused vars · hardcoded values)',
-    combineGates(_g5, _g6));
+  addGate('CSS hygiene  (unused vars · hardcoded values · safe size containment)',
+    combineGates(_g5, _g6, parseGeneric(rContainment, /✅|❌/)));
   addGate('Sub-component isolation  (no parent rule overrides sub-component styles)',
     parseGate8(rIsolation));
 
@@ -1855,7 +1856,7 @@ function reportFull(label, items, shown) {
     'All documented exceptions are still valid',
     'Every CSS variable maps back to a real Figma token',
     // CSS quality
-    'No unused CSS variables or hardcoded values',
+    'No unused CSS variables, hardcoded values, or size containment that collapses content',
     'Child components are not overridden by parent CSS rules',
     // Structure
     'Component structure matches Figma (height, spacing, base-rule var bindings)',
