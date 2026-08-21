@@ -1,0 +1,414 @@
+<meta charset="utf-8">
+<title>Relógio de Aula</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Aula">
+<link rel="manifest" href='data:application/manifest+json,{"name":"Rel%C3%B3gio de Aula","short_name":"Aula","display":"standalone","background_color":"%23000000","theme_color":"%23000000","orientation":"any","start_url":".","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%23000%27/%3E%3Cg fill=%27none%27 stroke=%27%23fafafa%27 stroke-width=%278%27 stroke-linecap=%27round%27%3E%3Ccircle cx=%2796%27 cy=%2796%27 r=%2770%27/%3E%3Cpath d=%27M96 56v40l26 16%27/%3E%3C/g%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml","purpose":"any"}]}'>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cg fill='none' stroke='%23fafafa' stroke-width='3' stroke-linecap='round'%3E%3Ccircle cx='32' cy='32' r='23'/%3E%3Cpath d='M32 18v14l9 6'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=Barlow:wght@400;500&display=swap">
+
+<style>
+  :root{
+    --bg:#000000;
+    --ink:#fafafa;         /* números — branco */
+    --dim:#7a7a7a;         /* rótulos secundários */
+    --faint:#333333;       /* trilhos, hairlines */
+    --accent:#9db39a;      /* verde-sálvia discreto: progresso da aula */
+    --danger:#c96f5a;      /* aula quase a acabar */
+    --clock: "Barlow Semi Condensed", system-ui, sans-serif;
+    --ui: "Barlow", system-ui, sans-serif;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  html,body{ height:100%; }
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--ui);
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+    touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+
+  #app{
+    position:fixed; inset:0;
+    display:flex; flex-direction:column;
+    padding:
+      calc(env(safe-area-inset-top) + 12px)
+      calc(env(safe-area-inset-right) + 16px)
+      calc(env(safe-area-inset-bottom) + 12px)
+      calc(env(safe-area-inset-left) + 16px);
+  }
+
+  /* ---------- topo: estado da aula ---------- */
+  header{
+    display:flex; align-items:center; justify-content:center;
+    gap:10px; min-height:26px;
+    font-size:.95rem; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--dim); font-family:var(--ui); font-weight:500;
+    transition:opacity .5s ease;
+  }
+  .dot{
+    width:9px; height:9px; border-radius:50%;
+    background:var(--accent); flex:none;
+    box-shadow:0 0 0 0 rgba(157,179,154,.55);
+  }
+  header.running .dot{ animation:pulse 2.4s ease-out infinite; }
+  header.ending .dot{ background:var(--danger); box-shadow:none; }
+  header.ending{ color:var(--danger); }
+  @keyframes pulse{
+    0%{ box-shadow:0 0 0 0 rgba(157,179,154,.5); }
+    70%{ box-shadow:0 0 0 12px rgba(157,179,154,0); }
+    100%{ box-shadow:0 0 0 0 rgba(157,179,154,0); }
+  }
+
+  /* ---------- centro: o relógio ---------- */
+  main{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5vh; min-height:0; }
+
+  .clock{
+    font-family:var(--clock); font-weight:600;
+    line-height:.9; letter-spacing:.01em;
+    font-variant-numeric:tabular-nums;
+    display:flex; align-items:baseline; justify-content:center;
+    color:var(--ink);
+  }
+  .clock .hm{ font-size:clamp(4.5rem, 26vw, 20rem); }
+  .clock .ss{
+    font-size:clamp(1.6rem, 8vw, 6rem);
+    color:var(--dim); font-weight:500;
+    margin-left:.18em;
+  }
+  .clock .colon{ animation:blink 1s steps(1,end) infinite; }
+  @keyframes blink{ 50%{ opacity:.28; } }
+
+  /* faixa da aula (só aparece quando iniciada) */
+  .class{
+    width:min(560px, 82vw);
+    display:flex; flex-direction:column; gap:12px;
+    opacity:0; transform:translateY(6px);
+    transition:opacity .45s ease, transform .45s ease;
+    pointer-events:none;
+  }
+  .class.on{ opacity:1; transform:none; }
+  .track{ height:5px; border-radius:99px; background:var(--faint); overflow:hidden; }
+  .bar{ height:100%; width:0%; background:var(--accent); border-radius:99px; transition:width .5s linear, background .4s ease; }
+  .class.ending .bar{ background:var(--danger); }
+  .class-meta{
+    display:flex; align-items:baseline; justify-content:center; gap:.6em;
+    font-family:var(--clock); font-variant-numeric:tabular-nums;
+  }
+  .class-meta .lbl{ font-family:var(--ui); font-size:.8rem; letter-spacing:.16em; text-transform:uppercase; color:var(--dim); }
+  .class-meta .rem{ font-size:clamp(1.4rem,6vw,2.4rem); font-weight:500; color:var(--ink); }
+  .class.ending .rem{ color:var(--danger); }
+
+  /* postura discreta */
+  .posture{
+    min-height:34px;
+    display:flex; align-items:center; justify-content:center; gap:18px;
+    color:var(--dim);
+    transition:opacity .5s ease;
+  }
+  .posture.off{ opacity:0; pointer-events:none; }
+  .posture .name{ font-family:var(--clock); font-weight:500; font-size:clamp(1.1rem,5vw,1.6rem); letter-spacing:.02em; color:#b8b8b8; min-width:6ch; text-align:center; }
+  .posture button.nav{ color:var(--faint); font-size:1.5rem; line-height:1; }
+  .posture button.nav:active{ color:var(--dim); }
+
+  /* ---------- rodapé: controlos ---------- */
+  footer{
+    display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+    gap:10px; min-height:44px;
+    transition:opacity .5s ease;
+  }
+
+  button{
+    -webkit-appearance:none; appearance:none;
+    background:transparent; border:1px solid var(--faint);
+    color:var(--ink); font-family:var(--ui); font-weight:500;
+    font-size:.95rem; letter-spacing:.02em;
+    padding:10px 16px; border-radius:99px;
+    cursor:pointer; touch-action:manipulation;
+    transition:border-color .2s, background .2s, color .2s, opacity .2s;
+  }
+  button:active{ background:#161616; }
+  button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  button.primary{ border-color:#5f6f5d; color:#dfe7de; }
+  button.primary:active{ background:#141a14; }
+  button.ghost{ border-color:transparent; color:var(--dim); padding:10px 12px; }
+  button:disabled{ opacity:.32; pointer-events:none; }
+
+  .dur{ display:inline-flex; align-items:center; gap:2px; border:1px solid var(--faint); border-radius:99px; overflow:hidden; }
+  .dur button{ border:none; border-radius:0; padding:10px 14px; }
+  .dur .val{ font-family:var(--clock); font-variant-numeric:tabular-nums; font-size:1rem; padding:0 8px; color:var(--ink); min-width:5.2ch; text-align:center; }
+  .dur .val small{ font-family:var(--ui); color:var(--dim); font-size:.72rem; letter-spacing:.1em; }
+
+  /* esconder toda a "moldura" ao tocar — fica só o relógio */
+  #app.bare header,
+  #app.bare footer,
+  #app.bare .posture{ opacity:0; pointer-events:none; }
+  #app.bare .hint{ opacity:0; }
+
+  .hint{
+    position:fixed; left:0; right:0; bottom:calc(env(safe-area-inset-bottom) + 6px);
+    text-align:center; font-size:.72rem; letter-spacing:.14em; text-transform:uppercase;
+    color:#2f2f2f; pointer-events:none; transition:opacity .6s ease;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition:none !important; }
+  }
+
+  /* paisagem: relógio ainda maior, aula ao lado fica compacta */
+  @media (orientation:landscape) and (max-height:520px){
+    main{ gap:2.5vh; }
+    .clock .hm{ font-size:clamp(4rem, 22vh, 16rem); }
+  }
+</style>
+
+<div id="app">
+  <header id="head">
+    <span class="dot" hidden id="dot"></span>
+    <span id="status">Relógio</span>
+  </header>
+
+  <main id="stage">
+    <div class="clock" id="clock" aria-live="off">
+      <span class="hm"><span id="hh">00</span><span class="colon">:</span><span id="mm">00</span></span><span class="ss" id="ss">00</span>
+    </div>
+
+    <div class="class" id="class">
+      <div class="track"><div class="bar" id="bar"></div></div>
+      <div class="class-meta">
+        <span class="lbl">Aula · restam</span>
+        <span class="rem" id="rem">1:30:00</span>
+      </div>
+    </div>
+
+    <div class="posture off" id="posture">
+      <button class="nav" id="pPrev" aria-label="Postura anterior">‹</button>
+      <span class="name" id="pName">Tadasana</span>
+      <button class="nav" id="pNext" aria-label="Postura seguinte">›</button>
+    </div>
+  </main>
+
+  <footer id="foot">
+    <button class="primary" id="startBtn">Iniciar aula</button>
+    <div class="dur" id="durWrap">
+      <button id="durMinus" aria-label="Menos 5 minutos">–</button>
+      <span class="val" id="durVal">1:30 <small>H</small></span>
+      <button id="durPlus" aria-label="Mais 5 minutos">+</button>
+    </div>
+    <button class="ghost" id="postureBtn">Posturas</button>
+    <button class="ghost" id="fsBtn">Ecrã completo</button>
+  </footer>
+
+  <div class="hint" id="hint">Toca no ecrã para esconder os botões</div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+
+  /* ---------- persistência simples ---------- */
+  var store = {
+    get:function(k,d){ try{ var v=localStorage.getItem(k); return v===null?d:v; }catch(e){ return d; } },
+    set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  };
+
+  /* ---------- relógio (hora atual) ---------- */
+  var hh=$("hh"), mm=$("mm"), ss=$("ss");
+  function pad(n){ return (n<10?"0":"")+n; }
+  function tickClock(){
+    var d=new Date();
+    hh.textContent=pad(d.getHours());
+    mm.textContent=pad(d.getMinutes());
+    ss.textContent=pad(d.getSeconds());
+  }
+
+  /* ---------- cronómetro da aula ---------- */
+  var DUR_MIN = parseInt(store.get("durMin","90"),10) || 90; // duração em minutos
+  var running=false, paused=false;
+  var endAt=0;           // timestamp de fim
+  var remainMs=DUR_MIN*60000; // restante quando pausado / parado
+
+  var head=$("head"), dot=$("dot"), statusEl=$("status");
+  var classEl=$("class"), bar=$("bar"), remEl=$("rem");
+  var startBtn=$("startBtn"), durWrap=$("durWrap"), durVal=$("durVal");
+
+  function fmtDur(min){
+    var h=Math.floor(min/60), m=min%60;
+    return h+":"+pad(m);
+  }
+  function fmtClock(ms){
+    if(ms<0) ms=0;
+    var t=Math.round(ms/1000);
+    var h=Math.floor(t/3600), m=Math.floor((t%3600)/60), s=t%60;
+    return h+":"+pad(m)+":"+pad(s);
+  }
+  function updateDurLabel(){ durVal.innerHTML = fmtDur(DUR_MIN)+' <small>H</small>'; }
+
+  function setDuration(delta){
+    if(running) return;
+    DUR_MIN = Math.max(5, Math.min(240, DUR_MIN+delta));
+    remainMs = DUR_MIN*60000;
+    store.set("durMin", String(DUR_MIN));
+    updateDurLabel();
+    remEl.textContent = fmtClock(remainMs);
+  }
+
+  function startClass(){
+    running=true; paused=false;
+    endAt = Date.now() + remainMs;
+    classEl.classList.add("on");
+    dot.hidden=false; head.classList.add("running");
+    startBtn.textContent="Pausar";
+    durWrap.style.display="none";
+    tickClass();
+  }
+  function pauseClass(){
+    paused=true; running=false;
+    remainMs = Math.max(0, endAt - Date.now());
+    head.classList.remove("running");
+    statusEl.textContent="Em pausa";
+    startBtn.textContent="Retomar";
+  }
+  function resumeClass(){
+    running=true; paused=false;
+    endAt = Date.now() + remainMs;
+    head.classList.add("running");
+    startBtn.textContent="Pausar";
+    tickClass();
+  }
+  function resetClass(){
+    running=false; paused=false;
+    remainMs = DUR_MIN*60000;
+    endAt=0;
+    classEl.classList.remove("on","ending");
+    head.classList.remove("running","ending");
+    dot.hidden=true;
+    statusEl.textContent="Relógio";
+    startBtn.textContent="Iniciar aula";
+    durWrap.style.display="";
+    bar.style.width="0%";
+    remEl.textContent=fmtClock(remainMs);
+    updateDurLabel();
+  }
+
+  var ended=false;
+  function tickClass(){
+    if(!running) return;
+    var left = endAt - Date.now();
+    var total = DUR_MIN*60000;
+    var frac = Math.max(0, Math.min(1, 1 - left/total));
+    bar.style.width = (frac*100).toFixed(2)+"%";
+    remEl.textContent = fmtClock(left);
+    statusEl.textContent = "Aula";
+
+    var ending = left <= 5*60000 && left > 0; // últimos 5 min
+    classEl.classList.toggle("ending", ending);
+    head.classList.toggle("ending", ending);
+
+    if(left<=0 && !ended){
+      ended=true;
+      remEl.textContent="0:00:00";
+      statusEl.textContent="Aula terminada";
+      classEl.classList.add("ending");
+      head.classList.add("ending");
+      try{ if(navigator.vibrate) navigator.vibrate([400,200,400,200,600]); }catch(e){}
+    }
+  }
+
+  startBtn.addEventListener("click", function(){
+    ended=false;
+    if(!running && !paused) startClass();
+    else if(running) pauseClass();
+    else if(paused) resumeClass();
+  });
+  // duplo-toque no botão "Iniciar/Pausar" não reinicia; usamos toque longo para reiniciar
+  var pressTimer=null;
+  startBtn.addEventListener("pointerdown", function(){
+    pressTimer=setTimeout(function(){ resetClass(); }, 700);
+  });
+  ["pointerup","pointerleave","pointercancel"].forEach(function(ev){
+    startBtn.addEventListener(ev, function(){ if(pressTimer){ clearTimeout(pressTimer); pressTimer=null; } });
+  });
+
+  $("durMinus").addEventListener("click", function(){ setDuration(-5); });
+  $("durPlus").addEventListener("click", function(){ setDuration(5); });
+
+  /* ---------- posturas (discreto, avanço manual) ---------- */
+  var POSTURAS = [
+    "Tadasana","Uttanasana","Adho Mukha","Cão a olhar p/ cima","Guerreiro I",
+    "Guerreiro II","Triângulo","Árvore","Cadeira","Ponte","Gato-Vaca",
+    "Criança","Torção sentada","Pombo","Cadáver (Savasana)"
+  ];
+  var pIdx=0;
+  var posture=$("posture"), pName=$("pName"), postureBtn=$("postureBtn");
+  var postureOn = store.get("postureOn","0")==="1";
+  function renderPosture(){ pName.textContent = POSTURAS[pIdx]; }
+  function setPostureVisible(on){
+    postureOn=on;
+    posture.classList.toggle("off", !on);
+    postureBtn.style.color = on ? "#b8b8b8" : "";
+    store.set("postureOn", on?"1":"0");
+  }
+  $("pPrev").addEventListener("click", function(){ pIdx=(pIdx-1+POSTURAS.length)%POSTURAS.length; renderPosture(); });
+  $("pNext").addEventListener("click", function(){ pIdx=(pIdx+1)%POSTURAS.length; renderPosture(); });
+  postureBtn.addEventListener("click", function(){ setPostureVisible(!postureOn); });
+  renderPosture(); setPostureVisible(postureOn);
+
+  /* ---------- esconder controlos (fica só o relógio) ---------- */
+  var app=$("app"), hint=$("hint");
+  var hintTimer=setTimeout(function(){ hint.style.opacity="0"; }, 6000);
+  document.addEventListener("click", function(e){
+    // só alterna se o toque não foi num botão / controlo
+    if(e.target.closest("button, .dur")) return;
+    app.classList.toggle("bare");
+  });
+
+  /* ---------- ecrã completo ---------- */
+  $("fsBtn").addEventListener("click", function(){
+    try{
+      if(!document.fullscreenElement){ (document.documentElement.requestFullscreen||function(){}).call(document.documentElement); }
+      else { (document.exitFullscreen||function(){}).call(document); }
+    }catch(e){}
+  });
+
+  /* ---------- manter o ecrã SEMPRE ligado ---------- */
+  var wakeLock=null;
+  async function requestWake(){
+    try{
+      if("wakeLock" in navigator && document.visibilityState==="visible"){
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", function(){ wakeLock=null; });
+      }
+    }catch(e){ /* silencioso */ }
+  }
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState==="visible"){ requestWake(); }
+  });
+  document.addEventListener("click", requestWake, {passive:true});
+  requestWake();
+
+  /* ---------- loop principal ---------- */
+  function frame(){
+    tickClock();
+    if(running) tickClass();
+  }
+  frame();
+  setInterval(frame, 250);
+
+  // estado inicial dos rótulos
+  updateDurLabel();
+  remEl.textContent = fmtClock(remainMs);
+})();
+</script>
