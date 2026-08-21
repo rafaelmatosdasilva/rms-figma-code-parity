@@ -8,20 +8,19 @@
 <meta name="apple-mobile-web-app-title" content="Aula">
 <link rel="manifest" href='data:application/manifest+json,{"name":"Rel%C3%B3gio de Aula","short_name":"Aula","display":"standalone","background_color":"%23000000","theme_color":"%23000000","orientation":"any","start_url":".","icons":[{"src":"data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 192 192%27%3E%3Crect width=%27192%27 height=%27192%27 fill=%27%23000%27/%3E%3Cg fill=%27none%27 stroke=%27%23fafafa%27 stroke-width=%278%27 stroke-linecap=%27round%27%3E%3Ccircle cx=%2796%27 cy=%2796%27 r=%2770%27/%3E%3Cpath d=%27M96 56v40l26 16%27/%3E%3C/g%3E%3C/svg%3E","sizes":"192x192","type":"image/svg+xml","purpose":"any"}]}'>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23000'/%3E%3Cg fill='none' stroke='%23fafafa' stroke-width='3' stroke-linecap='round'%3E%3Ccircle cx='32' cy='32' r='23'/%3E%3Cpath d='M32 18v14l9 6'/%3E%3C/g%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600&family=Barlow:wght@400;500&display=swap">
 
 <style>
+  /* App auto-contida: sem fontes externas, sem pedidos de rede. */
   :root{
     --bg:#000000;
     --ink:#fafafa;         /* números — branco */
     --dim:#7a7a7a;         /* rótulos secundários */
     --faint:#333333;       /* trilhos, hairlines */
     --accent:#9db39a;      /* verde-sálvia discreto: progresso da aula */
-    --danger:#c96f5a;      /* aula quase a acabar */
-    --clock: "Barlow Semi Condensed", system-ui, sans-serif;
-    --ui: "Barlow", system-ui, sans-serif;
+    --ok:#79b083;          /* ecrã ligado */
+    --danger:#c96f5a;      /* aviso / fim de aula */
+    --clock: system-ui, -apple-system, "Roboto", "Segoe UI", sans-serif;
+    --ui: system-ui, -apple-system, "Roboto", "Segoe UI", sans-serif;
   }
 
   *{ box-sizing:border-box; margin:0; padding:0; }
@@ -49,27 +48,39 @@
       calc(env(safe-area-inset-left) + 16px);
   }
 
-  /* ---------- topo: estado da aula ---------- */
+  /* ---------- topo: estado do ecrã + da aula ---------- */
   header{
-    display:flex; align-items:center; justify-content:center;
+    display:flex; align-items:center; justify-content:space-between;
     gap:10px; min-height:26px;
-    font-size:.95rem; letter-spacing:.14em; text-transform:uppercase;
-    color:var(--dim); font-family:var(--ui); font-weight:500;
     transition:opacity .5s ease;
   }
-  .dot{
-    width:9px; height:9px; border-radius:50%;
-    background:var(--accent); flex:none;
-    box-shadow:0 0 0 0 rgba(157,179,154,.55);
+  .wake{
+    display:inline-flex; align-items:center; gap:7px;
+    font-size:.72rem; letter-spacing:.12em; text-transform:uppercase;
+    font-weight:500; color:var(--dim);
   }
-  header.running .dot{ animation:pulse 2.4s ease-out infinite; }
-  header.ending .dot{ background:var(--danger); box-shadow:none; }
-  header.ending{ color:var(--danger); }
+  .wake .led{ width:8px; height:8px; border-radius:50%; background:var(--faint); flex:none; }
+  .wake.on{ color:#89b891; }
+  .wake.on .led{ background:var(--ok); box-shadow:0 0 8px rgba(121,176,131,.6); }
+  .wake.warn{ color:var(--danger); }
+  .wake.warn .led{ background:var(--danger); animation:blink 1s steps(1,end) infinite; }
+
+  .cls-state{
+    display:inline-flex; align-items:center; gap:9px;
+    font-size:.72rem; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--dim); font-weight:500;
+  }
+  .cls-state .dot{ width:9px; height:9px; border-radius:50%; background:var(--accent); flex:none; }
+  .cls-state:not(.running) .dot{ display:none; }
+  .cls-state.running .dot{ animation:pulse 2.4s ease-out infinite; }
+  .cls-state.ending{ color:var(--danger); }
+  .cls-state.ending .dot{ background:var(--danger); animation:none; }
   @keyframes pulse{
     0%{ box-shadow:0 0 0 0 rgba(157,179,154,.5); }
     70%{ box-shadow:0 0 0 12px rgba(157,179,154,0); }
     100%{ box-shadow:0 0 0 0 rgba(157,179,154,0); }
   }
+  @keyframes blink{ 50%{ opacity:.3; } }
 
   /* ---------- centro: o relógio ---------- */
   main{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5vh; min-height:0; }
@@ -87,8 +98,8 @@
     color:var(--dim); font-weight:500;
     margin-left:.18em;
   }
-  .clock .colon{ animation:blink 1s steps(1,end) infinite; }
-  @keyframes blink{ 50%{ opacity:.28; } }
+  .clock .colon{ animation:softblink 1s steps(1,end) infinite; }
+  @keyframes softblink{ 50%{ opacity:.28; } }
 
   /* faixa da aula (só aparece quando iniciada) */
   .class{
@@ -151,10 +162,11 @@
   .dur .val small{ font-family:var(--ui); color:var(--dim); font-size:.72rem; letter-spacing:.1em; }
 
   /* esconder toda a "moldura" ao tocar — fica só o relógio */
-  #app.bare header,
   #app.bare footer,
-  #app.bare .posture{ opacity:0; pointer-events:none; }
+  #app.bare .posture,
+  #app.bare .cls-state{ opacity:0; pointer-events:none; }
   #app.bare .hint{ opacity:0; }
+  /* o indicador de ecrã ligado NUNCA se esconde — é o requisito crítico */
 
   .hint{
     position:fixed; left:0; right:0; bottom:calc(env(safe-area-inset-bottom) + 6px);
@@ -166,7 +178,6 @@
     *{ animation:none !important; transition:none !important; }
   }
 
-  /* paisagem: relógio ainda maior, aula ao lado fica compacta */
   @media (orientation:landscape) and (max-height:520px){
     main{ gap:2.5vh; }
     .clock .hm{ font-size:clamp(4rem, 22vh, 16rem); }
@@ -174,9 +185,9 @@
 </style>
 
 <div id="app">
-  <header id="head">
-    <span class="dot" hidden id="dot"></span>
-    <span id="status">Relógio</span>
+  <header>
+    <span class="wake" id="wake"><span class="led"></span><span id="wakeText">A ligar ecrã…</span></span>
+    <span class="cls-state" id="clsState"><span class="dot"></span><span id="status">Relógio</span></span>
   </header>
 
   <main id="stage">
@@ -218,11 +229,91 @@
   "use strict";
   var $ = function(id){ return document.getElementById(id); };
 
-  /* ---------- persistência simples ---------- */
   var store = {
     get:function(k,d){ try{ var v=localStorage.getItem(k); return v===null?d:v; }catch(e){ return d; } },
     set:function(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
   };
+
+  /* ============================================================
+     ECRÃ SEMPRE LIGADO — requisito crítico. Tripla proteção:
+       1) Screen Wake Lock API (principal, Android/Chrome)
+       2) Vídeo de segurança (canvas.captureStream) para casos
+          em que o Wake Lock não existe ou é libertado
+       3) Re-ativação automática ao voltar à app / a cada toque
+     Indicador visível confirma o estado.
+     ============================================================ */
+  var wakeEl=$("wake"), wakeText=$("wakeText");
+  var wakeLock=null, fallbackVideo=null, fallbackOK=false;
+
+  function reflectWake(){
+    var active = !!wakeLock || fallbackOK;
+    if(active){
+      wakeEl.className="wake on";
+      wakeText.textContent="Ecrã sempre ligado";
+    }else{
+      wakeEl.className="wake warn";
+      wakeText.textContent="Toca no ecrã p/ manter ligado";
+    }
+  }
+
+  async function acquireWakeLock(){
+    try{
+      if("wakeLock" in navigator && document.visibilityState==="visible"){
+        if(wakeLock) return true;
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", function(){ wakeLock=null; reflectWake(); });
+        reflectWake();
+        return true;
+      }
+    }catch(e){ wakeLock=null; }
+    return false;
+  }
+
+  // Travão de segurança: um vídeo minúsculo sempre a "tocar" mantém
+  // o ecrã aceso mesmo sem Wake Lock. Sem ficheiros — usa canvas.
+  function startFallbackVideo(){
+    if(fallbackVideo) { fallbackVideo.play().catch(function(){}); return; }
+    try{
+      var canvas=document.createElement("canvas");
+      canvas.width=2; canvas.height=2;
+      var ctx=canvas.getContext("2d");
+      if(!canvas.captureStream) return;
+      var stream=canvas.captureStream(2);
+      var v=document.createElement("video");
+      v.muted=true; v.setAttribute("muted",""); v.setAttribute("playsinline","");
+      v.playsInline=true; v.loop=true;
+      v.style.cssText="position:fixed;left:0;top:0;width:1px;height:1px;opacity:0.01;pointer-events:none;";
+      v.srcObject=stream;
+      document.body.appendChild(v);
+      fallbackVideo=v;
+      (function draw(){
+        if(!fallbackVideo) return;
+        ctx.fillStyle=((Date.now()>>9)&1)?"#000000":"#010101";
+        ctx.fillRect(0,0,2,2);
+        requestAnimationFrame(draw);
+      })();
+      v.play().then(function(){ fallbackOK=true; reflectWake(); })
+              .catch(function(){ fallbackOK=false; reflectWake(); });
+    }catch(e){}
+  }
+
+  async function keepAwake(){
+    var ok = await acquireWakeLock();
+    if(!ok) startFallbackVideo();   // sem Wake Lock → usa o vídeo
+    else startFallbackVideo();       // com Wake Lock → mantém o vídeo pronto na mesma
+    reflectWake();
+  }
+
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState==="visible") keepAwake();
+  });
+  document.addEventListener("click", keepAwake, {passive:true});
+  // verificação periódica: se o Wake Lock caiu, volta a pedir
+  setInterval(function(){
+    if(document.visibilityState==="visible" && !wakeLock) keepAwake();
+    reflectWake();
+  }, 8000);
+  keepAwake();
 
   /* ---------- relógio (hora atual) ---------- */
   var hh=$("hh"), mm=$("mm"), ss=$("ss");
@@ -235,19 +326,15 @@
   }
 
   /* ---------- cronómetro da aula ---------- */
-  var DUR_MIN = parseInt(store.get("durMin","90"),10) || 90; // duração em minutos
-  var running=false, paused=false;
-  var endAt=0;           // timestamp de fim
-  var remainMs=DUR_MIN*60000; // restante quando pausado / parado
+  var DUR_MIN = parseInt(store.get("durMin","90"),10) || 90;
+  var running=false, paused=false, ended=false;
+  var endAt=0, remainMs=DUR_MIN*60000;
 
-  var head=$("head"), dot=$("dot"), statusEl=$("status");
+  var clsState=$("clsState"), statusEl=$("status");
   var classEl=$("class"), bar=$("bar"), remEl=$("rem");
   var startBtn=$("startBtn"), durWrap=$("durWrap"), durVal=$("durVal");
 
-  function fmtDur(min){
-    var h=Math.floor(min/60), m=min%60;
-    return h+":"+pad(m);
-  }
+  function fmtDur(min){ var h=Math.floor(min/60), m=min%60; return h+":"+pad(m); }
   function fmtClock(ms){
     if(ms<0) ms=0;
     var t=Math.round(ms/1000);
@@ -266,10 +353,10 @@
   }
 
   function startClass(){
-    running=true; paused=false;
+    running=true; paused=false; ended=false;
     endAt = Date.now() + remainMs;
     classEl.classList.add("on");
-    dot.hidden=false; head.classList.add("running");
+    clsState.className="cls-state running";
     startBtn.textContent="Pausar";
     durWrap.style.display="none";
     tickClass();
@@ -277,24 +364,22 @@
   function pauseClass(){
     paused=true; running=false;
     remainMs = Math.max(0, endAt - Date.now());
-    head.classList.remove("running");
+    clsState.className="cls-state";
     statusEl.textContent="Em pausa";
     startBtn.textContent="Retomar";
   }
   function resumeClass(){
     running=true; paused=false;
     endAt = Date.now() + remainMs;
-    head.classList.add("running");
+    clsState.className="cls-state running";
     startBtn.textContent="Pausar";
     tickClass();
   }
   function resetClass(){
-    running=false; paused=false;
-    remainMs = DUR_MIN*60000;
-    endAt=0;
+    running=false; paused=false; ended=false;
+    remainMs = DUR_MIN*60000; endAt=0;
     classEl.classList.remove("on","ending");
-    head.classList.remove("running","ending");
-    dot.hidden=true;
+    clsState.className="cls-state";
     statusEl.textContent="Relógio";
     startBtn.textContent="Iniciar aula";
     durWrap.style.display="";
@@ -303,7 +388,6 @@
     updateDurLabel();
   }
 
-  var ended=false;
   function tickClass(){
     if(!running) return;
     var left = endAt - Date.now();
@@ -313,27 +397,26 @@
     remEl.textContent = fmtClock(left);
     statusEl.textContent = "Aula";
 
-    var ending = left <= 5*60000 && left > 0; // últimos 5 min
+    var ending = left <= 5*60000 && left > 0;
     classEl.classList.toggle("ending", ending);
-    head.classList.toggle("ending", ending);
+    clsState.classList.toggle("ending", ending);
 
     if(left<=0 && !ended){
       ended=true;
       remEl.textContent="0:00:00";
       statusEl.textContent="Aula terminada";
       classEl.classList.add("ending");
-      head.classList.add("ending");
+      clsState.classList.add("ending");
       try{ if(navigator.vibrate) navigator.vibrate([400,200,400,200,600]); }catch(e){}
     }
   }
 
   startBtn.addEventListener("click", function(){
-    ended=false;
     if(!running && !paused) startClass();
     else if(running) pauseClass();
     else if(paused) resumeClass();
   });
-  // duplo-toque no botão "Iniciar/Pausar" não reinicia; usamos toque longo para reiniciar
+  // toque longo no botão principal = reiniciar
   var pressTimer=null;
   startBtn.addEventListener("pointerdown", function(){
     pressTimer=setTimeout(function(){ resetClass(); }, 700);
@@ -368,9 +451,8 @@
 
   /* ---------- esconder controlos (fica só o relógio) ---------- */
   var app=$("app"), hint=$("hint");
-  var hintTimer=setTimeout(function(){ hint.style.opacity="0"; }, 6000);
+  setTimeout(function(){ hint.style.opacity="0"; }, 6000);
   document.addEventListener("click", function(e){
-    // só alterna se o toque não foi num botão / controlo
     if(e.target.closest("button, .dur")) return;
     app.classList.toggle("bare");
   });
@@ -383,32 +465,13 @@
     }catch(e){}
   });
 
-  /* ---------- manter o ecrã SEMPRE ligado ---------- */
-  var wakeLock=null;
-  async function requestWake(){
-    try{
-      if("wakeLock" in navigator && document.visibilityState==="visible"){
-        wakeLock = await navigator.wakeLock.request("screen");
-        wakeLock.addEventListener("release", function(){ wakeLock=null; });
-      }
-    }catch(e){ /* silencioso */ }
-  }
-  document.addEventListener("visibilitychange", function(){
-    if(document.visibilityState==="visible"){ requestWake(); }
-  });
-  document.addEventListener("click", requestWake, {passive:true});
-  requestWake();
-
   /* ---------- loop principal ---------- */
-  function frame(){
-    tickClock();
-    if(running) tickClass();
-  }
+  function frame(){ tickClock(); if(running) tickClass(); }
   frame();
   setInterval(frame, 250);
 
-  // estado inicial dos rótulos
   updateDurLabel();
   remEl.textContent = fmtClock(remainMs);
+  reflectWake();
 })();
 </script>

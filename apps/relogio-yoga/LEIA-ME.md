@@ -4,8 +4,24 @@ Relógio digital de ecrã cheio para dares as tuas aulas: **números grandes bra
 em fundo preto, o ecrã nunca se desliga**, com um cronómetro para a aula de 1h30 e
 indicações de postura discretas.
 
-É uma única página (`index.html`) que funciona **offline** — não precisa de instalar
-nada nem de ligação à internet depois de aberta.
+É uma única página (`index.html`), **totalmente auto-contida**: não tem fontes,
+scripts nem imagens externas — **não faz um único pedido à internet**. Funciona
+100% offline. Não depende de nada do resto do repositório.
+
+## O ecrã nunca se desliga (tripla proteção)
+
+Este é o requisito principal, por isso tem três camadas:
+
+1. **Screen Wake Lock** (Android/Chrome) — impede o ecrã de apagar enquanto a app
+   está aberta.
+2. **Travão de segurança em vídeo** — se o Wake Lock falhar ou for libertado, um
+   vídeo minúsculo a tocar mantém o ecrã aceso.
+3. **Re-ativação automática** — sempre que voltas à app ou tocas no ecrã, e ainda
+   uma verificação a cada 8 segundos.
+
+No canto superior esquerdo tens um indicador: **«Ecrã sempre ligado ✓»** (verde)
+confirma que está ativo. Se ficar vermelho, toca uma vez no ecrã. Esse indicador
+**nunca desaparece**, mesmo quando escondes os botões.
 
 ## Como usar no telemóvel
 
