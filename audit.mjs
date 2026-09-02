@@ -2250,8 +2250,8 @@ function reportFull(label, items, shown) {
     parseGate3(rStructure));
   addGate('All states are built  (each state implemented · correct selector · variable in the right rule)',
     combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/)));
-  addGate('Component props match Figma  (Figma component properties vs code props: names & coverage)',
-    parseGeneric(rCompProp, /OK|MISSING|NO FILE|RENAME/));
+  addGate('Component props match Figma  (names, defaults & variant options vs code props)',
+    parseGeneric(rCompProp, /OK|MISSING|VALUE|NO FILE|RENAME/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references)',

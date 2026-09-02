@@ -130,6 +130,32 @@ function extractProps(file) {
   return fn ? fn(readText(file)) : new Set();
 }
 
+const _LIT = `(['"\`][^'"\`]*['"\`]|true|false|-?\\d+(?:\\.\\d+)?)`;
+const _unq = (s) => String(s).replace(/^['"\`]|['"\`]$/g, '').trim();
+// Best-effort: code prop -> default value (normalised prop name -> literal string).
+// Covers React default params & defaultProps, Vue withDefaults / defineProps({default}).
+function extractDefaults(text) {
+  const out = new Map();
+  const put = (name, val) => { if (name) out.set(norm(name), _unq(val)); };
+  for (const m of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*${_LIT}`, 'g'))) put(m[1], m[2]);   // ({ a = 'x' })
+  for (const m of text.matchAll(/withDefaults\s*\([\s\S]*?,\s*\{([\s\S]*?)\}\s*\)/g))
+    for (const p of m[1].matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*:\\s*${_LIT}`, 'g'))) put(p[1], p[2]);
+  for (const m of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*:\\s*\\{[^{}]*\\bdefault\\s*:\\s*${_LIT}`, 'g'))) put(m[1], m[2]);
+  for (const m of text.matchAll(/defaultProps\s*=\s*\{([\s\S]*?)\}/g))
+    for (const p of m[1].matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*:\\s*${_LIT}`, 'g'))) put(p[1], p[2]);
+  return out;
+}
+// Best-effort: code prop -> the set of string-literal options it accepts, from a TS
+// union type (`size?: 'small' | 'medium' | 'large'`). Used to check variant coverage.
+function extractOptions(text) {
+  const out = new Map();
+  for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:\s*((?:['"`][^'"`]*['"`]\s*\|\s*)+['"`][^'"`]*['"`])/g)) {
+    const opts = [...m[2].matchAll(/['"`]([^'"`]*)['"`]/g)].map(x => norm(x[1]));
+    if (opts.length >= 2) out.set(norm(m[1]), new Set(opts));
+  }
+  return out;
+}
+
 // ── Resolve a Figma component name to its code file ───────────────────────────
 // 1) explicit componentFiles map  2) base selector present (Vue <style>)
 // 3) a declared component name matches  4) the file basename matches
@@ -167,10 +193,11 @@ function resolveFile(figmaName) {
 // leftover code props are EXTRA (advisory). Renames are then offered as SUGGESTIONS
 // only - pairing names automatically is unreliable (a boolean "showLabel" is not the
 // text prop "label"), so it never decides pass/fail; document a real rename as an alias.
-const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [];
+const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [], VALUE_FAIL = [], VALUE_INFO = [];
 for (const [figmaName, entry] of Object.entries(SNAP)) {
   if (figmaName === '_updated' || !entry?.properties) continue;
-  const figNames = Object.keys(entry.properties).map(cleanFigmaProp).filter(Boolean);
+  const figDefs = new Map(Object.entries(entry.properties).map(([k, v]) => [cleanFigmaProp(k), v]));   // name -> {type, defaultValue, variantOptions}
+  const figNames = [...figDefs.keys()].filter(Boolean);
   if (!figNames.length) continue;
   if (KNOWN_UNIMPLEMENTED.has(figmaName)) continue;
 
@@ -179,18 +206,48 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
     NOFILE.push(`${figmaName}: has Figma properties [${figNames.join(', ')}] but no code component found (${how}) - set ds-config.json → componentFiles["${figmaName}"], or exempt via knownUnimplementedComponents`);
     continue;
   }
-  const codeNorm = new Map([...extractProps(file)].map(p => [norm(p), p]));   // normName -> original
+  const text = readText(file);
+  const codeNorm     = new Map([...extractProps(file)].map(p => [norm(p), p]));   // normName -> original
+  const codeDefaults = extractDefaults(text);                                     // normName -> default literal
+  const codeOptions  = extractOptions(text);                                      // normName -> Set(option norms)
   const aliases  = PROP_ALIASES[figmaName] ?? {};
   const rel = relative(ROOT, file);
+
+  // #1/#3: for a matched prop, compare Figma's default value, variant options and type
+  // against the code. Only fails on values we can actually read from the code (a default
+  // or a string-literal union); when the code side isn't extractable we stay quiet, so
+  // there are no false positives from parsing gaps.
+  const checkValues = (fp, def, codeName) => {
+    if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) return;
+    const cn = norm(codeName);
+    // default value
+    const figDefault = def?.defaultValue;
+    const codeDefault = codeDefaults.get(cn);
+    if (figDefault != null && figDefault !== '' && codeDefault != null && norm(figDefault) !== norm(codeDefault))
+      VALUE_FAIL.push(`${figmaName}/${fp}: default differs - Figma "${figDefault}" vs code "${codeName}=${codeDefault}"  (${rel})`);
+    // variant options (does the code accept every Figma variant value?)
+    if (def?.type === 'VARIANT' && Array.isArray(def.variantOptions) && def.variantOptions.length) {
+      const opts = codeOptions.get(cn);
+      if (opts) {
+        const miss = def.variantOptions.filter(o => !opts.has(norm(o)));
+        if (miss.length) VALUE_FAIL.push(`${figmaName}/${fp}: code prop "${codeName}" is missing Figma variant option(s) ${miss.map(o => `"${o}"`).join(', ')}  (${rel})`);
+      } else {
+        VALUE_INFO.push(`${figmaName}/${fp}: Figma variants [${def.variantOptions.join(', ')}] - could not read the code prop's allowed values to verify  (${rel})`);
+      }
+    }
+    // type sanity (light): a Figma BOOLEAN whose code default is a non-boolean literal
+    if (def?.type === 'BOOLEAN' && codeDefault != null && codeDefault !== 'true' && codeDefault !== 'false')
+      VALUE_INFO.push(`${figmaName}/${fp}: Figma BOOLEAN but code default "${codeDefault}" is not boolean - check the prop type  (${rel})`);
+  };
 
   const matchedCode = new Set();
   const missingHere = [];
   for (const fp of figNames) {
     if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) { OK.push(`${figmaName}/${fp} (exempt)`); continue; }
     const fn = norm(fp);
-    if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp}`); continue; }
+    if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp}`); checkValues(fp, figDefs.get(fp), codeNorm.get(fn)); continue; }
     const aliasTo = aliases[fp] && norm(aliases[fp]);
-    if (aliasTo && codeNorm.has(aliasTo)) { matchedCode.add(aliasTo); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (alias)`); continue; }
+    if (aliasTo && codeNorm.has(aliasTo)) { matchedCode.add(aliasTo); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (alias)`); checkValues(fp, figDefs.get(fp), codeNorm.get(aliasTo)); continue; }
     missingHere.push(fp);
     MISSING.push(`${figmaName}: Figma property "${fp}" has no code prop  (${rel})`);
   }
@@ -209,16 +266,20 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ OK        ${OK.length}`);
 console.log(`❌ MISSING   ${MISSING.length}   (Figma property with no matching code prop)`);
+console.log(`❌ VALUE     ${VALUE_FAIL.length}   (wrong default, or a Figma variant the code doesn't accept)`);
 console.log(`❌ NO FILE   ${NOFILE.length}   (Figma component with props, no code component found)`);
-if (EXTRA.length)   console.log(`ℹ️ EXTRA     ${EXTRA.length}   (code prop with no Figma property - advisory)`);
-if (SUGGEST.length) console.log(`ℹ️ RENAME?   ${SUGGEST.length}   (possible renames - advisory)`);
+if (EXTRA.length)      console.log(`ℹ️ EXTRA     ${EXTRA.length}   (code prop with no Figma property - advisory)`);
+if (SUGGEST.length)    console.log(`ℹ️ RENAME?   ${SUGGEST.length}   (possible renames - advisory)`);
+if (VALUE_INFO.length) console.log(`ℹ️ VALUE?    ${VALUE_INFO.length}   (could not read a code value to verify - advisory)`);
 
-const fail = MISSING.length + NOFILE.length;
-if (MISSING.length) { console.log('\n─── Missing in code (rename the code prop to match, add the prop, or document an alias) ──'); for (const l of MISSING) console.log(`  ❌ ${l}`); }
-if (NOFILE.length)  { console.log('\n─── No code component found ──'); for (const l of NOFILE) console.log(`  ❌ ${l}`); }
-if (SUGGEST.length) { console.log('\n─── Possible renames (advisory) ──'); for (const l of SUGGEST) console.log(`  ℹ️ ${l}`); }
-if (EXTRA.length)   { console.log('\n─── Extra code props (advisory) ──'); for (const l of EXTRA.slice(0, 20)) console.log(`  ℹ️ ${l}`); }
+const fail = MISSING.length + NOFILE.length + VALUE_FAIL.length;
+if (MISSING.length)    { console.log('\n─── Missing in code (rename the code prop to match, add the prop, or document an alias) ──'); for (const l of MISSING) console.log(`  ❌ ${l}`); }
+if (VALUE_FAIL.length) { console.log('\n─── Wrong value (default or variant options do not match Figma) ──'); for (const l of VALUE_FAIL) console.log(`  ❌ ${l}`); }
+if (NOFILE.length)     { console.log('\n─── No code component found ──'); for (const l of NOFILE) console.log(`  ❌ ${l}`); }
+if (SUGGEST.length)    { console.log('\n─── Possible renames (advisory) ──'); for (const l of SUGGEST) console.log(`  ℹ️ ${l}`); }
+if (VALUE_INFO.length) { console.log('\n─── Values not verified (advisory) ──'); for (const l of VALUE_INFO.slice(0, 20)) console.log(`  ℹ️ ${l}`); }
+if (EXTRA.length)      { console.log('\n─── Extra code props (advisory) ──'); for (const l of EXTRA.slice(0, 20)) console.log(`  ℹ️ ${l}`); }
 
 if (fail) { console.log(''); process.exit(1); }
-console.log('\nEvery Figma component property maps to a matching code prop. ✓\n');
+console.log('\nEvery Figma component property maps to a matching code prop, with the right default and variants. ✓\n');
 process.exit(0);
