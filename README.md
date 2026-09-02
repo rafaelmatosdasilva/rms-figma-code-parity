@@ -88,7 +88,7 @@ Each run checks 21 things and tells you which are off. In plain terms:
 | 9 | **Nested components keep their own styles**: one component's styles don't leak into another. |
 | 10 | **Structure**: each component has the right height, spacing and corners, from tokens. |
 | 11 | **All states are built**: hover, disabled, selected… each exists and uses the right values. |
-| 12 | **Component props match Figma**: every Figma component property has a code prop with the same name, the same default, and all its variant options (catches missing props, renames like `size` vs `buttonSize`, a Figma `medium` default the code sets to `small`, or a `large` variant the code doesn't accept). |
+| 12 | **Component props match Figma**: every Figma component property has a code prop with the same name, default and variant options, and every Figma slot (instance-swap) has a code slot (catches missing props, renames like `size` vs `buttonSize`, a `medium` default the code sets to `small`, a `large` variant the code doesn't accept, or an icon slot with no `<slot>`). |
 | 13 | **Sub-components match Figma**: the sub-components Figma nests inside a component are the ones the code actually uses (catches a Card that should hold a Badge but doesn't). |
 | 14 | **Markup**: the HTML shape (ids, classes, icons) still matches what was approved. |
 | 15 | **Required pieces are in place**: buttons use the icon and component the design asks for. |

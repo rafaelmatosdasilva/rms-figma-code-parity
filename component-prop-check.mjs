@@ -155,6 +155,19 @@ function extractOptions(text) {
   }
   return out;
 }
+// #4: a Figma INSTANCE_SWAP property is a SLOT, not a value prop - it maps to a code
+// slot (Vue <slot>, React children/ReactNode). Best-effort detection of the code's slots.
+function extractSlots(text) {
+  const named = new Set();
+  let hasDefault = false;
+  for (const m of text.matchAll(/<slot\b[^>]*\bname\s*=\s*['"`]([\w-]+)['"`]/g)) named.add(norm(m[1]));  // Vue named
+  if (/<slot(\s|\/|>)/.test(text) && !/<slot\b[^>]*\bname\s*=/.test(text)) hasDefault = true;            // Vue default
+  for (const m of text.matchAll(/defineSlots\s*<\s*\{([\s\S]*?)\}/g))
+    for (const p of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*[?:]/g)) named.add(norm(p[1]));                  // Vue defineSlots
+  if (/\bchildren\b/.test(text)) hasDefault = true;                                                      // React children
+  for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:\s*React\.?ReactNode/g)) named.add(norm(m[1])); // React ReactNode props as slots
+  return { named, hasDefault };
+}
 
 // ── Resolve a Figma component name to its code file ───────────────────────────
 // 1) explicit componentFiles map  2) base selector present (Vue <style>)
@@ -204,7 +217,7 @@ const isStateAxis = (name, def) => STATE_PROP_NAMES.has(norm(name)) ||
   (def?.type === 'VARIANT' && Array.isArray(def.variantOptions) && def.variantOptions.length >= 2 &&
    def.variantOptions.every(o => STATE_WORDS.has(norm(o))));
 
-const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [], VALUE_FAIL = [], VALUE_INFO = [];
+const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [], VALUE_FAIL = [], VALUE_INFO = [], SLOT_FAIL = [];
 for (const [figmaName, entry] of Object.entries(SNAP)) {
   if (figmaName === '_updated' || !entry?.properties) continue;
   const figDefs = new Map(Object.entries(entry.properties)
@@ -253,10 +266,19 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
       VALUE_INFO.push(`${figmaName}/${fp}: Figma BOOLEAN but code default "${codeDefault}" is not boolean - check the prop type  (${rel})`);
   };
 
+  const codeSlots = extractSlots(text);
   const matchedCode = new Set();
   const missingHere = [];
   for (const fp of figNames) {
     if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) { OK.push(`${figmaName}/${fp} (exempt)`); continue; }
+    const def = figDefs.get(fp);
+    // #4: an INSTANCE_SWAP property is a SLOT, not a value prop - check the code has a
+    // matching slot (a named slot, or a default slot / children), not a prop of that name.
+    if (def?.type === 'INSTANCE_SWAP') {
+      if (codeSlots.named.has(norm(fp)) || codeSlots.hasDefault) OK.push(`${figmaName}/${fp} (slot)`);
+      else SLOT_FAIL.push(`${figmaName}: Figma slot "${fp}" (instance swap) has no code slot (Vue <slot>/React children)  (${rel})`);
+      continue;
+    }
     const fn = norm(fp);
     if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp}`); checkValues(fp, figDefs.get(fp), codeNorm.get(fn)); continue; }
     const aliasTo = aliases[fp] && norm(aliases[fp]);
@@ -280,14 +302,16 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
 console.log(`\n✅ OK        ${OK.length}`);
 console.log(`❌ MISSING   ${MISSING.length}   (Figma property with no matching code prop)`);
 console.log(`❌ VALUE     ${VALUE_FAIL.length}   (wrong default, or a Figma variant the code doesn't accept)`);
+console.log(`❌ SLOT      ${SLOT_FAIL.length}   (Figma instance-swap slot with no code slot)`);
 console.log(`❌ NO FILE   ${NOFILE.length}   (Figma component with props, no code component found)`);
 if (EXTRA.length)      console.log(`ℹ️ EXTRA     ${EXTRA.length}   (code prop with no Figma property - advisory)`);
 if (SUGGEST.length)    console.log(`ℹ️ RENAME?   ${SUGGEST.length}   (possible renames - advisory)`);
 if (VALUE_INFO.length) console.log(`ℹ️ VALUE?    ${VALUE_INFO.length}   (could not read a code value to verify - advisory)`);
 
-const fail = MISSING.length + NOFILE.length + VALUE_FAIL.length;
+const fail = MISSING.length + NOFILE.length + VALUE_FAIL.length + SLOT_FAIL.length;
 if (MISSING.length)    { console.log('\n─── Missing in code (rename the code prop to match, add the prop, or document an alias) ──'); for (const l of MISSING) console.log(`  ❌ ${l}`); }
 if (VALUE_FAIL.length) { console.log('\n─── Wrong value (default or variant options do not match Figma) ──'); for (const l of VALUE_FAIL) console.log(`  ❌ ${l}`); }
+if (SLOT_FAIL.length)  { console.log('\n─── Missing slot (Figma instance swap with no code slot) ──'); for (const l of SLOT_FAIL) console.log(`  ❌ ${l}`); }
 if (NOFILE.length)     { console.log('\n─── No code component found ──'); for (const l of NOFILE) console.log(`  ❌ ${l}`); }
 if (SUGGEST.length)    { console.log('\n─── Possible renames (advisory) ──'); for (const l of SUGGEST) console.log(`  ℹ️ ${l}`); }
 if (VALUE_INFO.length) { console.log('\n─── Values not verified (advisory) ──'); for (const l of VALUE_INFO.slice(0, 20)) console.log(`  ℹ️ ${l}`); }
