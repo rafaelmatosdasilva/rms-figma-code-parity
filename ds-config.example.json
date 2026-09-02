@@ -55,5 +55,9 @@
   "componentPropAliases": {},
   "_componentSrcDirs_note": "Optional dirs to scan for .vue/.tsx/.jsx component files (default: src, components, app, lib, packages).",
   "componentSrcDirs": [],
-  "knownPropExceptions": []
+  "knownPropExceptions": [],
+  "_knownStateProps_note": "VARIANT properties that are state axes (map to CSS pseudo-classes, verified by Gate 11), not code props. Skipped by the component-props gate.",
+  "knownStateProps": ["State"],
+  "_composition_note": "Gate: Sub-components match Figma. knownCompositionExceptions exempts a parent/child pair (e.g. a sub-component intentionally not used yet).",
+  "knownCompositionExceptions": []
 }

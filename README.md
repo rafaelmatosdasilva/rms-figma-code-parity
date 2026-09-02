@@ -65,15 +65,15 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1. Get the latest from Figma** | Reads the current colors, sizes, fonts and component shapes from Figma and shows what changed since last time. |
-| **2. Check the code** | Runs 20 checks against your CSS and reports anything that doesn't match. |
+| **2. Check the code** | Runs 21 checks against your CSS and reports anything that doesn't match. |
 
 You always check against the latest design, so you can't accidentally compare against an old one.
 
 ---
 
-## The 20 checks
+## The 21 checks
 
-Each run checks 20 things and tells you which are off. In plain terms:
+Each run checks 21 things and tells you which are off. In plain terms:
 
 | # | What it checks |
 |---|---|
@@ -89,14 +89,15 @@ Each run checks 20 things and tells you which are off. In plain terms:
 | 10 | **Structure**: each component has the right height, spacing and corners, from tokens. |
 | 11 | **All states are built**: hover, disabled, selected… each exists and uses the right values. |
 | 12 | **Component props match Figma**: every Figma component property has a code prop with the same name, the same default, and all its variant options (catches missing props, renames like `size` vs `buttonSize`, a Figma `medium` default the code sets to `small`, or a `large` variant the code doesn't accept). |
-| 13 | **Markup**: the HTML shape (ids, classes, icons) still matches what was approved. |
-| 14 | **Required pieces are in place**: buttons use the icon and component the design asks for. |
-| 15 | **Icons**: icons come from the shared set and match Figma. |
-| 16 | **Transitions**: animations use the durations and easings from the design. |
-| 17 | **Renders correctly in a browser**: the real rendered result matches the design, not just the code on paper. |
-| 18 | **What this audit actually checked**: shows what was and wasn't covered, so nothing slips through unnoticed. |
-| 19 | **Motion** *(optional)*: motion values match Figma, when your DS defines them. |
-| 20 | **Shadows** *(optional)*: shadows match Figma, when your DS defines them. |
+| 13 | **Sub-components match Figma**: the sub-components Figma nests inside a component are the ones the code actually uses (catches a Card that should hold a Badge but doesn't). |
+| 14 | **Markup**: the HTML shape (ids, classes, icons) still matches what was approved. |
+| 15 | **Required pieces are in place**: buttons use the icon and component the design asks for. |
+| 16 | **Icons**: icons come from the shared set and match Figma. |
+| 17 | **Transitions**: animations use the durations and easings from the design. |
+| 18 | **Renders correctly in a browser**: the real rendered result matches the design, not just the code on paper. |
+| 19 | **What this audit actually checked**: shows what was and wasn't covered, so nothing slips through unnoticed. |
+| 20 | **Motion** *(optional)*: motion values match Figma, when your DS defines them. |
+| 21 | **Shadows** *(optional)*: shadows match Figma, when your DS defines them. |
 
 ---
 
@@ -137,14 +138,15 @@ Each run checks 20 things and tells you which are off. In plain terms:
   ✅  [10]  Component structure agrees (height, spacing, base-r…Pass
   ✅  [11]  All component states are built, wired, and in the r…Pass
   ✅  [12]  Every Figma component property has a matching code …Pass
-  ✅  [13]  HTML structure (ids, component classes, icon refs) …Pass
-  ✅  [14]  Every declared slot uses the correct DS icon and co…Pass
-  ✅  [15]  All DS icon symbols are documented, paths verified,…Pass
-  ✅  [16]  All CSS transitions use the documented duration, ea…Pass
-  ✅  [17]  Rendered computed styles agree with the DS spec (he…Pass
-  ✅  [18]  Coverage - which DS components/states the audit act…Pass
-  ✅  [19]  Motion tokens (easing · duration) agree - when conf…Pass
-  ✅  [20]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
+  ✅  [13]  The sub-components Figma nests are the ones the cod…Pass
+  ✅  [14]  HTML structure (ids, component classes, icon refs) …Pass
+  ✅  [15]  Every declared slot uses the correct DS icon and co…Pass
+  ✅  [16]  All DS icon symbols are documented, paths verified,…Pass
+  ✅  [17]  All CSS transitions use the documented duration, ea…Pass
+  ✅  [18]  Rendered computed styles agree with the DS spec (he…Pass
+  ✅  [19]  Coverage - which DS components/states the audit act…Pass
+  ✅  [20]  Motion tokens (easing · duration) agree - when conf…Pass
+  ✅  [21]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
 
 ────────────────────────────────────────────────────────────
 
@@ -166,9 +168,9 @@ Each run checks 20 things and tells you which are off. In plain terms:
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  20/20 [████████████████████]
-  ❌  2026-06-16  11/12 [███████████████████░]
-  ✅  2026-06-17  20/20 [████████████████████]
+  ✅  2026-06-15  21/21 [█████████████████████]
+  ❌  2026-06-16  11/12 [████████████████████░]
+  ✅  2026-06-17  21/21 [█████████████████████]
 ────────────────────────────────────────────────────────────
 ```
 

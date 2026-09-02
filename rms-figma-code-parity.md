@@ -240,7 +240,7 @@ a condition you cannot fix.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`rms-figma-code-parity`** | **All 20 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 21 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -996,13 +996,13 @@ If `FIGMA_TOKEN` is set, `audit.mjs` regenerates this file on every run via REST
 
 ---
 
-## Phase 2 - Step 2: Run all 20 audit gates
+## Phase 2 - Step 2: Run all 21 audit gates
 
 ```bash
 rms-figma-code-parity
 ```
 
-All 20 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
+All 21 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1020,6 +1020,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [10] | `structure-check.mjs` | **Structure** | **Structure matches Figma** - Height, spacing, font, and radius all point to the right design tokens - no hardcodes, no gaps. Also enforces `childFramePadding` HTML structure: text-bearing buttons must wrap text in the required child element (e.g. `<span>`) so CSS padding applies. |
 | [11] | `state-check.mjs` `state-binding-check.mjs` `component-selector-check.mjs` | **Structure** | **All states are built** - Three checks in one: (a) all Figma component states have tokens in code (`state-check`); (b) every `CONTRACT.propertyMap` state selector exists in CSS (`state-binding-check`); (c) state-suffix vars (`-hover`, `-selected`, `-disabled`, `-focus`, `-checked`) only appear inside selectors with a matching state indicator (`component-selector-check`). Intentional exceptions go in `ds-config.json → knownStateExemptions`. |
 | [11b] | `component-prop-check.mjs` | **Structure** | **Component props match Figma** - Compares each Figma component's property NAMES (from `figma-component-props.snapshot.json`) against the code component's declared props, read straight from the source so it never depends on Figma Code Connect. Supports Vue (`defineProps` / `props` option) and React (Props type / destructured params / `propTypes`); add more via `PROP_EXTRACTORS`. A Figma property with no exact-name (or documented-alias) code prop is a **MISSING** fail; a Figma component with properties but no resolvable code file is a **NO FILE** fail (no silent skips: map it in `ds-config.json → componentFiles`, or exempt via `knownUnimplementedComponents`). Real renames are documented in `ds-config.json → componentPropAliases` (`{ "buttonPrimary": { "size": "buttonSize" } }`) and count as matches; likely renames are surfaced as advisory suggestions. Extra code props with no Figma property are advisory. **Beyond names, it checks values**: for a matched prop it compares the Figma `defaultValue` against the code default (Vue `withDefaults`/`default:`, React default params/`defaultProps`) and, for `VARIANT` properties, verifies the code accepts every Figma variant option (from a TS string-literal union) - so a wrong default or an unimplemented variant (`large` missing) is a **VALUE** fail. Value checks only fire when the code side is readable, so parsing gaps never produce false positives. **The Figma `State` axis is skipped here** - a `State` variant (hover/focus/active/…) maps to CSS pseudo-classes, not a code prop, so it belongs to Gate [11] (All states are built); Gate [12] would otherwise wrongly flag a missing `state` prop. It skips a property named `state`/`states` or any VARIANT whose options are all interaction states (override via `ds-config.json → knownStateProps`). Boolean state props like `disabled`/`selected` remain real props and are checked. The snapshot is required (missing ⇒ exit 2, "not run") and should be committed; capture it with no token via the plugin (see Gate [10g]). |
+| [11c] | `component-composition-check.mjs` | **Structure** | **Sub-components match Figma** - A DS component contains other DS components (a Card holds a Badge, a Button an Icon). This verifies the set of sub-components Figma nests inside a component equals the set the code uses. Reads `component-composition.snapshot.json` (`{ "Card": ["Badge"] }`, committed, captured with no token via the plugin) and detects a sub-component in code by its base selector or its name as a JSX tag / import - so it never depends on Code Connect. A Figma-nested sub-component the code doesn't use is a **MISSING** fail; a component with nested children but no resolvable code file is a **NO FILE** fail (map it in `ds-config.json → componentFiles`). Code using a component Figma doesn't nest is advisory. Exempt a pair via `ds-config.json → knownCompositionExceptions` (`["Card/Badge"]`) or a whole component via `knownUnimplementedComponents`. |
 | [12] | `html-structure-check.mjs` | **Markup** | **Markup matches** - Fingerprint includes: element IDs, DS component classes on interactive elements, icon `<use href>` refs with context, and **button inner structure** (whether each id'd `<button>` has SVG, span children with their classes, and text content). Diffs against stored snapshot; any undeclared structural change is ❌. Accept: `node scripts/html-structure-check.mjs --accept`. |
 | [13] | `icon-slot-check.mjs` `component-slot-check.mjs` `form-control-check.mjs` | **Markup** | **Required pieces are in place** - Exhaustiveness across three asset types: (a) icon slots - every slot in `ICON_USAGES` uses the exact DS icon specified; every `<button id="X">` with `<use href="#icon-">` must be declared; (b) component slots - every slot in `COMPONENT_USAGES` uses the correct DS component class; every button with a primary/secondary/tertiary/quaternary class must be declared; (c) **form controls** (13c) - bespoke form controls use their DS component's tokens (a search field bordered with the divider token instead of the input token stays green under every value gate), AND **native radio/checkbox must not render natively**: a `<input type=radio\|checkbox>` can only be DS-styled by visually SUPPRESSING the native control (opacity:0 / clipped / appearance:none) and drawing a styled sibling - so a native control the CSS never suppresses is rendering with browser chrome instead of the DS component (the bug where a `.radioButton-input` class carried no hiding rule and the browser drew a native red radio). Generic, no config; exempt a deliberate native control via `ds-config.json → knownNativeControlExceptions`. |
 | [14] | `pseudo-element-check.mjs` `icon-check.mjs` `icon-freshness-check.mjs` | **Markup** | **Icons match Figma** - Three-part check: (a) `::before`/`::after` pseudo-elements declared in the structure contract; (b) every SVG `<symbol>` in `ICON_SYMBOLS` - DS icons with Figma node ID, plugin icons marked `PLUGIN-SPECIFIC`, with path data verified against snapshot, and **every DS sprite id derived from its DS component's name** (catches renames and wrong-component entries; deliberate differences need `idDiffersFromDsName`); (c) **live Figma freshness** - for every DS icon with a `nodeId`, fetches the live SVG from Figma REST API and compares path data against the snapshot, AND fetches the node's live **name** (`/nodes?ids=…`) and flags a **rename**. Code references DS icons by their exact Figma name (`#icon-download` ↔ `Icon-download`; the icon-id HARD RULE), so a DS rename that keeps the same nodeId but changes the name (`Icon-download` → `Icon-export`) leaves the code pointing at a stale id - and a rename need not change the geometry, so the path check alone can miss it. The name check is **case-insensitive** (ids are case-normalised, so `Icon-Fit`→`Icon-fit` is not a real drift) and **skips variant-property names** (a live name like `size=small` means the nodeId now resolves into a size-variant set, not a rename - the set name is unchanged). Requires `FIGMA_TOKEN`; part (c) skips if not set. |
@@ -1112,6 +1113,29 @@ for (const node of sets) {
   const anns = node.annotations ?? [];
   if (Object.keys(props).length || anns.length)
     result[node.name] = { nodeId: node.id, properties: props, annotations: anns };
+}
+return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2);
+```
+
+### `component-composition.snapshot.json` - Plugin API capture (no token, any plan)
+
+Feeds Gate [11c] (Sub-components match Figma). For each component, records the set of OTHER DS components it instantiates. Run in Figma (via `use_figma` / the Plugin console), save as `component-composition.snapshot.json` at project root, and commit it:
+
+```js
+const compSetName = (inst) => {
+  const mc = inst.mainComponent; if (!mc) return null;
+  return (mc.parent && mc.parent.type === 'COMPONENT_SET') ? mc.parent.name : mc.name;
+};
+const result = {};
+const roots = figma.root.findAll(n =>
+  n.type === 'COMPONENT_SET' || (n.type === 'COMPONENT' && n.parent?.type !== 'COMPONENT_SET'));
+for (const node of roots) {
+  const nested = new Set();
+  for (const inst of node.findAllWithCriteria({ types: ['INSTANCE'] })) {
+    const name = compSetName(inst);
+    if (name && name !== node.name) nested.add(name);
+  }
+  if (nested.size) result[node.name] = [...nested].sort();
 }
 return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2);
 ```
@@ -1402,7 +1426,7 @@ return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 20 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| All 21 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 

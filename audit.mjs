@@ -2193,7 +2193,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2219,6 +2219,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('effect-check.mjs'),
     runScriptAsync('container-containment-check.mjs'),
     runScriptAsync('component-prop-check.mjs'),
+    runScriptAsync('component-composition-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2252,6 +2253,8 @@ function reportFull(label, items, shown) {
     combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/)));
   addGate('Component props match Figma  (names, defaults & variant options vs code props)',
     parseGeneric(rCompProp, /OK|MISSING|VALUE|NO FILE|RENAME/));
+  addGate('Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)',
+    parseGeneric(rCompose, /OK|MISSING|NO FILE|EXTRA/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references)',
@@ -2315,6 +2318,7 @@ function reportFull(label, items, shown) {
     'Component structure agrees (height, spacing, base-rule var bindings)',
     'All component states are built, wired, and in the right selector',
     'Every Figma component property has a matching code prop (name and coverage)',
+    'The sub-components Figma nests are the ones the code uses',
     // Markup
     'HTML structure (ids, component classes, icon refs) agrees with the snapshot',
     'Every declared slot uses the correct DS icon and component class',
