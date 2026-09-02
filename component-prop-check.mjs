@@ -39,7 +39,8 @@ const SNAP_PATH = cfg.paths?.compPropsSnapshot ??
 if (!existsSync(join(ROOT, SNAP_PATH))) {
   console.log(`\n⚠️  ${SNAP_PATH} not found at project root.`);
   console.log('   This snapshot lists each Figma component\'s properties and should be committed.');
-  console.log('   Run the audit with FIGMA_TOKEN set to generate it, then commit it.');
+  console.log('   Run /rms-figma-code-parity once - it captures this via the Figma plugin (no token,');
+  console.log('   any plan) - then commit it.');
   console.log('   (exit 2 - treated as "not run", never a pass)\n');
   process.exit(2);
 }

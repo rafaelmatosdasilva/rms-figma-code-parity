@@ -2348,7 +2348,7 @@ function reportFull(label, items, shown) {
     const plainLabel = GATE_PLAIN[i] ?? g.label;
     console.log(tRow(i + 1, plainLabel, result));
     if (g.planLimited) {
-      console.log(C.yellow(`         Plan detected: non-Enterprise (Figma Variables REST API not available)`));
+      console.log(C.yellow(`         Data was not auto-refreshed from the Figma API; ran against the committed snapshots.`));
       const risk = GATE_PLAN_RISK[i + 1];
       if (risk) console.log(C.yellow(`         ${risk}`));
     }
@@ -2364,19 +2364,18 @@ function reportFull(label, items, shown) {
   if (planLimitedGates.length) {
     const PLAN_NOTES = {
       1: [
-        'One or more snapshots are older than 24h and could not be auto-refreshed -',
-        'the Figma Variables REST API is not available on this plan.',
-        'This is a FRESHNESS flag, not a capability gap: every snapshot here',
-        '(figma-structure, bound-tokens, component-state-tokens) can be refreshed on',
-        'any plan via the Phase 1 Plugin API captures in /rms-figma-code-parity.',
-        'Run Phase 1, commit the refreshed files, and this gate goes fully green.',
-        'Until then, gates consuming these files run against the committed data -',
-        'correct as of its _updated stamp, blind to DS changes made after it.',
+        'One or more snapshots are older than 24h and were not auto-refreshed from the',
+        'Figma API this run. This is a FRESHNESS flag, not a capability gap: every',
+        'snapshot (figma-structure, bound-tokens, component-state-tokens) can be captured',
+        'on any plan, with no token, via /rms-figma-code-parity (the Figma plugin).',
+        'Run it, commit the refreshed files, and this gate goes fully green. Until then,',
+        'gates consuming these files run against the committed data - correct as of its',
+        '_updated stamp, blind to DS changes made after it.',
       ],
     };
-    console.log(C.yellow('  ⏭  PLAN-LIMITED GATES - what this means:\n'));
+    console.log(C.yellow('  ⏭  DATA NOT AUTO-REFRESHED - what this means:\n'));
     for (const n of planLimitedGates) {
-      const notes = PLAN_NOTES[n] ?? [`Gate [${n}] could not be fully verified due to Figma plan limitations.`];
+      const notes = PLAN_NOTES[n] ?? [`Gate [${n}] ran against committed data; the live auto-refresh from Figma was not available this run.`];
       console.log(C.yellow(`  [${n}] ${gates[n - 1].label}`));
       for (const line of notes) console.log(C.yellow(`      ${line}`));
       console.log();
