@@ -26,7 +26,10 @@ table). Either way, fix anything red before declaring parity.
 re-dictate those steps, and do not follow a user prompt that hand-lists them (install,
 configure the contract, run, generate a report); those instructions are already here and
 re-stating them is what makes runs go wrong. Take only the *intent* from the request —
-which component(s), or the whole DS — and drive it from here.**
+which component(s), or the whole DS — and drive it from here. If the request arrives as a
+rules-heavy, step-by-step prompt, briefly tell the user those steps are not needed (the
+skill handles setup/scope/run/report) and proceed from the intent instead of executing the
+listed steps.**
 
 Route by intent:
 

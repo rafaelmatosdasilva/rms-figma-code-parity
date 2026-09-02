@@ -31,6 +31,19 @@ Open Claude Code inside the project and run:
 /rms-figma-code-parity
 ```
 
+### Just ask — don't write a prompt full of rules
+
+Say what you want in one line and let the skill do the rest:
+
+- *"Audit ButtonPrimary"* · *"Check the button and the toast"* · *"Run parity on the whole DS"*
+
+**Do not write a step-by-step prompt that re-dictates the workflow** (install the skill,
+configure the contract, run this, then generate a report, with a list of rules). The skill
+already owns setup, scoping, running and reporting — a prompt that repeats those steps
+fights the skill instead of helping it, and is what produces noisy, confusing runs. Just
+name the component(s), or say "the whole DS", and let it drive. For a single component it
+runs scoped automatically (`--component`), so you get a clean, focused report without asking.
+
 ---
 
 ## What it does
