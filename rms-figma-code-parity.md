@@ -935,17 +935,11 @@ Print tokens changed/added/removed per section, which CSS vars need updating, co
 
 ## Phase 2 - Bound token walk
 
-`bound-tokens.json` is a **committed snapshot** - works on any Figma plan, including CI.
+`bound-tokens.json` is a **committed snapshot** - works on any Figma plan, no token, including CI. There is **no Enterprise requirement**: capture it once (either way below), commit it, and everyone runs against it with nothing installed.
 
-### Auto-refresh (Enterprise - REST API available)
+### Standard: Plugin API capture (any plan, no token)
 
-`audit.mjs` regenerates it on every run automatically:
-1. `GET /v1/files/{key}/variables/local` → variable ID → name map
-2. For each frame in `ds-config.json frames[]`, `GET /v1/files/{key}/nodes?ids={nodeId}` → walks subtree, collecting every `boundVariables` reference
-
-### Plugin API refresh (Professional plan - REST returns 403)
-
-When the REST API returns 403, run this in Figma (via `use_figma` or the Plugin console), then save the output as `bound-tokens.json` and commit it:
+This is the universal path. Run it in Figma (via `use_figma` or the Plugin console), save the output as `bound-tokens.json`, and commit it:
 
 ```js
 const collections = await figma.variables.getLocalVariableCollectionsAsync();
@@ -994,7 +988,11 @@ return { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet]
 
 Save the returned JSON as `bound-tokens.json` at project root and commit it. The `_updated` stamp lets Gate [1] track the file's freshness - a stamp ≤24h old keeps Gate [4] fully green on any plan. Run this whenever DS frames change significantly.
 
-**If `bound-tokens.json` is missing entirely:** Gate [4] hard-fails. Generate it via one of the two methods above.
+### Optional convenience: auto-refresh with a token
+
+If `FIGMA_TOKEN` is set, `audit.mjs` regenerates this file on every run via REST (`/v1/files/{key}/variables/local` for the id→name map, then `/nodes` per frame), so you don't re-run the plugin capture by hand. This is only a convenience: the Variables endpoint is Enterprise-only, so on other plans it 403s and the committed plugin capture above is used - parity still runs at full strength. **No token and no Enterprise plan are ever required.**
+
+**If `bound-tokens.json` is missing entirely:** Gate [4] hard-fails. Generate it via the plugin capture above (any plan, no token).
 
 ---
 
@@ -1096,9 +1094,27 @@ Every Figma annotation attached to a component node is a design specification. T
 
 ### How it works
 
-1. **`audit.mjs` refresh** - `refreshComponentProps()` fetches `doc.annotations[]` alongside `componentPropertyDefinitions` for every component node. Nodes with either properties **or** annotations are included in the snapshot.
+1. **`audit.mjs` refresh** - `refreshComponentProps()` fetches `doc.annotations[]` alongside `componentPropertyDefinitions` for every component node. Nodes with either properties **or** annotations are included in the snapshot. (REST `/nodes` works on any plan with a token; it is NOT the Enterprise-only Variables endpoint.)
 2. **Gate [10g] check** - for every component in the snapshot that has annotations, `structure-check.mjs` looks up `CONTRACT[key].annotations` and verifies each annotation label is present. Missing label → `FAIL`. If a CSS selector is provided, it must exist in the CSS - not found → `FAIL`.
 3. **`anyFail`** - annotation failures count the same as property failures; the gate exits non-zero.
+
+### Plugin API capture (no token, any plan)
+
+No token? Generate the same file inside Figma via `use_figma` / the plugin console, then save it as `figma-component-props.snapshot.json` at project root and commit it. `componentPropertyDefinitions` is readable on a COMPONENT_SET (or a standalone COMPONENT), so this needs no REST and no Enterprise plan - it feeds Gate [12] (component prop parity) and Gate [10g] at full strength:
+
+```js
+const result = {};
+const sets = figma.root.findAll(n =>
+  n.type === 'COMPONENT_SET' || (n.type === 'COMPONENT' && n.parent?.type !== 'COMPONENT_SET'));
+for (const node of sets) {
+  let props = {};
+  try { props = node.componentPropertyDefinitions ?? {}; } catch { /* variant child - skip */ }
+  const anns = node.annotations ?? [];
+  if (Object.keys(props).length || anns.length)
+    result[node.name] = { nodeId: node.id, properties: props, annotations: anns };
+}
+return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2);
+```
 
 ### CONTRACT.annotations schema
 
@@ -1235,7 +1251,7 @@ This is a warning, not a failure - it does not block the audit. Its purpose: sur
 
 > `_`-prefixed keys are metadata and ignored by every consumer - the refresh writes an `_updated` stamp so Gate [1] can track the file's freshness, plus `_hiddenOnly`/`_hiddenToggleable` for Hard Rule 7.
 
-**Plugin API fallback** - when REST is plan-limited, run this in Figma (via `use_figma` or Plugin console), save the output as `component-state-tokens.json` at project root, and commit it:
+**Plugin API capture (any plan, no token)** - run this in Figma (via `use_figma` or Plugin console), save the output as `component-state-tokens.json` at project root, and commit it:
 
 ```js
 const idToName = {};
@@ -1298,7 +1314,7 @@ Manual `CSS_BASE_RULE_VARS` entries always override auto-derived for the same `s
 
 **If the auto-refresh fails** (REST API 403 / no `FIGMA_TOKEN`): Gate [3c] falls back to manual `CSS_BASE_RULE_VARS` only. No gate noise - the count just shows `(N manual)` instead of `(N auto-derived · M manual)`.
 
-**Plugin API fallback** - when REST API is plan-limited, run this in Figma (via `use_figma` or Plugin console), save the output as `component-state-bindings.json` at project root (gitignored):
+**Plugin API capture (any plan, no token)** - run this in Figma (via `use_figma` or Plugin console), save the output as `component-state-bindings.json` at project root (gitignored):
 
 ```js
 const idToVar = {};
@@ -1349,9 +1365,9 @@ Powers the **per-component** parity scoping of the hardcoded-value gate (Hard Ru
 
 `{ "ButtonPrimary": { "nums": [4, 24, 40, 48], "colors": ["2563eb", "ffffff"] }, … }`
 
-**Auto-refresh (REST):** `audit.mjs` regenerates it on every run when `FIGMA_TOKEN` is set.
+**Optional convenience - auto-refresh (REST):** `audit.mjs` regenerates it on every run when `FIGMA_TOKEN` is set. Not required; the plugin capture below is the universal, any-plan, no-token path.
 
-**Plugin API fallback** - when REST is plan-limited, run this in Figma (via `use_figma` or the Plugin console), save as `component-values.snapshot.json` at project root, and commit it:
+**Plugin API capture (any plan, no token)** - run this in Figma (via `use_figma` or the Plugin console), save as `component-values.snapshot.json` at project root, and commit it:
 
 ```js
 const round = (n) => Math.round(n * 100) / 100;
