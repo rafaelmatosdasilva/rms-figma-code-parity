@@ -33,6 +33,9 @@
     "plugins": []
   },
 
+  "_rendered_note": "Gate: Renders correctly in a browser. Needs Chrome (or CHROME_PATH) and a built UI in paths.plugins. auto:true generates height checks per component from the snapshot (no hand-typed values); colorScheme sets the default light/dark. Hand-written RENDERED_ASSERTIONS in structure-contract.mjs still work and override.",
+  "rendered": { "auto": false, "colorScheme": "light" },
+
   "_visual_note": "Directory for stored reference screenshots. Commit this dir to track visual history.",
   "visualRefs": ".parity-refs",
 

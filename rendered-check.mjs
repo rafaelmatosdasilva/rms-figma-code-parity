@@ -143,8 +143,50 @@ try {
   ASSERTIONS = expanded;
 } catch { /* vars snapshot optional - textStyle assertions simply won't resolve */ }
 
+// ── Auto-generate assertions from the snapshots (opt-in: rendered.auto) ───────
+// So you don't hand-type expected values. For every component that has a fixed
+// height in the structure snapshot AND a base selector, generate a `height`
+// assertion (expected = the Figma height), targeting each built plugin UI, with a
+// bare element probe as a fallback when the selector isn't already in the DOM.
+// Height is the safest context-independent geometry; colours/layout stay manual
+// (a colour needs an rgb() match and layout props need real context via a probe).
+// Manual RENDERED_ASSERTIONS always win (auto entries that duplicate a manual
+// plugin+selector+prop are dropped). Skipped components: knownUnimplementedComponents.
+if (cfg.rendered?.auto) {
+  try {
+    const snapPath = cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json';
+    const comps    = JSON.parse(readFileSync(join(ROOT, snapPath), 'utf8')).components ?? {};
+    const plugins  = cfg.paths?.plugins ?? [];
+    const selectors = cfg.componentSelectors ?? {};
+    const skip     = new Set(cfg.knownUnimplementedComponents ?? []);
+    const manual   = new Set(ASSERTIONS.map(a => `${a.plugin}|${a.selector}|${a.prop}`));
+    if (!plugins.length) {
+      console.log('⚠️  [16] rendered.auto is on but ds-config.json → paths.plugins is empty (no built UI to render against) - auto assertions skipped');
+    } else {
+      let added = 0;
+      for (const [name, c] of Object.entries(comps)) {
+        if (name === '_updated' || skip.has(name) || typeof c?.h !== 'number') continue;
+        const sel = selectors[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1));
+        const cls = /^\.([A-Za-z][\w-]*)$/.exec(sel)?.[1];   // only class selectors get a bare probe
+        for (const plugin of plugins) {
+          if (manual.has(`${plugin}|${sel}|height`)) continue;   // manual override wins
+          ASSERTIONS.push({
+            plugin, selector: sel, prop: 'height', expected: `${c.h}px`,
+            probe: cls ? `<div class="${cls}"></div>` : undefined,
+            auto: true, note: `auto: ${name} height from snapshot`,
+          });
+          added++;
+        }
+      }
+      if (added) console.log(`ℹ️  [16] rendered.auto: generated ${added} height assertion(s) from the snapshot`);
+    }
+  } catch { /* no structure snapshot - auto mode simply adds nothing */ }
+}
+
 if (!ASSERTIONS.length) {
-  console.log('⏭  [16] rendered parity skipped - RENDERED_ASSERTIONS empty in structure-contract.mjs');
+  console.log(cfg.rendered?.auto
+    ? '⏭  [16] rendered parity skipped - nothing to auto-generate (no component heights in the snapshot) and no RENDERED_ASSERTIONS'
+    : '⏭  [16] rendered parity skipped - RENDERED_ASSERTIONS empty (set ds-config.json → rendered.auto to generate height checks automatically)');
   process.exit(0);
 }
 
