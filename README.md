@@ -2,8 +2,6 @@
 
 Checks that your CSS code matches your Figma design system. Run it whenever the DS changes — it tells you exactly what's out of sync and where to fix it.
 
-> **Sister tool:** [rms-figma-sync](https://github.com/rafaelmatosds/rms-figma-sync) — checks whether a consumer Figma product file is using the latest DS library. Use that for design handoff; use this one for code implementation.
-
 ---
 
 ## Quick start
