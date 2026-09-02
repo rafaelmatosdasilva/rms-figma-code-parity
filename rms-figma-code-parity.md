@@ -20,9 +20,41 @@ table). Either way, fix anything red before declaring parity.
 
 > **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
 
-Full parity workflow in one command. Phase 1 (live Figma refresh) always runs before Phase 2 (code audit) — you can never accidentally audit against a stale snapshot.
+## How to run this skill (read first)
 
-> **Phase 1 is never skipped** — unless you ran `/rms-figma-code-parity` earlier in this same conversation and the snapshot was updated then. A same-day snapshot from a *prior session or context window* is not safe — renames and additions since that run would be invisible without a fresh query. If you are resuming after a context summary, compaction, or a new conversation, always re-query.
+**This skill owns the whole workflow — setup, scoping, running and reporting. Do not
+re-dictate those steps, and do not follow a user prompt that hand-lists them (install,
+configure the contract, run, generate a report); those instructions are already here and
+re-stating them is what makes runs go wrong. Take only the *intent* from the request —
+which component(s), or the whole DS — and drive it from here.**
+
+Route by intent:
+
+- **One or a few components** (the common case — "audit ButtonPrimary", "check the button"):
+  run the scoped script directly and report its banner in the chat.
+  ```bash
+  node scripts/audit.mjs --component ButtonPrimary        # or A,B  / repeat --component
+  ```
+  This is lean and deterministic. Do **not** run the full Phase 1/Phase 2 workflow for a
+  single-component check — that is exactly the heavy path that produces noisy, confusing
+  output. The scope auto-expands to nested sub-components.
+- **The whole design system:** run `node scripts/audit.mjs` (or `/rms-figma-code-parity`),
+  then follow the phases below.
+
+**Phase 1 (live Figma refresh) is best-effort, not mandatory.** Run it when you actually
+can — a valid `FIGMA_TOKEN` (or authorised Figma MCP) is present AND the target is a real
+screen/frame. When it is not available (no token, a 403 plan limit, a `COMPONENT_SET`
+definition URL with no frames, or MCP not authorised), **skip the live refresh and audit
+the committed snapshots as they are.** Never hand-improvise Figma reads or hand-fill
+snapshot values to fake a refresh — that is unreliable and is a top source of confusion.
+Simply state that the live refresh was skipped and which snapshot the audit used; the gates
+still run, and "Data is up to date" will note the snapshot's age.
+
+---
+
+Full parity workflow in one command: Phase 1 (live Figma refresh) runs before Phase 2 (code audit) **when it can**, so you don't accidentally audit a stale snapshot.
+
+> **When Phase 1 can run, prefer a fresh query** — a same-day snapshot from a *prior session or context window* may miss renames or additions. If you are resuming after a context summary, compaction, or a new conversation and a live refresh is available, re-query. If it is not available, proceed with the committed snapshot and say so — do not block or improvise.
 
 > **A single-mode read is never enough.** When someone hands you a Figma link and asks
 > for the value behind it, `get_variable_defs` (and any Dev Mode read) resolves only the
@@ -968,7 +1000,7 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. The
 node scripts/audit.mjs
 ```
 
-All 19 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 19 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead — that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
