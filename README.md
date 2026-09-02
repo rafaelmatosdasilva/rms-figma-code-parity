@@ -49,7 +49,13 @@ runs scoped automatically (`--component`), so you get a clean, focused report wi
 
 ## Updating — no re-download
 
-One command pulls the latest and re-links; every project that symlinks the shared clone gets it at once:
+**Am I on the latest?** Check any time — it compares your local version against the remote and tells you:
+
+```bash
+node scripts/audit.mjs --version
+```
+
+Every normal run also nudges you (at most once a day, silently skipped when offline) if a newer version is out. When it says you're behind, one command pulls the latest and re-links; every project that symlinks the shared clone gets it at once:
 
 ```bash
 node scripts/audit.mjs --update

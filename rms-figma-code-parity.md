@@ -109,6 +109,7 @@ should always run scoped. Omit the flag to audit the whole DS.
 **Utility flags (no full audit — just run the script directly):**
 ```bash
 node scripts/audit.mjs --init                         # first-time setup only: scaffold config files, then exit
+node scripts/audit.mjs --version                      # am I on the latest? compares local vs remote (a normal run also nudges once/day)
 node scripts/audit.mjs --update                       # git pull the shared clone + relink the command — update with no re-download
 node scripts/audit.mjs --link-command                 # (re)point the global /rms-figma-code-parity command at this folder via symlink
 node scripts/audit.mjs --trend                        # show last 20 audit runs + pass/fail trend

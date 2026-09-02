@@ -103,8 +103,34 @@ function updateSkill() {
   linkCommand();
   console.log('\n✅ Done. Just run /rms-figma-code-parity — you are on the latest.');
 }
-if (process.argv.includes('--update'))       { updateSkill(); process.exit(0); }
-if (process.argv.includes('--link-command')) { process.exit(linkCommand() ? 0 : 1); }
+// "Am I on the latest?" — compare local HEAD to the remote main tip with a single
+// lightweight `git ls-remote` (no fetch/merge, short timeout). Returns null when it
+// can't tell (not a git checkout, or offline). Plain output only: this may run before
+// the color helper C is initialised.
+function checkForUpdate({ quiet } = {}) {
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: SCRIPT_DIR, encoding: 'utf8' });
+  if (head.status !== 0) {
+    if (!quiet) console.log('ℹ️  Version check unavailable — this skill folder is not a git checkout.\n   Reinstall via the installer to get update tracking.');
+    return null;
+  }
+  const local = head.stdout.trim();
+  const ls = spawnSync('git', ['ls-remote', 'origin', 'refs/heads/main'], { cwd: SCRIPT_DIR, encoding: 'utf8', timeout: 5000 });
+  if (ls.status !== 0 || !ls.stdout.trim()) {
+    if (!quiet) console.log(`ℹ️  Could not reach the remote to check for updates (offline?). You are on ${local.slice(0, 7)}.`);
+    return null;
+  }
+  const remote = ls.stdout.split(/\s+/)[0];
+  const behind = remote !== local;
+  if (!quiet) {
+    console.log(behind
+      ? `⚠️  A newer version is available.\n   you: ${local.slice(0, 7)}  ·  latest: ${remote.slice(0, 7)}\n   Update: node scripts/audit.mjs --update`
+      : `✅ You are on the latest version (${local.slice(0, 7)}).`);
+  }
+  return { behind, local, remote };
+}
+if (process.argv.includes('--update'))                                      { updateSkill(); process.exit(0); }
+if (process.argv.includes('--link-command'))                                { process.exit(linkCommand() ? 0 : 1); }
+if (process.argv.includes('--version') || process.argv.includes('--check-update')) { process.exit(checkForUpdate({ quiet: false }) === null ? 1 : 0); }
 
 // Set to true when variables/local returns 403 (Figma Enterprise plan required).
 // Gates that depend on live variable refresh use planLimited state instead of
@@ -2477,6 +2503,22 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
     writeFileSync(htmlPath, html);
     console.log(`\n🌐 HTML parity report → ${REPORT_HTML}`);
   }
+
+  // Passive, throttled "you're behind" nudge — at most once/day, best-effort, never
+  // blocks or errors a run. Explicit checks: `node scripts/audit.mjs --version`.
+  try {
+    const stamp = join(HOME, '.claude', '.rms-parity-update-check');
+    const now = Date.now();
+    let last = 0;
+    try { last = Number(readFileSync(stamp, 'utf8').trim()) || 0; } catch { /* first run */ }
+    if (now - last > 24 * 3600 * 1000) {
+      const res = checkForUpdate({ quiet: true });
+      try { mkdirSync(dirname(stamp), { recursive: true }); writeFileSync(stamp, String(now)); } catch { /* cache is optional */ }
+      if (res?.behind) {
+        console.log(C.yellow('\n⚠️  A newer version of the parity skill is available — run: node scripts/audit.mjs --update'));
+      }
+    }
+  } catch { /* a version nudge must never break the audit */ }
 
   process.exit(anyFail ? 1 : 0);
 })();
