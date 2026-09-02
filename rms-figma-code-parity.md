@@ -18,8 +18,6 @@ document, or HTML report unless the user explicitly asks for one. Only when they
 `node scripts/audit.mjs --report-html <path>` (a per-dimension Color / Sizing / Typography
 table). Either way, fix anything red before declaring parity.
 
-> **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
-
 ## How to run this skill (read first)
 
 **This skill owns the whole workflow — setup, scoping, running and reporting. Do not
