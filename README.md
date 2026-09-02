@@ -12,7 +12,7 @@ Checks that your CSS code matches your Figma design system. Run it whenever the 
 curl -fsSL https://raw.githubusercontent.com/rafaelmatosdasilva/rms-figma-code-parity/main/install.sh | bash
 ```
 
-This makes **one canonical clone** at `~/.claude/skills/rms-figma-code-parity` and **symlinks** the `/rms-figma-code-parity` command to it — so updates are a `git pull`, never a re-download. (Don't hand-copy the `.md` into `~/.claude/commands` or drop the folder ad-hoc next to a repo — a copy goes stale and is what causes confusing runs.)
+You only do this once. From then on, updates are a single command (below) — you never download or reinstall by hand.
 
 **2 — Add to a project (once per repo)**
 
@@ -46,38 +46,18 @@ fights the skill instead of helping it, and is what produces noisy, confusing ru
 name the component(s), or say "the whole DS", and let it drive. For a single component it
 runs scoped automatically (`--component`), so you get a clean, focused report without asking.
 
-## Updating — no re-download
+## Staying up to date
 
-**Am I on the latest?** Check any time — it compares your local version against the remote and tells you:
-
-```bash
-rms-figma-code-parity --version
-```
-
-Every normal run also nudges you (at most once a day, silently skipped when offline) if a newer version is out. When it says you're behind, one command pulls the latest and re-links; every project that symlinks the shared clone gets it at once:
+You never re-download. Two commands:
 
 ```bash
-rms-figma-code-parity --update
+rms-figma-code-parity --version    # am I on the latest?
+rms-figma-code-parity --update     # get the latest
 ```
 
-That's `git pull` in the canonical clone plus a refresh of the command symlink. Never re-run a download to update — if you find yourself curling the `.md` again or replacing a copied file, the install is wrong (a stale copy instead of the symlink); re-run the installer once to fix it.
+Every run also gives you a quiet heads-up (once a day) when a new version is out.
 
-**Installed the old way (via the terminal / curl)?** Your `~/.claude/commands/rms-figma-code-parity.md` is a *copy* that won't update. Just **re-run the installer once** — it clones to the canonical path and replaces that copy with a symlink; that's your last download:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rafaelmatosdasilva/rms-figma-code-parity/main/install.sh | bash
-```
-
-**Prefer to point at a folder you already have?** (e.g. a clone sitting next to your repo.) Link it once instead:
-
-```bash
-# from inside that skill folder:
-node audit.mjs --link-command          # make the global command a symlink to this folder
-# in each project: replace the copy/submodule with a symlink to the same folder
-rm -rf scripts && ln -s /path/to/rms-figma-code-parity scripts
-```
-
-Either way, after the one-time fix you update with `rms-figma-code-parity --update` — no more downloads.
+**Installed an older way and it won't update?** Run the install command from step 1 once more — it fixes the setup for good, and that's your last download.
 
 ---
 
@@ -87,59 +67,38 @@ Every run has two phases:
 
 | Phase | What happens |
 |---|---|
-| **1 — Figma refresh** | Pulls the latest values from Figma (colors, sizes, fonts, component structure), shows you what changed since last time, and updates the local snapshot files. |
-| **2 — Code audit** | Runs 19 automated checks against your CSS and reports everything that doesn't match. |
+| **1 — Get the latest from Figma** | Reads the current colors, sizes, fonts and component shapes from Figma and shows what changed since last time. |
+| **2 — Check the code** | Runs 19 checks against your CSS and reports anything that doesn't match. |
 
-You always audit against a fresh snapshot. There's no way to accidentally check against yesterday's design.
+You always check against the latest design, so you can't accidentally compare against an old one.
 
 ---
 
 ## The 19 checks
 
-Gates are grouped by theme so failures point you to the right layer immediately.
+Each run checks 19 things and tells you which are off. In plain terms:
 
-**Up to date** — is the data you're checking against current?
 | # | What it checks |
 |---|---|
-| 1 | **Data is up to date** — Are the Figma snapshots from today and your compiled plugin files newer than their sources? (A version bump on the shared file is only an advisory — it doesn't fail the run.) |
-| 2 | **Figma frame unchanged** — Does the live Figma frame still look the same as the last accepted reference screenshot? |
-
-**Tokens** — do CSS values match Figma's design decisions?
-| # | What it checks |
-|---|---|
-| 3 | **Token values** — Do the colors, sizes, and fonts in your CSS match what Figma says? Checks all color modes (light, dark, etc.). |
-| 4 | **Tokens used in screens exist in CSS** — Is there anything bound in the Figma screens that has no CSS variable yet? |
-| 5 | **Every mode is covered** — Do all tokens that should change between modes (light/dark, compact/comfortable) actually resolve to different values in each mode? |
-| 6 | **Exception lists are valid** — Are any "skip this token" exceptions in your config now pointing to tokens that no longer exist? |
-| 7 | **No invented CSS variables** — Does every CSS variable name trace back to a real token in the Figma file? Catches variables invented with no design backing. |
-
-**Clean CSS** — is the stylesheet itself clean?
-| # | What it checks |
-|---|---|
-| 8 | **Clean CSS** — Any CSS variables nobody uses? Any raw values that *contradict Figma* (a literal is only flagged when the component it belongs to has no matching value in Figma — same-value literals are parity and pass)? Also catches hand-drawn icons embedded as CSS strings. |
-| 9 | **Nested components keep their own styles** — When one DS component is nested inside another, are their styles leaking into each other? |
-
-**Structure** — do components match the Figma component spec?
-| # | What it checks |
-|---|---|
-| 10 | **Structure** — Is each component the right height? Are its spacing, font, and corner radius wired to the right tokens — not hardcoded? |
-| 11 | **All states are built** — Does every interactive state from Figma (hover, disabled, selected…) have a CSS rule, the right selector, and the right token variable inside it? |
-
-**Markup** — is the HTML the right shape?
-| # | What it checks |
-|---|---|
-| 12 | **Markup** — Have any ids, component classes, or icon refs changed since the last accepted baseline? |
-| 13 | **Required pieces are in place** — Does every declared button slot use the exact DS icon and component class the Figma spec calls for? (Declared slots + exhaustiveness scan for undeclared ones.) |
-| 14 | **Icons** — Are all SVG icons centralized in one sprite sheet, documented (with Figma node IDs), named after the DS component they come from, using the exact path data from Figma, and still matching the live export? |
-
-**Animation** — do motion values match?
-| # | What it checks |
-|---|---|
-| 15 | **Transitions** — Does every DS component's CSS transition match the documented duration and easing value? |
-| 16 | **Renders correctly in a browser** — Does the browser actually compute what the DS spec says? Headless Chrome loads each built plugin UI and asserts getComputedStyle values — catches cascade/specificity overrides, wrong var() resolution, and stale builds static analysis cannot see. |
-| 17 | **What this audit actually checked** — What is the audit *not* checking? Cross-references every DS component against the checks the contract declares and prints a coverage matrix, so a new component/state can't stay silently unchecked. |
-| 18 | **Motion** *(opt-in)* — Do easing/duration variables match CSS? When a DS declares `figma.motion`, each motion token's Figma value is compared to its CSS var. No-op until configured. |
-| 19 | **Shadows** *(opt-in)* — Do Figma effect styles match CSS `box-shadow`? When a DS declares `figma.effects`, each effect style's canonical shadow is compared to its tokenised CSS var. No-op until configured. |
+| 1 | **Data is up to date** — you're comparing against today's Figma, not an old copy. |
+| 2 | **Figma frame unchanged** — the design still looks like the last version you approved. |
+| 3 | **Token values** — colors, sizes and fonts in the code match Figma, in every mode (light, dark…). |
+| 4 | **Tokens used in screens exist in CSS** — nothing used in a screen is missing from the code. |
+| 5 | **Every mode is covered** — things that should change between light/dark actually do. |
+| 6 | **Exception lists are valid** — your "ignore this" notes don't point at things that no longer exist. |
+| 7 | **No invented CSS variables** — every variable in the code really comes from Figma. |
+| 8 | **Clean CSS** — no unused variables, and no values that disagree with Figma (a hardcoded value that matches Figma is fine). |
+| 9 | **Nested components keep their own styles** — one component's styles don't leak into another. |
+| 10 | **Structure** — each component has the right height, spacing and corners, from tokens. |
+| 11 | **All states are built** — hover, disabled, selected… each exists and uses the right values. |
+| 12 | **Markup** — the HTML shape (ids, classes, icons) still matches what was approved. |
+| 13 | **Required pieces are in place** — buttons use the icon and component the design asks for. |
+| 14 | **Icons** — icons come from the shared set and match Figma. |
+| 15 | **Transitions** — animations use the durations and easings from the design. |
+| 16 | **Renders correctly in a browser** — the real rendered result matches the design, not just the code on paper. |
+| 17 | **What this audit actually checked** — shows what was and wasn't covered, so nothing slips through unnoticed. |
+| 18 | **Motion** *(optional)* — motion values match Figma, when your DS defines them. |
+| 19 | **Shadows** *(optional)* — shadows match Figma, when your DS defines them. |
 
 ---
 
@@ -204,7 +163,7 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 ```
 <!-- EXAMPLE-OUTPUT-END -->
 
-**Trend view** (`node scripts/audit.mjs --trend`):
+**Trend view** (`rms-figma-code-parity --trend`):
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
@@ -219,52 +178,24 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 ## Other commands
 
 ```bash
-node scripts/audit.mjs --init                        # first-time setup
-node scripts/audit.mjs --trend                       # show last 20 runs
-node scripts/audit.mjs --report-html parity.html     # generate an HTML report
-node scripts/parity-check.mjs --fix                  # auto-fix sizing/typography values in theme.css
-node scripts/setup-webhook.mjs --list                # list Figma webhooks registered for this file
-node scripts/setup-webhook.mjs --delete <id>
+rms-figma-code-parity --init                     # first-time setup for a project
+rms-figma-code-parity --component ButtonPrimary  # check one component (or a few: A,B)
+rms-figma-code-parity --trend                    # show the last runs
+rms-figma-code-parity --report-html report.html  # save a report as a web page
 ```
 
 ---
 
-## Project setup
+## First-time setup (what `--init` asks)
 
-### 1. Add as a submodule
+Run `rms-figma-code-parity --init` inside your project once. It asks a few things and sets up the rest:
 
-```bash
-git submodule add https://github.com/rafaelmatosds/rms-figma-code-parity scripts
-```
+1. **Figma file link** — paste the link to your design system file.
+2. **CSS file** — the file with your `--variable` colors and sizes (found automatically if there's only one).
+3. **Figma access token** *(optional)* — only needed for the screenshot check; saved privately.
+4. **Shared design system link** *(optional)* — if your project is a branded copy of a shared DS, paste the original's link; things that still match the original are marked "pending sync" instead of failing.
 
-This puts the scripts at `scripts/` so `node scripts/audit.mjs` works from your project root.
-
-### 2. Run --init
-
-```bash
-node scripts/audit.mjs --init
-```
-
-It asks 4 questions, then auto-detects everything else:
-
-1. **Figma file URL** — paste the browser URL of your DS file
-2. **Token CSS file** — the file where all your `--variable-name` declarations live; auto-detected if there's only one
-3. **Figma access token** *(optional)* — needed for visual regression (check 7) and auto-detecting collection names; saved to `.env`
-4. **Upstream DS URL** *(optional)* — if your project uses a branded fork of a shared DS, paste the upstream URL here. Any token where your code matches the upstream (but not the fork) will be marked "pending sync" instead of "fail".
-
-It creates:
-- `ds-config.json` — your project's config (commit this, it has no secrets)
-- `parity-map.mjs` — where you document any token naming shortcuts
-- `structure-contract.mjs` — where you describe each component's expected structure
-
-### 3. Install the Claude Code skill
-
-```bash
-mkdir -p ~/.claude/commands
-cp scripts/rms-figma-code-parity.md ~/.claude/commands/
-```
-
-Or just run the one-line installer from the Quick start above — it does this for you.
+That's it — you're ready to run `/rms-figma-code-parity`.
 
 ---
 
@@ -304,12 +235,6 @@ Configure `webhook.port` and `webhook.secret` in `ds-config.json`. The server ne
 
 ---
 
-## Keeping multiple projects in sync
+## Works the same in every project
 
-When you improve the scripts in one project, push the changes and pull them into other projects with:
-
-```bash
-git submodule update --remote scripts
-```
-
-Your project-specific files (`ds-config.json`, `parity-map.mjs`, `structure-contract.mjs`) stay in your project and are never touched by the submodule update.
+There's one shared install, so every project is always on the same version. Update it once (`rms-figma-code-parity --update`) and every project has the latest. Your project's own settings stay in your project and are never touched.
