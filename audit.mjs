@@ -2193,7 +2193,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2220,6 +2220,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('container-containment-check.mjs'),
     runScriptAsync('component-prop-check.mjs'),
     runScriptAsync('component-composition-check.mjs'),
+    runScriptAsync('state-opacity-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2250,7 +2251,7 @@ function reportFull(label, items, shown) {
   addGate('Structure  (height · spacing · base-rule variable bindings)',
     parseGate3(rStructure));
   addGate('All states are built  (each state implemented · correct selector · variable in the right rule)',
-    combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/)));
+    combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/), parseGeneric(rStateOpacity, /CORRECT|MISMATCH/)));
   addGate('Component props match Figma  (names, defaults, variant options & slots vs code)',
     parseGeneric(rCompProp, /OK|MISSING|VALUE|SLOT|NO FILE|RENAME/));
   addGate('Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)',
