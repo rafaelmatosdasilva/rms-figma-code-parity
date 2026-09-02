@@ -41,12 +41,7 @@ Say what you want in one line and let the skill do the rest:
 
 - *"Audit ButtonPrimary"* · *"Check the button and the toast"* · *"Run parity on the whole DS"*
 
-**Do not write a step-by-step prompt that re-dictates the workflow** (install the skill,
-configure the contract, run this, then generate a report, with a list of rules). The skill
-already owns setup, scoping, running and reporting - a prompt that repeats those steps
-fights the skill instead of helping it, and is what produces noisy, confusing runs. Just
-name the component(s), or say "the whole DS", and let it drive. For a single component it
-runs scoped automatically (`--component`), so you get a clean, focused report without asking.
+**Don't write a long prompt with steps and rules.** The skill already handles setup, running and reporting; a step-by-step prompt just fights it. Name the component(s) or say "the whole DS" and let it run. One component is scoped automatically, so the report stays clean and focused.
 
 ## Staying up to date
 
@@ -130,26 +125,26 @@ Each run checks 20 things and tells you which are off. In plain terms:
 ────────────────────────────────────────────────────────────
   GATE SUMMARY
 ────────────────────────────────────────────────────────────
-  ✅  [1]   Figma snapshots and build outputs are current   Pass
-  ✅  [2]   Live Figma frame is unchanged vs its saved refe…Pass
-  ✅  [3]   Token values agree (color · sizing · typography…Pass
-  ✅  [4]   Every DS token bound in a screen has a CSS vari…Pass
-  ✅  [5]   Every token that changes between modes is handl…Pass
-  ✅  [6]   All documented exceptions are still valid       Pass
-  ✅  [7]   Every CSS variable maps back to a real Figma to…Pass
-  ✅  [8]   No unused CSS variables, no values that contrad…Pass
-  ✅  [9]   Child components are not overridden by parent C…Pass
-  ✅  [10]  Component structure agrees (height, spacing, ba…Pass
-  ✅  [11]  All component states are built, wired, and in t…Pass
-  ✅  [12]  Every Figma component property has a matching c…Pass
-  ✅  [13]  HTML structure (ids, component classes, icon re…Pass
-  ✅  [14]  Every declared slot uses the correct DS icon an…Pass
-  ✅  [15]  All DS icon symbols are documented, paths verif…Pass
-  ✅  [16]  All CSS transitions use the documented duration…Pass
-  ✅  [17]  Rendered computed styles agree with the DS spec…Pass
-  ✅  [18]  Coverage - which DS components/states the audit…Pass
-  ✅  [19]  Motion tokens (easing · duration) agree - when …Pass
-  ✅  [20]  Effect/shadow styles agree with CSS box-shadow …Pass
+  ✅  [1]   Figma snapshots and build outputs are current       Pass
+  ✅  [2]   Live Figma frame is unchanged vs its saved referenc…Pass
+  ✅  [3]   Token values agree (color · sizing · typography · b…Pass
+  ✅  [4]   Every DS token bound in a screen has a CSS variable Pass
+  ✅  [5]   Every token that changes between modes is handled i…Pass
+  ✅  [6]   All documented exceptions are still valid           Pass
+  ✅  [7]   Every CSS variable maps back to a real Figma token  Pass
+  ✅  [8]   No unused CSS variables, no values that contradict …Pass
+  ✅  [9]   Child components are not overridden by parent CSS r…Pass
+  ✅  [10]  Component structure agrees (height, spacing, base-r…Pass
+  ✅  [11]  All component states are built, wired, and in the r…Pass
+  ✅  [12]  Every Figma component property has a matching code …Pass
+  ✅  [13]  HTML structure (ids, component classes, icon refs) …Pass
+  ✅  [14]  Every declared slot uses the correct DS icon and co…Pass
+  ✅  [15]  All DS icon symbols are documented, paths verified,…Pass
+  ✅  [16]  All CSS transitions use the documented duration, ea…Pass
+  ✅  [17]  Rendered computed styles agree with the DS spec (he…Pass
+  ✅  [18]  Coverage - which DS components/states the audit act…Pass
+  ✅  [19]  Motion tokens (easing · duration) agree - when conf…Pass
+  ✅  [20]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
 
 ────────────────────────────────────────────────────────────
 

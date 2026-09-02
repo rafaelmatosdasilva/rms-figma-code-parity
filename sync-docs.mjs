@@ -99,8 +99,8 @@ function generateExampleOutput() {
   for (let i = 0; i < GATE_COUNT; i++) {
     const n = i + 1;
     const plain = gatePlain[i] ?? gateLabels[i] ?? `Gate ${n}`;
-    const numPad = `[${n}]`.padEnd(6);
-    const labelPad = plain.length > 48 ? plain.slice(0, 47) + '…' : plain.padEnd(48);
+    const numPad = `[${n}]`.padEnd(6);   // COL1 in audit.mjs
+    const labelPad = plain.length > 52 ? plain.slice(0, 51) + '…' : plain.padEnd(52);   // COL2 in audit.mjs
     lines.push(`  ✅  ${numPad}${labelPad}Pass`);
   }
   lines.push('');
