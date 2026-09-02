@@ -1,15 +1,15 @@
-// icon-check.mjs — Run from project root: node ../rms-figma-code-parity/icon-check.mjs
+// icon-check.mjs - Run from project root: node ../rms-figma-code-parity/icon-check.mjs
 //
-// Hard Rule #15 — SVG symbol audit:
+// Hard Rule #15 - SVG symbol audit:
 //   Every <symbol> defined in any plugin HTML file must be declared in ICON_SYMBOLS
 //   in structure-contract.mjs with either:
-//     DS ICON         — sourced from the Figma DS; must record the Figma node ID
-//     PLUGIN-SPECIFIC — custom icon with no DS backing; must describe visual purpose
+//     DS ICON         - sourced from the Figma DS; must record the Figma node ID
+//     PLUGIN-SPECIFIC - custom icon with no DS backing; must describe visual purpose
 //
 //   ICON_SYMBOLS values can be a string OR an object:
-//     String:  'DS ICON — ...' | 'PLUGIN-SPECIFIC — ...'
-//     Object:  { desc: 'DS ICON — ...', transform?: 'rotate(-45)' }
-//              transform — if set, symbol must contain <g transform="..."> matching value
+//     String:  'DS ICON - ...' | 'PLUGIN-SPECIFIC - ...'
+//     Object:  { desc: 'DS ICON - ...', transform?: 'rotate(-45)' }
+//              transform - if set, symbol must contain <g transform="..."> matching value
 //
 //   Every DS entry's sprite id must derive from its DS component's own name
 //   ("Icon/Fit" → #icon-fit). Name authority is the Figma snapshot, then a declared
@@ -17,10 +17,10 @@
 //   declared with idDiffersFromDsName: '<reason>'. This catches the rename class of
 //   miss: an icon renamed in Figma, or an entry pointing at the wrong component,
 //   both of which leave the contract documenting one icon while the code ships
-//   another — invisible to path checks, which only compare against the node the
+//   another - invisible to path checks, which only compare against the node the
 //   (possibly wrong) entry names.
 //
-//   The viewBox attribute on <symbol> is the icon's container — it is verified against
+//   The viewBox attribute on <symbol> is the icon's container - it is verified against
 //   the Figma snapshot automatically. Render size (<svg width height>) is a design
 //   decision and is not policed; the viewBox + path data checks ensure the correct
 //   icon is used at whatever size the design calls for.
@@ -29,8 +29,8 @@
 //   visually wrong icons that no color/token check would catch.
 //
 // Requires at project root:
-//   ds-config.json         — paths.pluginCSS (HTML files to scan for <symbol> elements)
-//   structure-contract.mjs — ICON_SYMBOLS export
+//   ds-config.json         - paths.pluginCSS (HTML files to scan for <symbol> elements)
+//   structure-contract.mjs - ICON_SYMBOLS export
 //
 // Exit 0 = all symbols documented, transforms and sizes verified. Exit 1 = failures found.
 
@@ -97,7 +97,7 @@ function kebab(seg) {
 // A namespaced DS name has more than one faithful derivation, and which one is right
 // is a judgement the DS can't make for us: "Icon/var/color" could reasonably be
 // #icon-color or #icon-var-color, and dropping "var" loses real meaning. So accept any
-// suffix of the path — every candidate is genuinely derived from the DS name, and
+// suffix of the path - every candidate is genuinely derived from the DS name, and
 // demanding one exact form would force waivers onto correct, well-named icons.
 function spriteIdCandidates(name) {
   let s = String(name ?? '').trim();
@@ -105,16 +105,16 @@ function spriteIdCandidates(name) {
   s = s.replace(/\b[\w-]+=[\w-]+\b/g, ' ');          // drop variant assignments (size=small)
 
   let segs = s.split('/').map(w => kebab(w)).filter(Boolean);
-  // The "Icon" namespace marker is not part of the name — otherwise every id would
+  // The "Icon" namespace marker is not part of the name - otherwise every id would
   // start icon-icon-. It appears either as its own path segment ("Icon/Fit") or fused
   // into the first one ("Icon-Fit"); both spellings occur in real DS files, so strip
-  // either. Without this, renaming a component from Icon/Fit to Icon-Fit — a pure
-  // cosmetic edit in Figma — would fail a correctly-named sprite.
+  // either. Without this, renaming a component from Icon/Fit to Icon-Fit - a pure
+  // cosmetic edit in Figma - would fail a correctly-named sprite.
   const root = SPRITE_PREFIX.replace(/-+$/, '');
   if (segs.length > 1 && segs[0] === root) {
     segs = segs.slice(1);
   } else if (segs[0] === root && segs.length === 1) {
-    return [];                                       // name is just "Icon" — nothing to derive
+    return [];                                       // name is just "Icon" - nothing to derive
   }
   if (segs.length && segs[0].startsWith(`${root}-`)) {
     segs = [segs[0].slice(root.length + 1), ...segs.slice(1)];
@@ -122,7 +122,7 @@ function spriteIdCandidates(name) {
   if (!segs.length || !segs[0]) return [];
 
   const full = SPRITE_PREFIX + segs.join('-');
-  // Hard rule (iconCheck.exactName): the sprite id must be the EXACT full Figma name —
+  // Hard rule (iconCheck.exactName): the sprite id must be the EXACT full Figma name -
   // no short forms. A project can opt in when its DS uses one canonical name per icon
   // and never wants a component renamed silently behind a shorter alias.
   if (cfg.iconCheck?.exactName) return [full];
@@ -134,9 +134,9 @@ function spriteIdCandidates(name) {
 
 function spriteIdFromDsName(name) { return spriteIdCandidates(name)[0] ?? null; }
 
-// Pull the DS component name out of a "DS ICON — <name> node <id>; ..." description.
+// Pull the DS component name out of a "DS ICON - <name> node <id>; ..." description.
 function dsNameFromDesc(desc) {
-  const m = /^DS ICON\s*[—–-]\s*(.+?)\s+node\s+[\d:\-]+/.exec(desc ?? '');
+  const m = /^DS ICON\s*[-–-]\s*(.+?)\s+node\s+[\d:\-]+/.exec(desc ?? '');
   return m ? m[1].trim() : null;
 }
 
@@ -213,7 +213,7 @@ for (const srcPath of HTML_SOURCES) {
     const reqStrokeBased  = entryStrokeBased(val);
 
     if (reqStrokeBased) {
-      // Verify the <symbol> tag itself has fill="none" — ensures stroke-based rendering.
+      // Verify the <symbol> tag itself has fill="none" - ensures stroke-based rendering.
       // Catches a fill-based SVG replacing a stroke DS icon without any size/color gate failing.
       const hasFillNone = /\bfill="none"/.test(attrs) || /\bfill='none'/.test(attrs);
       if (!hasFillNone) {
@@ -281,7 +281,7 @@ for (const srcPath of HTML_SOURCES) {
     }
 
     // A DS entry naming a Figma node but absent from the snapshot gets no path or
-    // viewBox verification at all, and nothing says so — the icon reads as "✅ DS" in
+    // viewBox verification at all, and nothing says so - the icon reads as "✅ DS" in
     // the report while being checked against nothing. Same failure shape as a fresh
     // but empty snapshot: the gap is invisible precisely because it looks fine.
     if (isDsEntry(val) && entryNodeId(val) && Object.keys(iconSnap).length && !iconSnap[id]) {
@@ -291,7 +291,7 @@ for (const srcPath of HTML_SOURCES) {
     // ── Path comparison against Figma snapshot ──────────────────────────────
     const snapEntry = iconSnap[id];
     if (snapEntry) {
-      // Verify viewBox matches Figma export — skip for transformed icons (rotation adjusts bounding box)
+      // Verify viewBox matches Figma export - skip for transformed icons (rotation adjusts bounding box)
       if (!reqTransform) {
         const viewBoxMatch = /\bviewBox="([^"]+)"/.exec(attrs);
         const codeViewBox  = viewBoxMatch ? viewBoxMatch[1] : null;
@@ -306,7 +306,7 @@ for (const srcPath of HTML_SOURCES) {
         pathFails.push({ id, file: srcPath,
           expectedCount: snapPaths.length, actualCount: codePaths.length,
           expected: snapPaths[0] ? snapPaths[0].slice(0, 60) + '…' : '(none)',
-          actual:   codePaths[0] ? codePaths[0].slice(0, 60) + '…' : '(none — non-path elements used)',
+          actual:   codePaths[0] ? codePaths[0].slice(0, 60) + '…' : '(none - non-path elements used)',
         });
       }
     }
@@ -317,14 +317,14 @@ for (const srcPath of HTML_SOURCES) {
 
 
 // ── Orphaned DS contract entries ─────────────────────────────────────────────
-// A DS entry whose key matches no <symbol> anywhere is debris — usually the old
+// A DS entry whose key matches no <symbol> anywhere is debris - usually the old
 // half of a rename. Left in place it keeps "documenting" an icon that no longer
 // ships, while the renamed sprite reads as undocumented.
 const orphaned = Object.entries(ALLOWED)
   .filter(([id, val]) => isDsEntry(val) && !seenIds.has(id))
   .map(([id, val]) => ({ id, desc: entryDesc(val) }));
 
-// ── Dead icons — defined but never referenced ────────────────────────────────
+// ── Dead icons - defined but never referenced ────────────────────────────────
 // A <symbol> nothing renders is dead weight that still has to be kept in sync with
 // the DS. The recurring shape this session: an icon left behind when its feature was
 // removed, or written into an element that is never shown. Nothing flagged them
@@ -334,7 +334,7 @@ const orphaned = Object.entries(ALLOWED)
 // own <symbol> definition (covers <use href="#id">, lookup tables, and the JS strings
 // that build markup). Ids assembled by concatenation ('#icon-' + name) can't be seen
 // literally, so when that pattern is present the affected ids are reported as a note,
-// never failed — a false "dead" is worse than a missed one.
+// never failed - a false "dead" is worse than a missed one.
 const DEAD_EXEMPT = new Set(cfg.iconCheck?.deadIconExemptions ?? []);
 
 // Reference corpus: scanned HTML/JS sources, plus any extra globs the project lists
@@ -348,7 +348,7 @@ for (const f of REF_SOURCES) corpus += '\n' + readFileSync(join(ROOT, f), 'utf8'
 // Strip every <symbol …>…</symbol> so an icon's own definition never counts as use.
 const corpusNoDefs = corpus.replace(/<symbol\s[^>]*>[\s\S]*?<\/symbol>/g, ' ');
 
-// Does the project build icon ids dynamically? Only a concrete prefix counts —
+// Does the project build icon ids dynamically? Only a concrete prefix counts -
 // '#icon-arrow-' + dir exempts the icon-arrow-* family. A bare '#' + variable is too
 // weak a signal to exempt anything: in practice its values come from a lookup whose
 // literal ids appear in source anyway, so they resolve as used without special-casing,
@@ -370,7 +370,7 @@ for (const { id } of documented) {
 
 // ── Render size on the DS grid ───────────────────────────────────────────────
 // The DS ships icons at a fixed set of frame sizes. A DS icon rendered at any other
-// `<svg width/height>` is off-grid — it upscales a small glyph blurry or crams a large
+// `<svg width/height>` is off-grid - it upscales a small glyph blurry or crams a large
 // one. The allowed set is NEVER hardcoded: it is the union of every DS icon's own frame
 // size, read straight from the snapshot viewBox ("0 0 16 16" → 16) captured during the
 // Figma scan. Add a 24px icon to the DS and 24 becomes allowed automatically. An
@@ -395,7 +395,7 @@ if (ALLOWED_SIZES && ALLOWED_SIZES.length) {
   if (idAlt) {
     let raw = '';
     for (const f of REF_SOURCES) raw += '\n' + readFileSync(join(ROOT, f), 'utf8');
-    // (a) <svg …><use href="#id"> — width/height may sit anywhere in the <svg> tag
+    // (a) <svg …><use href="#id"> - width/height may sit anywhere in the <svg> tag
     const svgRe = new RegExp(`<svg\\b([^>]*)>\\s*<use[^>]*href="#(${idAlt})"`, 'g');
     for (let m; (m = svgRe.exec(raw)); ) {
       const tag = m[1];
@@ -416,7 +416,7 @@ if (ALLOWED_SIZES && ALLOWED_SIZES.length) {
 
 // ── Icon-slot container sizes on the DS grid ─────────────────────────────────
 // An icon slot (the div wrapping the <svg><use>) has its own fixed width/height. If that
-// box is off-grid, it constrains the icon regardless of the svg's own size — a 14px slot
+// box is off-grid, it constrains the icon regardless of the svg's own size - a 14px slot
 // held a 16px component overflowing and 12px vars looking undersized, and neither showed
 // up in the render-size scan because it's a CSS rule, not an <svg> attribute. Selectors
 // come from iconCheck.iconSlotSelectors; sizes are checked against the same derived grid.
@@ -446,7 +446,7 @@ if (ALLOWED_SIZES && ALLOWED_SIZES.length && SLOT_SELECTORS.length) {
 console.log('\n─── SVG symbol audit (Hard Rule #15) ───────────────────────────────\n');
 
 if (dynamicMaybe.length) {
-  console.log(`ℹ️  ${dynamicMaybe.length} icon(s) referenced only via dynamic id construction — not usage-checked: ${dynamicMaybe.map(i => '#' + i).join(', ')}\n`);
+  console.log(`ℹ️  ${dynamicMaybe.length} icon(s) referenced only via dynamic id construction - not usage-checked: ${dynamicMaybe.map(i => '#' + i).join(', ')}\n`);
 }
 
 if (documented.length) {
@@ -509,7 +509,7 @@ if (strokeBasedFails.length) {
   console.log(`❌ NOT STROKE-BASED  ${strokeBasedFails.length}  (DS stroke icons must have fill="none" on <symbol> tag)\n`);
   for (const r of strokeBasedFails) {
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      Contract requires strokeBased: true — <symbol> tag must have fill="none" attribute.`);
+    console.log(`      Contract requires strokeBased: true - <symbol> tag must have fill="none" attribute.`);
     console.log(`      → The DS icon uses stroke rendering (not fill). A fill-based replacement would have`);
     console.log(`        wrong visual weight. Add fill="none" to the <symbol ...> opening tag.\n`);
   }
@@ -519,7 +519,7 @@ if (strokeFails.length) {
   console.log(`❌ MISSING STROKE=NONE  ${strokeFails.length}  (fill-only DS icons missing stroke="none" guard)\n`);
   for (const r of strokeFails) {
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      Contract requires strokeNone: true — no stroke="none" found on any element inside the symbol.`);
+    console.log(`      Contract requires strokeNone: true - no stroke="none" found on any element inside the symbol.`);
     console.log(`      → Broad CSS rules (e.g. .buttonTertiary svg { stroke: ... }) will inherit stroke into fill-only`);
     console.log(`        paths, making the icon appear thicker in button contexts than in other contexts.`);
     console.log(`        Add stroke="none" to the <path> inside the symbol to prevent inherited stroke.\n`);
@@ -527,10 +527,10 @@ if (strokeFails.length) {
 }
 
 if (viewBoxFails.length) {
-  console.log(`❌ WRONG VIEWBOX  ${viewBoxFails.length}  (DS icons with wrong viewBox — coordinate space mismatch)\n`);
+  console.log(`❌ WRONG VIEWBOX  ${viewBoxFails.length}  (DS icons with wrong viewBox - coordinate space mismatch)\n`);
   for (const r of viewBoxFails) {
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      Figma export: viewBox="${r.expected}"  —  code has: viewBox="${r.actual}"`);
+    console.log(`      Figma export: viewBox="${r.expected}"  -  code has: viewBox="${r.actual}"`);
     console.log(`      → The symbol viewBox must match the Figma node dimensions exactly.`);
     console.log(`        Update the <symbol viewBox="..."> attribute.\n`);
   }
@@ -564,7 +564,7 @@ if (staleNameFails.length) {
   console.log(`❌ STALE DS NAME  ${staleNameFails.length}  (declared dsName contradicts live Figma)\n`);
   for (const r of staleNameFails) {
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      Figma snapshot: "${r.snapName}"  —  contract declares: "${r.declared}"`);
+    console.log(`      Figma snapshot: "${r.snapName}"  -  contract declares: "${r.declared}"`);
     console.log(`      → The component was renamed in Figma. Update dsName to match, and check`);
     console.log(`        whether the sprite id should follow the rename too.\n`);
   }
@@ -574,7 +574,7 @@ if (staleWaivers.length) {
   console.log(`❌ STALE WAIVER  ${staleWaivers.length}  (idDiffersFromDsName declared, but the id matches)\n`);
   for (const r of staleWaivers) {
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      DS name "${r.dsName}" derives to "#${r.id}" — the waiver is no longer needed.`);
+    console.log(`      DS name "${r.dsName}" derives to "#${r.id}" - the waiver is no longer needed.`);
     console.log(`      Reason on file: ${r.waiver}`);
     console.log(`      → Remove idDiffersFromDsName so a future real divergence still fails.\n`);
   }
@@ -584,7 +584,7 @@ if (nodeIdFails.length) {
   console.log(`❌ NODE ID MISMATCH  ${nodeIdFails.length}  (desc quotes a different node than the nodeId field)\n`);
   for (const r of nodeIdFails) {
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      nodeId field: ${r.fieldNode}  —  desc says: ${r.descNode}`);
+    console.log(`      nodeId field: ${r.fieldNode}  -  desc says: ${r.descNode}`);
     console.log(`      → One of the two was copy-pasted from another icon. Verify against Figma`);
     console.log(`        and make both agree.\n`);
   }
@@ -613,7 +613,7 @@ if (slotFails.length) {
   console.log(`❌ OFF-GRID SLOT  ${slotFails.length}  (icon-slot container size not in ${JSON.stringify(ALLOWED_SIZES)})\n`);
   for (const r of slotFails) {
     if (r.missing) console.log(`   ❌ "${r.sel}"  declared in iconCheck.iconSlotSelectors but no CSS rule found`);
-    else           console.log(`   ❌ "${r.sel}"  ${r.dim}: ${r.size}px  — off the icon grid`);
+    else           console.log(`   ❌ "${r.sel}"  ${r.dim}: ${r.size}px  - off the icon grid`);
   }
   console.log(`      → Snap the slot's width/height to a DS icon size (${ALLOWED_SIZES.join('/')}px), or drop the fixed size.\n`);
 }
@@ -633,7 +633,7 @@ if (decentralized.length) {
   for (const r of decentralized) {
     console.log(`   ❌ "#${r.id}"  defined in ${r.file}`);
     if (r.duplicate) {
-      console.log(`      A symbol with this id ALSO exists in the shared sheet — the two will drift,`);
+      console.log(`      A symbol with this id ALSO exists in the shared sheet - the two will drift,`);
       console.log(`      and which one wins depends on document order. Delete the plugin-local copy.`);
     } else {
       console.log(`      → Move the <symbol> into: ${SHARED_SOURCES.join(', ')}`);

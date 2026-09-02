@@ -1,19 +1,19 @@
 #!/usr/bin/env node
-// form-control-check.mjs — Gate [13c]: bespoke form controls must use their DS
+// form-control-check.mjs - Gate [13c]: bespoke form controls must use their DS
 // component's tokens.
 //
 // Why this exists. Slot parity already proves that every <button> carrying a DS class
 // is declared, so a button can't quietly become the wrong component. Form controls had
 // no equivalent, and that gap has a specific shape: a plugin hand-rolls an <input>
 // instead of using the DS input class, styles it with a token that is real, correct and
-// declared — just the wrong one for that element — and every token-level gate agrees.
+// declared - just the wrong one for that element - and every token-level gate agrees.
 // Token parity checks the token's VALUE. Naming round-trip checks it maps to a Figma
 // token. Hygiene checks it isn't hardcoded. None of them ask whether it is the RIGHT
 // token *here*, because nothing maps the element to a component.
 //
 // The failure that motivated this: a search field bordered with the divider-line token
 // instead of the input token. The two resolve to the same primitive in one mode and one
-// ramp step apart in the other — so it looked perfect in light mode and too dim in dark,
+// ramp step apart in the other - so it looked perfect in light mode and too dim in dark,
 // and the whole audit stayed green.
 //
 // Contract (structure-contract.mjs), entirely project-defined:
@@ -29,7 +29,7 @@
 //     exempt: [{ selector: '#x', reason: '…' }],
 //   }]
 //
-// Absent or empty, the gate skips — it never invents a binding.
+// Absent or empty, the gate skips - it never invents a binding.
 import { readFileSync, existsSync } from 'fs';
 import { join, relative } from 'path';
 
@@ -46,12 +46,12 @@ try {
   if (Array.isArray(m.FORM_CONTROL_BINDINGS)) BINDINGS = m.FORM_CONTROL_BINDINGS;
 } catch { /* contract optional */ }
 
-// NOTE: no early-exit on empty BINDINGS — the native-control-rendering check below is generic
+// NOTE: no early-exit on empty BINDINGS - the native-control-rendering check below is generic
 // (radio/checkbox can NEVER be a legit native control when a DS component exists) and runs for
 // every project regardless of whether token bindings are configured.
 const pluginCSS = cfg.paths?.pluginCSS ?? [];
 if (!pluginCSS.length) {
-  console.log('⏭  [13c] no paths.pluginCSS configured — skipping form-control check');
+  console.log('⏭  [13c] no paths.pluginCSS configured - skipping form-control check');
   process.exit(0);
 }
 
@@ -61,7 +61,7 @@ const SHORTHAND_FOR = { 'border-color': 'border', 'background': 'background' };
 const varsIn = (value) => [...value.matchAll(/var\(\s*(--[\w-]+)/g)].map(m => m[1]);
 
 /**
- * True when `handle` is the SUBJECT of the selector — the element actually styled —
+ * True when `handle` is the SUBJECT of the selector - the element actually styled -
  * rather than an ancestor or sibling of it. `.a:checked + .b` styles `.b`, so a rule
  * mentioning the input is not necessarily a rule ON the input. Without this, every
  * `input:checked + .indicator` pattern (the standard custom radio/checkbox idiom)
@@ -104,7 +104,7 @@ function rules(css) {
 let pass = true, checked = 0, skipped = 0, nativeChecked = 0;
 
 // ── Native form-control rendering (radio / checkbox) ──────────────────────────
-// A native <input type=radio|checkbox> CANNOT be visually restyled — the ONLY way to render a
+// A native <input type=radio|checkbox> CANNOT be visually restyled - the ONLY way to render a
 // DS radio/checkbox/switch is to visually SUPPRESS the native control (opacity:0 / clipped /
 // appearance:none) and draw a styled sibling that the :checked state drives. So a native
 // radio/checkbox the CSS never suppresses is rendering with browser chrome instead of the DS
@@ -119,7 +119,7 @@ for (const p of [...themePaths, ...pluginCSS]) {
   if (existsSync(a)) mergedCss += '\n' + readFileSync(a, 'utf8');
 }
 const mergedRules = rules(mergedCss.replace(/\/\*[\s\S]*?\*\//g, ''));
-// A genuine visual suppression — not merely position:absolute (which alone still renders the control).
+// A genuine visual suppression - not merely position:absolute (which alone still renders the control).
 const SUPPRESS_RE = /(?:opacity\s*:\s*0(?![.\d])|display\s*:\s*none|visibility\s*:\s*hidden|(?:-webkit-)?appearance\s*:\s*none|clip(?:-path)?\s*:|(?:width|height)\s*:\s*1px)/i;
 const isSuppressed = (handles) =>
   mergedRules.some(r => handles.some(h => isSubject(r.selector, h)) && SUPPRESS_RE.test(r.body));
@@ -196,14 +196,14 @@ for (const rel of pluginCSS) {
             checked++;
             if (!used.length) {
               pass = false;
-              console.log(`❌ [13c] ${relative(ROOT, abs)} ${rule.selector} — ${decl.name}: "${decl.value}" uses no token; expected one of ${allowed.join(', ')}`);
+              console.log(`❌ [13c] ${relative(ROOT, abs)} ${rule.selector} - ${decl.name}: "${decl.value}" uses no token; expected one of ${allowed.join(', ')}`);
               continue;
             }
             if (!used.some(v => allowed.includes(v))) {
               pass = false;
-              console.log(`❌ [13c] ${relative(ROOT, abs)} ${rule.selector} — ${decl.name} uses ${used.map(v => `var(${v})`).join(' + ')}, not a "${bind.component}" token`);
+              console.log(`❌ [13c] ${relative(ROOT, abs)} ${rule.selector} - ${decl.name} uses ${used.map(v => `var(${v})`).join(' + ')}, not a "${bind.component}" token`);
               console.log(`         expected one of: ${allowed.join(', ')}`);
-              console.log(`         a valid token from another component still renders the wrong colour — often only in one mode`);
+              console.log(`         a valid token from another component still renders the wrong colour - often only in one mode`);
             }
           }
         }

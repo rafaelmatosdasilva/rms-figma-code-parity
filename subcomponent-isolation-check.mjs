@@ -1,12 +1,12 @@
-// subcomponent-isolation-check.mjs — Run from project root: node scripts/subcomponent-isolation-check.mjs
+// subcomponent-isolation-check.mjs - Run from project root: node scripts/subcomponent-isolation-check.mjs
 //
-// Hard Rule #8 — Sub-component style isolation:
+// Hard Rule #8 - Sub-component style isolation:
 //   A DS sub-component nested inside another DS component must always retain
 //   its own CSS styles. This is what gives the UI consistency: a buttonTertiary
 //   inside a node looks the same as a buttonTertiary anywhere else.
 //
 //   The trap: a parent component's rule ".parentClass svg { color: X }" uses a
-//   DIRECT selector on the element — direct targeting beats inheritance. So even
+//   DIRECT selector on the element - direct targeting beats inheritance. So even
 //   if the sub-component sets "color: Y" on its container, the parent's rule wins
 //   for SVGs inside it because it targets the SVG directly.
 //
@@ -15,16 +15,16 @@
 //   sub-component override trap.
 //
 //   Every detected rule must appear in the ALLOWED map below, documenting:
-//     a) LEAF — no DS sub-components nest inside this component class, OR
-//     b) ISOLATED — explicit sub-component overrides are present later in the cascade
-//     c) NON-VISUAL — rule sets only layout/motion properties (no color/fill/stroke)
-//     d) OWNED CHILDREN — children are native HTML elements, not DS sub-components
-//     e) ISOLATION FIX — this rule IS the override (it corrects a parent's broad rule)
-//     f) PLUGIN-SPECIFIC — product-level wrapper whose children are not DS components
-//     g) DECORATIVE — icon/illustration slot with no DS sub-components
+//     a) LEAF - no DS sub-components nest inside this component class, OR
+//     b) ISOLATED - explicit sub-component overrides are present later in the cascade
+//     c) NON-VISUAL - rule sets only layout/motion properties (no color/fill/stroke)
+//     d) OWNED CHILDREN - children are native HTML elements, not DS sub-components
+//     e) ISOLATION FIX - this rule IS the override (it corrects a parent's broad rule)
+//     f) PLUGIN-SPECIFIC - product-level wrapper whose children are not DS components
+//     g) DECORATIVE - icon/illustration slot with no DS sub-components
 //
 // Requires at project root:
-//   ds-config.json   — themeCSS + pluginCSS paths (sources to scan)
+//   ds-config.json   - themeCSS + pluginCSS paths (sources to scan)
 //
 // Exit 0 = all broad rules documented. Exit 1 = new undocumented rule.
 
@@ -112,7 +112,7 @@ for (const srcPath of SOURCES) {
 
 // ── Plugin overrides of DS base classes ───────────────────────────────────────
 // A class with a standalone base rule in theme CSS (`.x { ... }`) is a DS component
-// class — its visual identity belongs to the base. Any PLUGIN-file rule that targets
+// class - its visual identity belongs to the base. Any PLUGIN-file rule that targets
 // such a class AND sets identity properties (color, background, border, padding, gap,
 // height, font, radius, opacity, shadow) overrides the DS and must be documented in
 // PLUGIN_DS_OVERRIDES (structure-contract.mjs) with a reason. Layout-only rules
@@ -156,7 +156,7 @@ if (documented.length) {
 if (newRules.length === 0) {
   console.log('✅ No new undocumented broad element selectors with visual properties.\n');
 } else {
-  console.log(`❌ UNDOCUMENTED  ${newRules.length}  (new broad rules — verify sub-component isolation)\n`);
+  console.log(`❌ UNDOCUMENTED  ${newRules.length}  (new broad rules - verify sub-component isolation)\n`);
   for (const r of newRules) {
     console.log(`   ❌ "${r.key}"  in ${r.file}`);
     console.log(`      body: { ${r.body.replace(/\n/g, ' ').replace(/\s+/g, ' ')} }`);

@@ -1,8 +1,8 @@
-// exemption-check.mjs — Gate [11]: verify every entry in EXPLICIT/SKIP_TOKENS/COVERED
+// exemption-check.mjs - Gate [11]: verify every entry in EXPLICIT/SKIP_TOKENS/COVERED
 // still exists in the Figma snapshot and maps to a real CSS var with the correct value.
 //
 // Manually-maintained allowlists become stale when Figma renames a token. Stale entries
-// are phantom exemptions — the audit silently "passes" tokens that no longer exist.
+// are phantom exemptions - the audit silently "passes" tokens that no longer exist.
 // This gate makes stale entries a hard fail so no hallucination can hide in an allowlist.
 //
 // Checks:
@@ -12,8 +12,8 @@
 //   D. EXPLICIT_SIZING: token in sizing snapshot + CSS var declared + value matches
 //
 // Requires at project root:
-//   ds-config.json   — snapshot path, themeCSS
-//   parity-map.mjs   — EXPLICIT, SKIP_TOKENS, KNOWN_NULL, EXPLICIT_SIZING, COVERED, COVERED_STATE
+//   ds-config.json   - snapshot path, themeCSS
+//   parity-map.mjs   - EXPLICIT, SKIP_TOKENS, KNOWN_NULL, EXPLICIT_SIZING, COVERED, COVERED_STATE
 //
 // Exit 0 = all exemptions valid.  Exit 1 = stale/broken entry found.
 
@@ -50,7 +50,7 @@ try {
   if (map.COVERED_STATE)   COVERED_STATE   = map.COVERED_STATE;
   if (map.COVERED_PREFIX)  COVERED_PREFIX  = map.COVERED_PREFIX;
 } catch {
-  console.log('⚠️  parity-map.mjs not found — nothing to check.\n');
+  console.log('⚠️  parity-map.mjs not found - nothing to check.\n');
   process.exit(0);
 }
 
@@ -63,7 +63,7 @@ const snapTokens = new Set([
   ...Object.keys(snap.sizing ?? {}),
 ]);
 
-// Runtime walk tokens (transient — may be absent; only checked when present).
+// Runtime walk tokens (transient - may be absent; only checked when present).
 // _-prefixed keys are metadata (_updated stamp), not tokens.
 const readTokenKeys = (file) => existsSync(join(ROOT, file))
   ? new Set(Object.keys(JSON.parse(readFileSync(join(ROOT, file), 'utf8'))).filter(t => !t.startsWith('_')))
@@ -81,7 +81,7 @@ for (const f of sources) {
 }
 
 // ── CSS color resolver (shared, N-mode) ───────────────────────────────────────
-// Primitive scale + modes from parity-map.mjs / ds-config.json — no hardcoded light/dark.
+// Primitive scale + modes from parity-map.mjs / ds-config.json - no hardcoded light/dark.
 let map_; try { map_ = await import(join(ROOT, 'parity-map.mjs')); } catch {}
 const NL = map_?.NEUTRAL_LIGHT ?? {};
 const ND = map_?.NEUTRAL_DARK  ?? {};
@@ -93,7 +93,7 @@ const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
   .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n')
   .replace(/\/\*[\s\S]*?\*\//g, '');
 const { resolve, rootVars } = buildResolver(rawCss, MODES, { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE });
-function resolveScalar(varName, depth = 0) {   // sizing (single-mode) resolver — reuses :root vars
+function resolveScalar(varName, depth = 0) {   // sizing (single-mode) resolver - reuses :root vars
   if (depth > 8) return null;
   const raw = rootVars[varName]; if (!raw) return null;
   const t = raw.trim();
@@ -125,11 +125,11 @@ function isKnownNative(token) {
 // ── Evaluate ──────────────────────────────────────────────────────────────────
 const STALE = [], BROKEN = [], OK = [];
 
-// A — EXPLICIT (color)
+// A - EXPLICIT (color)
 for (const [token, cssVar] of Object.entries(EXPLICIT)) {
   if (isKnownNative(token)) { OK.push(`EXPLICIT [native] ${token}`); continue; }
   if (!inSnapshot(token) && !inRuntime(token)) {
-    STALE.push({ section: 'EXPLICIT', token, reason: 'not in snapshot or runtime walk — token may have been renamed in Figma' });
+    STALE.push({ section: 'EXPLICIT', token, reason: 'not in snapshot or runtime walk - token may have been renamed in Figma' });
     continue;
   }
   if (cssVar === null) { OK.push(`EXPLICIT [null-skip] ${token}`); continue; }
@@ -143,38 +143,38 @@ for (const [token, cssVar] of Object.entries(EXPLICIT)) {
     if (!figmaHex) continue;
     const cssHex = resolve(cssVar, mode);
     if (cssHex && figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
-      BROKEN.push({ section: 'EXPLICIT', token, cssVar, mode, reason: `value mismatch — Figma: ${figmaHex}, CSS: ${cssHex}` });
+      BROKEN.push({ section: 'EXPLICIT', token, cssVar, mode, reason: `value mismatch - Figma: ${figmaHex}, CSS: ${cssHex}` });
     }
   }
   OK.push(`EXPLICIT ${token}`);
 }
 
-// B — SKIP_TOKENS
+// B - SKIP_TOKENS
 for (const token of SKIP_TOKENS) {
   if (isKnownNative(token)) { OK.push(`SKIP [native] ${token}`); continue; }
   if (!inSnapshot(token)) {
-    STALE.push({ section: 'SKIP_TOKENS', token, reason: 'not in snapshot — token may have been renamed or removed in Figma' });
+    STALE.push({ section: 'SKIP_TOKENS', token, reason: 'not in snapshot - token may have been renamed or removed in Figma' });
   } else {
     OK.push(`SKIP ${token}`);
   }
 }
 
-// C — COVERED (union of COVERED + COVERED_STATE)
+// C - COVERED (union of COVERED + COVERED_STATE)
 const allCovered = new Set([...COVERED, ...COVERED_STATE]);
 for (const token of allCovered) {
   if (isKnownNative(token)) { OK.push(`COVERED [native] ${token}`); continue; }
   if (!inSnapshot(token) && !inRuntime(token)) {
-    STALE.push({ section: 'COVERED', token, reason: 'not in snapshot or runtime walk — may be a phantom exemption' });
+    STALE.push({ section: 'COVERED', token, reason: 'not in snapshot or runtime walk - may be a phantom exemption' });
   } else {
     OK.push(`COVERED ${token}`);
   }
 }
 
-// D — EXPLICIT_SIZING
+// D - EXPLICIT_SIZING
 for (const [token, cssVar] of Object.entries(EXPLICIT_SIZING)) {
   if (!snap.sizing?.[token]) {
     if (!SIZING_SKIP.has(token)) {
-      STALE.push({ section: 'EXPLICIT_SIZING', token, reason: 'not in sizing snapshot — token may have been renamed in Figma' });
+      STALE.push({ section: 'EXPLICIT_SIZING', token, reason: 'not in sizing snapshot - token may have been renamed in Figma' });
     } else {
       OK.push(`EXPLICIT_SIZING [skip] ${token}`);
     }
@@ -187,7 +187,7 @@ for (const [token, cssVar] of Object.entries(EXPLICIT_SIZING)) {
   const figmaVal = snap.sizing[token];
   const cssVal   = resolveScalar(cssVar);
   if (cssVal && String(figmaVal).trim() !== cssVal.trim()) {
-    BROKEN.push({ section: 'EXPLICIT_SIZING', token, cssVar, reason: `value mismatch — Figma: ${figmaVal}, CSS: ${cssVal}` });
+    BROKEN.push({ section: 'EXPLICIT_SIZING', token, cssVar, reason: `value mismatch - Figma: ${figmaVal}, CSS: ${cssVal}` });
   } else {
     OK.push(`EXPLICIT_SIZING ${token}`);
   }
@@ -195,7 +195,7 @@ for (const [token, cssVar] of Object.entries(EXPLICIT_SIZING)) {
 
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ VALID     ${OK.length}`);
-console.log(`🚨 STALE     ${STALE.length}  (phantom exemptions — token no longer in DS)`);
+console.log(`🚨 STALE     ${STALE.length}  (phantom exemptions - token no longer in DS)`);
 console.log(`❌ BROKEN    ${BROKEN.length}  (CSS var missing or value mismatch)`);
 
 if (STALE.length) {

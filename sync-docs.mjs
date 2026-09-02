@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// sync-docs.mjs — Validates and auto-patches documentation against audit.mjs.
+// sync-docs.mjs - Validates and auto-patches documentation against audit.mjs.
 //
 // Run manually:   node sync-docs.mjs
 // Run as check:   node sync-docs.mjs --check   (exits 1 if anything would change)
@@ -25,10 +25,10 @@ const yellow = s => isTTY ? `\x1b[33m${s}\x1b[0m` : s;
 const bold   = s => isTTY ? `\x1b[1m${s}\x1b[0m`  : s;
 const dim    = s => isTTY ? `\x1b[2m${s}\x1b[0m`  : s;
 
-// ── 1. Parse audit.mjs — source of truth ─────────────────────────────────────
+// ── 1. Parse audit.mjs - source of truth ─────────────────────────────────────
 const auditSrc = readFileSync(join(DIR, 'audit.mjs'), 'utf8');
 
-// Extract gate labels from addGate('Label', ...) calls (in order) — the authoritative gate list.
+// Extract gate labels from addGate('Label', ...) calls (in order) - the authoritative gate list.
 const gateLabels  = [...auditSrc.matchAll(/addGate\(\s*'([^']+)'/g)].map(m => m[1].trim());
 
 // Extract GATE_PLAIN array from audit.mjs (plain-English gate names for summary table)
@@ -48,7 +48,7 @@ if (planRiskMatch) {
 
 // One entry per addGate() call, in order. (We don't annotate each gate with its script file: the
 // addGate order and the runScriptAsync order differ, and some gates combine several scripts or run
-// inline — so any positional gate→script guess is wrong. The label is the source of truth.)
+// inline - so any positional gate→script guess is wrong. The label is the source of truth.)
 const gates = gateLabels.map((label, i) => ({ n: i + 1, label }));
 
 const GATE_COUNT = gates.length;
@@ -61,7 +61,7 @@ function labelKeyword(label) {
     .replace(/\s{2,}/g, ' ')      // collapse runs of spaces
     .trim()
     .split(/\s+/)
-    .slice(0, 3)                  // first 3 words — specific enough
+    .slice(0, 3)                  // first 3 words - specific enough
     .join(' ');
 }
 
@@ -108,14 +108,14 @@ function generateExampleOutput() {
   lines.push('');
   lines.push('  ALL GATES PASS ✅');
   lines.push('');
-  lines.push('  ⏭  STALE-SNAPSHOT MODE — when a gate shows ⏭ instead of ✅:');
+  lines.push('  ⏭  STALE-SNAPSHOT MODE - when a gate shows ⏭ instead of ✅:');
   lines.push('');
   for (const [num, risk] of Object.entries(gatePlanRisk)) {
     const plain = gatePlain[Number(num) - 1] ?? `Gate ${num}`;
     lines.push(`  [${num}] ${plain}`);
     lines.push(`      Shown as ⏭ only when a snapshot is >24h old and the REST auto-refresh`);
     lines.push(`      is not available on this plan. The Phase 1 Plugin API captures refresh`);
-    lines.push(`      every snapshot on any plan — commit them and the gate is ✅.`);
+    lines.push(`      every snapshot on any plan - commit them and the gate is ✅.`);
     lines.push(`      ${risk}`);
     lines.push('');
   }
@@ -125,7 +125,7 @@ function generateExampleOutput() {
   return lines.join('\n');
 }
 
-console.log(bold(`\nrms-figma-code-parity sync-docs — source of truth: ${GATE_COUNT} gates\n`));
+console.log(bold(`\nrms-figma-code-parity sync-docs - source of truth: ${GATE_COUNT} gates\n`));
 for (const g of gates) {
   console.log(dim(`  [${String(g.n).padStart(2)}] ${g.label}`));
 }
@@ -142,7 +142,7 @@ let anyStale = false;
 
 for (const doc of DOCS) {
   if (!existsSync(doc.path)) {
-    console.log(yellow(`  ⚠️  ${doc.label} not found — skipped`));
+    console.log(yellow(`  ⚠️  ${doc.label} not found - skipped`));
     continue;
   }
 
@@ -196,14 +196,14 @@ for (const doc of DOCS) {
     return `${pre}${GATE_COUNT}${post}`;
   });
 
-  // ── Patch: trend bar fractions — only inside trend bar lines (e.g. "  13/13 [")
+  // ── Patch: trend bar fractions - only inside trend bar lines (e.g. "  13/13 [")
   patched = patched.replace(/(^\s*(?:✅|❌)\s+\S+\s+)(\d+)\/(\d+)(\s*\[)/gm, (match, pre, a, b, post) => {
-    if (a !== b) return match; // unequal fractions are pass/fail ratios — don't touch
+    if (a !== b) return match; // unequal fractions are pass/fail ratios - don't touch
     if (Number(a) !== GATE_COUNT) changes.push(`trend fraction "${a}/${b}" → "${GATE_COUNT}/${GATE_COUNT}"`);
     return `${pre}${GATE_COUNT}/${GATE_COUNT}${post}`;
   });
 
-  // ── Patch: trend bar block-fill — match bar length to GATE_COUNT
+  // ── Patch: trend bar block-fill - match bar length to GATE_COUNT
   patched = patched.replace(/(\[)(█+)(░*)\]/g, (match, open, filled, empty) => {
     const total = filled.length + empty.length;
     if (total !== GATE_COUNT) {
@@ -241,27 +241,27 @@ for (const doc of DOCS) {
     if (headingMatch) {
       const rowNums = [...headingMatch[1].matchAll(/^\|\s*(\d+)\s*\|/gm)].map(m => Number(m[1]));
       if (rowNums.length !== GATE_COUNT) {
-        tableRowIssue = `"The N checks" table has ${rowNums.length} row(s), expected ${GATE_COUNT} (update manually — row content isn't auto-generated)`;
+        tableRowIssue = `"The N checks" table has ${rowNums.length} row(s), expected ${GATE_COUNT} (update manually - row content isn't auto-generated)`;
       }
     }
   }
 
   // ── Report
   if (changes.length === 0 && missingLabels.length === 0 && !tableRowIssue) {
-    console.log(green(`  ✅ ${doc.label} — in sync`));
+    console.log(green(`  ✅ ${doc.label} - in sync`));
   } else {
     anyStale = true;
     if (changes.length) {
       const verb = CHECK ? 'would patch' : 'patched';
-      console.log(yellow(`  ⚠️  ${doc.label} — ${verb}:`));
+      console.log(yellow(`  ⚠️  ${doc.label} - ${verb}:`));
       for (const c of changes) console.log(dim(`       ${c}`));
     }
     if (missingLabels.length) {
-      console.log(red(`  ❌ ${doc.label} — gate labels missing from doc (update manually):`));
+      console.log(red(`  ❌ ${doc.label} - gate labels missing from doc (update manually):`));
       for (const l of missingLabels) console.log(`       ${l}`);
     }
     if (tableRowIssue) {
-      console.log(red(`  ❌ ${doc.label} — ${tableRowIssue}`));
+      console.log(red(`  ❌ ${doc.label} - ${tableRowIssue}`));
     }
     if (!CHECK && changes.length) {
       writeFileSync(doc.path, patched);

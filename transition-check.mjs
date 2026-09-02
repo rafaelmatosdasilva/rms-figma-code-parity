@@ -1,4 +1,4 @@
-// transition-check.mjs — Gate [16]
+// transition-check.mjs - Gate [16]
 // Verifies every selector in TRANSITION_CONTRACT has a CSS transition
 // matching the documented value. Catches duration/easing drift before DS
 // EASING/TIMING variables are available (snapshot.animation is empty).
@@ -25,15 +25,15 @@ let TRANSITION_CONTRACT = {};
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
   if (m.TRANSITION_CONTRACT) TRANSITION_CONTRACT = m.TRANSITION_CONTRACT;
-} catch { /* optional — structure-contract.mjs may not exist yet */ }
+} catch { /* optional - structure-contract.mjs may not exist yet */ }
 
 if (!Object.keys(TRANSITION_CONTRACT).length) {
-  console.log('\n⏭  TRANSITION_CONTRACT empty — skipped\n');
+  console.log('\n⏭  TRANSITION_CONTRACT empty - skipped\n');
   process.exit(0);
 }
 
 // ── Load CSS sources ──────────────────────────────────────────────────────────
-// theme.css is read as-is (pure CSS). Plugin files are HTML — extract only
+// theme.css is read as-is (pure CSS). Plugin files are HTML - extract only
 // the content of <style> tags to avoid JS brace confusion in the block parser.
 function extractCss(filePath) {
   const raw = readFileSync(filePath, 'utf8');
@@ -57,7 +57,7 @@ const allCss = [THEME_PATH, ...PLUGIN_CSS]
 // ── CSS block scanner ─────────────────────────────────────────────────────────
 // findAllBlocks: line-scan that concatenates EVERY CSS rule block for a selector.
 // Using a flat index (last-wins) would silently drop the first of two same-selector
-// rules (e.g. base style + dark-mode override) — the base rule often has transition
+// rules (e.g. base style + dark-mode override) - the base rule often has transition
 // while the override only sets a color, so we must accumulate all blocks.
 function findAllBlocks(css, selector) {
   const lines   = css.split('\n');
@@ -134,7 +134,7 @@ console.log(`\n✅ PASS  ${PASS.length}/${total} transition contract entries`);
 console.log(`❌ FAIL  ${FAIL.length}`);
 
 if (FAIL.length) {
-  console.log('\n─── Gate [16] — transition value diverges from contract ─────────────');
+  console.log('\n─── Gate [16] - transition value diverges from contract ─────────────');
   for (const f of FAIL) console.log(`  ❌ ${f}`);
   console.log('   Fix: update the CSS transition to match the TRANSITION_CONTRACT entry,');
   console.log('        or update the contract when the DS spec changes.');

@@ -4,10 +4,10 @@
 // buildReport({ title, metaHtml, statCards, filterDefs, tabsHtml, sections, firstCol, extraHeadHtml })
 //
 // filterDefs:  [{ filter, label, dot, color }]
-//   filter  — data-filter value (e.g. 'SYNCED', 'FAIL') — must match data-status on <tr>
-//   label   — button text
-//   dot     — CSS class for the status dot ('s','p','st','lo') or null
-//   color   — active button background hex
+//   filter  - data-filter value (e.g. 'SYNCED', 'FAIL') - must match data-status on <tr>
+//   label   - button text
+//   dot     - CSS class for the status dot ('s','p','st','lo') or null
+//   color   - active button background hex
 //
 // data-counts on .col-section must be a JSON object keyed by filter value:
 //   { ALL: 10, SYNCED: 5, PENDING: 3, STALE: 2, LOCAL: 0 }
@@ -118,7 +118,7 @@ td.empty{color:#ddd;font-size:11px;padding:4px 10px}
 .badge.new-skip{background:#fef3c7;color:#92400e}
 .tp{padding:1px 5px;border-radius:3px;font-size:10px;font-weight:500}
 .tp-COLOR{background:#dbeafe;color:#1e40af}.tp-FLOAT{background:#ede9fe;color:#5b21b6}
-.tp-BOOLEAN{background:#fef3c7;color:#92400e}.tp-STRING{background:#dcfce7;color:#166534}.tp-—{background:#f3f4f6;color:#6b7280}
+.tp-BOOLEAN{background:#fef3c7;color:#92400e}.tp-STRING{background:#dcfce7;color:#166534}.tp--{background:#f3f4f6;color:#6b7280}
 tr.hidden{display:none}
 .empty-msg{padding:40px;text-align:center;color:#aaa;font-size:13px}
 </style></head><body>

@@ -1,4 +1,4 @@
-// mode-completeness-check.mjs — Gate [5]: verify every token whose Figma value differs across
+// mode-completeness-check.mjs - Gate [5]: verify every token whose Figma value differs across
 // the modes of ITS collection actually resolves to a different value in CSS for those modes.
 //
 // Gate [2] catches wrong values. This gate catches the structural gap: a missing per-mode
@@ -6,9 +6,9 @@
 // different value in another mode.
 //
 // DS-AGNOSTIC. Two independent things vary and this gate handles both from config alone:
-//   • The COLOR axis — `figma.modes` (light/dark, high-contrast, …). Compared as hex.
-//   • Any OTHER typed collection declared in `figma.collections` — a sizing collection that
-//     changes per breakpoint, a string collection that changes per locale — each with ITS OWN
+//   • The COLOR axis - `figma.modes` (light/dark, high-contrast, …). Compared as hex.
+//   • Any OTHER typed collection declared in `figma.collections` - a sizing collection that
+//     changes per breakpoint, a string collection that changes per locale - each with ITS OWN
 //     modes and cssSelectors. Compared as literals (scalar '12px', string 'Inter').
 // A DS that declares no extra collections runs exactly the legacy colour-only check (byte-identical).
 //
@@ -17,9 +17,9 @@
 // unresolvable (e.g. rgba with no comparison).
 //
 // Requires at project root:
-//   ds-config.json   — snapshot path, themeCSS, figma.modes, figma.collections (optional)
-//   parity-map.mjs   — EXPLICIT, SKIP_TOKENS, NEUTRAL_LIGHT/DARK, NEUTRAL_VAR_RE
-//   figma-vars.snapshot.json — color.<mode> maps + (optional) modeVariants.<collection> maps
+//   ds-config.json   - snapshot path, themeCSS, figma.modes, figma.collections (optional)
+//   parity-map.mjs   - EXPLICIT, SKIP_TOKENS, NEUTRAL_LIGHT/DARK, NEUTRAL_VAR_RE
+//   figma-vars.snapshot.json - color.<mode> maps + (optional) modeVariants.<collection> maps
 //
 // Exit 0 = all mode-variant tokens adapt correctly.  Exit 1 = a missing per-mode override.
 
@@ -75,7 +75,7 @@ const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
 
 // ── Build the unified list of checkable collections ───────────────────────────
 // Each entry is a self-describing unit: its modes, how to read a token's Figma value per mode, how
-// to map a token to a CSS var, and — PER TOKEN — its kind (a single collection may mix
+// to map a token to a CSS var, and - PER TOKEN - its kind (a single collection may mix
 // color/scalar/string/boolean). Kind decides the comparison (hex vs literal) and the resolver.
 const eqHex     = (a, b) => a.toLowerCase() === b.toLowerCase();
 const eqLiteral = (a, b) => String(a).trim() === String(b).trim();
@@ -84,7 +84,7 @@ const resolveFor  = (kind) => (kind === 'color' ? resolve : resolveRaw);
 
 const CHECKABLE = [];
 
-// 1) The colour axis (legacy behaviour, unchanged) — every token is kind 'color'.
+// 1) The colour axis (legacy behaviour, unchanged) - every token is kind 'color'.
 {
   const modeTokens = Object.fromEntries(COLOR_MODES.map(m => [m.snapshotKey, snap.color?.[m.snapshotKey] ?? {}]));
   const baseKey = COLOR_MODES[0].snapshotKey;
@@ -102,7 +102,7 @@ const CHECKABLE = [];
   });
 }
 
-// 2) Declared collections, from the additive `modeVariants` section — each var carries its own kind.
+// 2) Declared collections, from the additive `modeVariants` section - each var carries its own kind.
 // These have no other per-mode value gate, so here we check VALUE parity per mode: each mode's CSS
 // must equal its Figma value. That subsumes completeness (a missing override leaves the base value
 // in the other mode → mismatch) AND catches wrong overrides.
@@ -139,7 +139,7 @@ for (const c of CHECKABLE) {
     if (!varying) continue;
 
     const cssVar = c.tokenToVar(token);
-    if (cssVar === null) { SKIPPED.push(`${c.label}:${token} (no CSS var — documented)`); continue; }
+    if (cssVar === null) { SKIPPED.push(`${c.label}:${token} (no CSS var - documented)`); continue; }
 
     const css = Object.fromEntries(modes.map(m => [m.snapshotKey, cssResolve(cssVar, m.snapshotKey)]));
 

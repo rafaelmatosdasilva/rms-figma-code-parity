@@ -1,4 +1,4 @@
-// icon-slot-check.mjs — Gate [13]: Icon slot parity
+// icon-slot-check.mjs - Gate [13]: Icon slot parity
 // Run from project root: node ../rms-figma-code-parity/icon-slot-check.mjs
 //
 // For every entry in ICON_USAGES (structure-contract.mjs), locates the element
@@ -21,10 +21,10 @@ let ICON_USAGES = [];
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
   if (m.ICON_USAGES && Array.isArray(m.ICON_USAGES)) ICON_USAGES = m.ICON_USAGES;
-} catch { /* optional — skip if not present */ }
+} catch { /* optional - skip if not present */ }
 
 if (!ICON_USAGES.length) {
-  console.log('⚠️  ICON_USAGES not found in structure-contract.mjs — skipping Gate [13]');
+  console.log('⚠️  ICON_USAGES not found in structure-contract.mjs - skipping Gate [13]');
   process.exit(0);
 }
 
@@ -72,13 +72,13 @@ for (const entry of ICON_USAGES) {
   const { plugin, selector, icon } = entry;
   const srcPath = pluginToSrc[plugin];
   if (!srcPath) {
-    console.log(`⚠️  [13] ${plugin}: no source HTML in ds-config.json — skipping`);
+    console.log(`⚠️  [13] ${plugin}: no source HTML in ds-config.json - skipping`);
     continue;
   }
 
   const absPath = join(ROOT, srcPath);
   if (!existsSync(absPath)) {
-    console.log(`⚠️  [13] ${plugin} ${selector}: ${srcPath} not found — skipping`);
+    console.log(`⚠️  [13] ${plugin} ${selector}: ${srcPath} not found - skipping`);
     continue;
   }
 
@@ -99,7 +99,7 @@ for (const entry of ICON_USAGES) {
 // ── Exhaustiveness: every <button id="X"> with a direct icon child must be declared ──
 // This catches slots that were added to the HTML but never registered in ICON_USAGES.
 // Without exhaustiveness a developer can introduce a wrong icon in a new undeclared slot
-// and Gate [13] will silently pass — it only verifies what's already in the contract.
+// and Gate [13] will silently pass - it only verifies what's already in the contract.
 const declaredByPlugin = {};
 for (const e of ICON_USAGES) {
   (declaredByPlugin[e.plugin] ??= new Set()).add(e.selector);
@@ -125,7 +125,7 @@ for (const [plugin, srcPath] of Object.entries(pluginToSrc)) {
 
     const sel = `#${btnId}`;
     if (!declared.has(sel)) {
-      console.log(`❌ [13] ${plugin} ${sel}: undeclared icon slot — uses "${useM[1]}" but missing from ICON_USAGES`);
+      console.log(`❌ [13] ${plugin} ${sel}: undeclared icon slot - uses "${useM[1]}" but missing from ICON_USAGES`);
       pass = false;
     }
   }

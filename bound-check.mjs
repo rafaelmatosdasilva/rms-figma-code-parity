@@ -1,18 +1,18 @@
-// bound-check.mjs — Run from project root: node scripts/bound-check.mjs
+// bound-check.mjs - Run from project root: node scripts/bound-check.mjs
 // Verifies every Figma variable bound to a node in your DS frames is
 // implemented in code (CSS var declared) or explicitly deferred.
 //
 // A token bound in Figma with no CSS var and not on the deferral list is a
-// divergence — the design uses it, the code doesn't.
+// divergence - the design uses it, the code doesn't.
 //
 // Requires at project root:
-//   ds-config.json   — themeCSS + pluginCSS paths
-//   parity-map.mjs   — COVERED, COVERED_PREFIX, EXPLICIT (optional)
-//   bound-tokens.json — output of /rms-parity Phase 2 Step 1b
+//   ds-config.json   - themeCSS + pluginCSS paths
+//   parity-map.mjs   - COVERED, COVERED_PREFIX, EXPLICIT (optional)
+//   bound-tokens.json - output of /rms-parity Phase 2 Step 1b
 //
 // Exit 0 = every bound token covered.
 // Exit 1 = uncovered bound token(s).
-// Exit 2 = bound-tokens.json missing (gate did NOT run — never a pass).
+// Exit 2 = bound-tokens.json missing (gate did NOT run - never a pass).
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -43,7 +43,7 @@ let raw;
 try { raw = readFileSync(join(ROOT, 'bound-tokens.json'), 'utf8'); } catch {
   console.log('\n⚠️  bound-tokens.json not found at project root.');
   console.log('   Run /rms-parity Phase 2 Step 1b and save output to bound-tokens.json.');
-  console.log('   (exit 2 — treated as "not run", never as a pass)\n');
+  console.log('   (exit 2 - treated as "not run", never as a pass)\n');
   process.exit(2);
 }
 const parsed = JSON.parse(raw);
@@ -92,13 +92,13 @@ if (UNCOVERED.length) {
   console.log('\nEvery Figma-bound token is implemented or explicitly deferred. ✓\n');
 
   // ── #4: DS orphan-token report ──────────────────────────────────────────────
-  // An orphan = a token that exists in the DS variable snapshot but is bound to NOTHING —
+  // An orphan = a token that exists in the DS variable snapshot but is bound to NOTHING -
   // not to any frame node (bound-tokens.json) and not to any component variant
   // (component-state-tokens.json). Two tiers:
   //   • ORPHAN-BUT-USED (❌): the code declares/uses its CSS var. The DS binds the token
-  //     nowhere, yet the code styles with it — a stale token the DS abandoned (the
+  //     nowhere, yet the code styles with it - a stale token the DS abandoned (the
   //     node/border/default class). This fails unless listed in ds-config knownOrphanExceptions.
-  //   • ORPHAN (ℹ️): defined but unused on both sides — advisory, likely DS cleanup.
+  //   • ORPHAN (ℹ️): defined but unused on both sides - advisory, likely DS cleanup.
   let orphanFail = 0;
   try {
     const SNAP_VARS = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
@@ -137,14 +137,14 @@ if (UNCOVERED.length) {
       const strict = cfg.orphanUsedStrict === true;
       orphanFail = strict ? orphanUsed.length : 0;
       const mark = strict ? '❌' : '⚠️ ';
-      console.log(`${mark} ORPHAN-BUT-USED (${orphanUsed.length}) — DS binds these to nothing, but the code uses their CSS var:`);
+      console.log(`${mark} ORPHAN-BUT-USED (${orphanUsed.length}) - DS binds these to nothing, but the code uses their CSS var:`);
       for (const { t, v } of orphanUsed) console.log(`  ${mark} ${t}  →  ${v} (declared in CSS)`);
       console.log('   Review: is it a stale token (rebind in DS or drop the CSS var), or a legit');
       console.log('   interaction state with no variant? Add confirmed-legit ones to ds-config →');
       console.log('   knownOrphanExceptions; set orphanUsedStrict:true to make the rest fail.\n');
     }
     if (orphanBenign.length) {
-      console.log(`ℹ️  ORPHANED TOKENS (${orphanBenign.length}) — in DS snapshot, bound to nothing, unused in code (DS cleanup candidates)`);
+      console.log(`ℹ️  ORPHANED TOKENS (${orphanBenign.length}) - in DS snapshot, bound to nothing, unused in code (DS cleanup candidates)`);
       for (const t of orphanBenign) console.log(`     ${t}`);
       console.log('');
     }

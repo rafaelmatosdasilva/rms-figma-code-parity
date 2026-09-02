@@ -1,25 +1,25 @@
-// component-selector-check.mjs — Gate [17]: state var → state selector.
+// component-selector-check.mjs - Gate [17]: state var → state selector.
 // For each DS component-prefixed CSS var ending with a state keyword
 // (hover/selected/disabled/focus/checked), verify it only appears in selectors
 // that have a matching state indicator.
 // A state var in a default-state selector means the wrong value applies to the
-// wrong interaction state — the kind of drift Gate [4] never catches.
+// wrong interaction state - the kind of drift Gate [4] never catches.
 //
 // State indicator detection (two sources):
-//   1. Standard CSS patterns — :hover, .selected, :disabled, :focus, :checked, etc.
-//   2. CONTRACT.propertyMap — project-specific state selectors derived from Figma states
+//   1. Standard CSS patterns - :hover, .selected, :disabled, :focus, :checked, etc.
+//   2. CONTRACT.propertyMap - project-specific state selectors derived from Figma states
 //      (e.g. radioButton.State.Selected → ".depth-option.done"; "done" in selector)
 //
 // Only checks vars where the prefix before the state suffix is a known DS component name.
 // System/semantic vars like --text-disabled or --text-muted are intentionally skipped.
 //
-// "active" is excluded from STATE_SUFFIXES — buttonTertiary maps its Figma "active"
+// "active" is excluded from STATE_SUFFIXES - buttonTertiary maps its Figma "active"
 // state to CSS :hover, making the mismatch intentional everywhere.
 //
 // Requires at project root:
-//   ds-config.json          — themeCSS + pluginCSS + optional knownStateExemptions[]
-//   structure-contract.mjs  — CONTRACT (for propertyMap-derived state selectors)
-//   parity-map.mjs          — SYSTEM_VARS (excluded from this check)
+//   ds-config.json          - themeCSS + pluginCSS + optional knownStateExemptions[]
+//   structure-contract.mjs  - CONTRACT (for propertyMap-derived state selectors)
+//   parity-map.mjs          - SYSTEM_VARS (excluded from this check)
 //
 // Exit 0 = all state vars appear in matching state selectors.  Exit 1 = mismatches found.
 
@@ -46,7 +46,7 @@ let CONTRACT = {};
 try {
   const mod = await import(join(ROOT, 'structure-contract.mjs'));
   CONTRACT = mod.CONTRACT ?? {};
-} catch { /* no contract — runs with empty map */ }
+} catch { /* no contract - runs with empty map */ }
 
 let SYSTEM_VARS = new Set();
 try {
@@ -101,7 +101,7 @@ for (const def of Object.values(CONTRACT)) {
 }
 
 // ── STATE_SUFFIXES ────────────────────────────────────────────────────────────
-// "active" is excluded — buttonTertiary maps Figma "active" → CSS :hover.
+// "active" is excluded - buttonTertiary maps Figma "active" → CSS :hover.
 const STATE_SUFFIXES = new Set(['hover', 'selected', 'disabled', 'focus', 'checked']);
 
 // ── Read and parse CSS ────────────────────────────────────────────────────────

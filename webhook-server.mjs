@@ -1,4 +1,4 @@
-// webhook-server.mjs — HTTP server that receives Figma webhook events and
+// webhook-server.mjs - HTTP server that receives Figma webhook events and
 // triggers an automated parity check when the DS file changes.
 //
 // Usage:
@@ -8,8 +8,8 @@
 //   FIGMA_TOKEN=xxx node scripts/setup-webhook.mjs --url https://your-host/webhook
 //
 // Config (ds-config.json):
-//   webhook.port    — port to listen on (default: 3456)
-//   webhook.secret  — passcode Figma sends in every event (must match registration)
+//   webhook.port    - port to listen on (default: 3456)
+//   webhook.secret  - passcode Figma sends in every event (must match registration)
 //   or: FIGMA_WEBHOOK_SECRET env var
 //
 // Handled events: FILE_UPDATE, LIBRARY_PUBLISH, FILE_VERSION_UPDATE
@@ -66,7 +66,7 @@ const server = createServer((req, res) => {
 
     // Figma uses a plain passcode (not HMAC)
     if (SECRET && payload.passcode !== SECRET) {
-      console.log(`[${new Date().toISOString()}] ⚠️  Wrong passcode — rejected`);
+      console.log(`[${new Date().toISOString()}] ⚠️  Wrong passcode - rejected`);
       res.writeHead(401); res.end('Unauthorized');
       return;
     }
@@ -81,20 +81,20 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ received: true, event }));
 
     if (!HANDLED_EVENTS.has(event)) {
-      console.log(`  ⏭ Event not handled — skipping`);
+      console.log(`  ⏭ Event not handled - skipping`);
       return;
     }
 
     // Run parity check
     console.log('  🔄 Running parity-check.mjs...');
     const pc = runScript('parity-check.mjs');
-    console.log(pc.pass ? '  ✅ Token parity OK' : '  ❌ Token parity FAIL — run /rms-parity to audit');
+    console.log(pc.pass ? '  ✅ Token parity OK' : '  ❌ Token parity FAIL - run /rms-parity to audit');
 
     // Run visual regression check (only if FIGMA_TOKEN set)
     if (process.env.FIGMA_TOKEN) {
       console.log('  🔄 Running visual-regression-check.mjs...');
       const vr = runScript('visual-regression-check.mjs');
-      console.log(vr.pass ? '  ✅ Visual regression OK' : '  ❌ Visual regression FAIL — inspect .parity-refs/*.new.png');
+      console.log(vr.pass ? '  ✅ Visual regression OK' : '  ❌ Visual regression FAIL - inspect .parity-refs/*.new.png');
     }
 
     console.log('  Done.\n');

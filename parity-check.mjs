@@ -1,21 +1,21 @@
-// parity-check.mjs — Run from project root: node scripts/parity-check.mjs [--fix]
+// parity-check.mjs - Run from project root: node scripts/parity-check.mjs [--fix]
 //
 // --fix: auto-apply sizing/typography value fixes directly to theme.css.
-//        Color divergences are printed as actionable fix hints only —
+//        Color divergences are printed as actionable fix hints only -
 //        alias chains require manual review to avoid breaking other tokens.
 //
 // Resolves every CSS var chain for all configured modes and diffs against
 // the Figma snapshot across three dimensions:
-//   1. Color      — every component color token, all configured modes
-//   2. Sizing     — gap / padding / radii / thickness / min-height
-//   3. Typography — type scale (size, weight, line-height)
+//   1. Color      - every component color token, all configured modes
+//   2. Sizing     - gap / padding / radii / thickness / min-height
+//   3. Typography - type scale (size, weight, line-height)
 //
 // Requires at project root:
-//   ds-config.json   — themeCSS + snapshotVars paths + figma.modes config
-//   parity-map.mjs   — EXPLICIT, SKIP_TOKENS, NULL_TOKENS, KNOWN_NULL,
+//   ds-config.json   - themeCSS + snapshotVars paths + figma.modes config
+//   parity-map.mjs   - EXPLICIT, SKIP_TOKENS, NULL_TOKENS, KNOWN_NULL,
 //                       EXPLICIT_SIZING, SIZING_SKIP, TYPO,
 //                       NEUTRAL_LIGHT, NEUTRAL_DARK, NEUTRAL_VAR_RE,
-//                       NEUTRAL_MAPS (for 3+ modes — { modeName: {...} } or array)
+//                       NEUTRAL_MAPS (for 3+ modes - { modeName: {...} } or array)
 //
 // Exit 0 = full parity. Exit 1 = at least one FAIL or NEW SKIP.
 
@@ -33,18 +33,18 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 }
 
 const THEME_PATHS   = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
-const THEME_PATH    = THEME_PATHS[0]; // primary — used in fix hints
+const THEME_PATH    = THEME_PATHS[0]; // primary - used in fix hints
 const THEME_LABEL   = THEME_PATHS.length === 1 ? THEME_PATHS[0] : `[${THEME_PATHS.map(p=>p.split('/').pop()).join(', ')}]`;
 const SNAPSHOT_PATH = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
 
 // ── Mode configuration ────────────────────────────────────────────────────────
 // New: cfg.figma.modes = [{ name, snapshotKey?, cssSelector }]
 //   cssSelector values:
-//     "root"                — :root { }
-//     "dark-media"          — @media (prefers-color-scheme: dark) { :root { } }
-//     "high-contrast-media" — @media (prefers-contrast: more) { :root { } }
-//     "class:<name>"        — .<name> :root { } or :root.<name> { }
-//     "data:<attr>=<val>"   — [data-theme="dark"] :root { }
+//     "root"                - :root { }
+//     "dark-media"          - @media (prefers-color-scheme: dark) { :root { } }
+//     "high-contrast-media" - @media (prefers-contrast: more) { :root { } }
+//     "class:<name>"        - .<name> :root { } or :root.<name> { }
+//     "data:<attr>=<val>"   - [data-theme="dark"] :root { }
 //
 // Legacy: cfg.figma.lightMode / cfg.figma.darkMode → synthesized to two-mode array
 const figmaCfg = cfg.figma ?? {};
@@ -77,7 +77,7 @@ let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
     BOOLEAN_SKIP = new Set(), ANIMATION_SKIP = new Set(),
     EFFECTS = [], SCOPE_RULES = [], FOCUS_CONTRACT = [];
 let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
-// neutralMaps[i] = { key: '#hex' } for mode i — keys match NEUTRAL_VAR_RE capture group
+// neutralMaps[i] = { key: '#hex' } for mode i - keys match NEUTRAL_VAR_RE capture group
 let neutralMaps = MODES.map(() => ({}));
 
 try {
@@ -108,7 +108,7 @@ try {
     if (map.NEUTRAL_DARK && neutralMaps.length > 1) neutralMaps[1] = map.NEUTRAL_DARK;
   }
 } catch {
-  console.warn('⚠️  parity-map.mjs not found — running with empty token maps.');
+  console.warn('⚠️  parity-map.mjs not found - running with empty token maps.');
   console.warn('   All non-standard token names will appear as FAIL or NEW SKIP.');
   console.warn('   Copy parity-map.example.mjs → parity-map.mjs to configure.\n');
 }
@@ -157,7 +157,7 @@ for (let i = 0; i < rawLines.length; i++) {
   if (m) varLineMap[m[1]] = i + 1; // 1-indexed; keeps last occurrence
 }
 
-// ── Resolver caches — one Map per mode for color, one for scalar ─────────────
+// ── Resolver caches - one Map per mode for color, one for scalar ─────────────
 // Keyed by var name; populated on first resolve, returned instantly on repeat.
 // Cuts redundant chain-walks when many tokens alias through the same primitives.
 const resolveCache  = MODES.map(() => new Map());
@@ -234,7 +234,7 @@ function aliasHopToVar(hop) {
   if (DROP_SEGMENTS.includes('default')) v = v.replace(/\/default$/, '');
   // An intermediate hop is a token in its own right, so it obeys the same EXPLICIT
   // name overrides as a top-level one. Deriving it by convention alone makes every
-  // token that chains through a renamed semantic var report ALIAS FAIL — the CSS is
+  // token that chains through a renamed semantic var report ALIAS FAIL - the CSS is
   // correct, the expectation is not. Check both the dropped-suffix form and the raw
   // hop, since EXPLICIT keys may be written either way.
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, v))   return EXPLICIT[v];
@@ -258,15 +258,15 @@ function colorFixHint(cssVar, figmaHex, modeIdx) {
   const current = (modeIdx > 0 ? modeVars[modeIdx]?.[cssVar] : undefined) ?? modeVars[0][cssVar];
   const loc     = line ? `${THEME_PATH}:${line}` : THEME_PATH;
   if (suggest)
-    return `${loc} — ${cssVar}: ${current ?? '?'} should resolve to ${suggest} (${figmaHex})`;
-  return `${loc} — chain should resolve to ${figmaHex} (no matching neutral found)`;
+    return `${loc} - ${cssVar}: ${current ?? '?'} should resolve to ${suggest} (${figmaHex})`;
+  return `${loc} - chain should resolve to ${figmaHex} (no matching neutral found)`;
 }
 
 function sizingFixHint(cssVar, figmaVal) {
   const line    = varLineMap[cssVar];
   const current = modeVars[0][cssVar];
   if (!line) return `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}`;
-  return `${THEME_PATH}:${line} — change ${cssVar}: ${current ?? '?'} → ${figmaVal}`;
+  return `${THEME_PATH}:${line} - change ${cssVar}: ${current ?? '?'} → ${figmaVal}`;
 }
 
 // ── Token → CSS var (convention) ─────────────────────────────────────────────
@@ -306,7 +306,7 @@ const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 
 // ── Primitive ramp: derived from the snapshot, not restated in parity-map ────
 // The ramp used to be hand-maintained in parity-map.mjs (NEUTRAL_LIGHT / NEUTRAL_DARK)
-// while the same numbers also lived in the token CSS and in Figma — three copies that
+// while the same numbers also lived in the token CSS and in Figma - three copies that
 // drift independently. When a DS primitive moves, updating the CSS alone leaves the
 // resolver comparing against the old hex and every token aliasing that primitive fails,
 // pointing at the tokens rather than at the stale map.
@@ -334,14 +334,14 @@ if (snap.primitives && typeof snap.primitives === 'object') {
   });
 }
 
-// Source snapshot (DS library file) — populated by Phase 1 when figmaSourceKey is set.
+// Source snapshot (DS library file) - populated by Phase 1 when figmaSourceKey is set.
 // When present, value mismatches are cross-checked: if source matches CSS, the consumer
 // file just has a pending library update → PENDING_FIGMA_SYNC (not a gate failure).
 const sourceSnap = snap.source ?? null;
 
 // ── Accumulators ──────────────────────────────────────────────────────────────
 const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [], BOOL_INFO = [], ANIM_INFO = [], TYPO_INFO = [], EFFECTS_FAIL = [], SCOPE_FAIL = [], FOCUS_INFO = [];
-const autoFixes = []; // { cssVar, newVal, line } — applied when --fix
+const autoFixes = []; // { cssVar, newVal, line } - applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
 const seen = new Set();
@@ -362,7 +362,7 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
       if (KNOWN_NULL.has(token))
         SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'Figma value null (known)' });
       else
-        NEW_SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'Figma value is NEW null — add to KNOWN_NULL in parity-map.mjs' });
+        NEW_SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'Figma value is NEW null - add to KNOWN_NULL in parity-map.mjs' });
       continue;
     }
     const inBase     = !!modeVars[0][cssVar];
@@ -373,12 +373,12 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
     }
     const cssHex = resolve(cssVar, modeIdx);
     if (cssHex === null) {
-      NEW_SKIP.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, reason: 'CSS resolves to non-hex — add to SKIP_TOKENS in parity-map.mjs if intentional' });
+      NEW_SKIP.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, reason: 'CSS resolves to non-hex - add to SKIP_TOKENS in parity-map.mjs if intentional' });
       continue;
     }
     if (figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
       // Cross-check against DS source: if source matches CSS, consumer just has a pending
-      // library update — this is not a code bug. Route to PENDING_FIGMA_SYNC instead of FAIL.
+      // library update - this is not a code bug. Route to PENDING_FIGMA_SYNC instead of FAIL.
       const sourceHex = sourceSnap?.[modeMeta.snapshotKey]?.[tokenKey]
                      ?? sourceSnap?.[modeMeta.snapshotKey]?.[token] ?? null;
       if (sourceHex && sourceHex.toLowerCase() === cssHex.toLowerCase()) {
@@ -394,8 +394,8 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
     } else {
       PASS.push(`color ${token}:${modeMeta.snapshotKey}`);
 
-      // Alias chain check — CSS var() chain must route through same primitive as Figma.
-      // Same hex can pass value check while chain goes through a different primitive — still wrong.
+      // Alias chain check - CSS var() chain must route through same primitive as Figma.
+      // Same hex can pass value check while chain goes through a different primitive - still wrong.
       const figmaRaw = snap.aliases?.[modeMeta.snapshotKey]?.[tokenKey]
                     ?? snap.aliases?.[modeMeta.snapshotKey]?.[token] ?? null;
       if (figmaRaw) {
@@ -420,15 +420,15 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
           if (lastCSSHop !== lastFigmaHop) {
             ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain, cssChain,
               mismatchAt: cssChain.length - 1,
-              expected: lastFigmaHop, actual: lastCSSHop ?? '(no alias chain — hardcoded hex)' });
+              expected: lastFigmaHop, actual: lastCSSHop ?? '(no alias chain - hardcoded hex)' });
           } else {
             // Check intermediate hops where both chains have a value.
             // If CSS arrives at the final primitive directly (skipping semantic intermediates),
-            // that's allowed — break early. Only flag if CSS routes through a different semantic var.
+            // that's allowed - break early. Only flag if CSS routes through a different semantic var.
             for (let i = 0; i < figmaChain.length - 1; i++) {
               const csshop = cssChain[i];
-              if (csshop === undefined) break; // CSS chain is shorter — skip remaining
-              if (csshop === lastFigmaHop) break; // CSS arrived at primitive directly — OK
+              if (csshop === undefined) break; // CSS chain is shorter - skip remaining
+              if (csshop === lastFigmaHop) break; // CSS arrived at primitive directly - OK
               if (csshop !== figmaChain[i]) {
                 ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain, cssChain,
                   mismatchAt: i,
@@ -500,9 +500,9 @@ if (snap.typography && Object.keys(TYPO).length) {
     }
   }
 } else if (!snap.typography) {
-  SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'snapshot has no typography section — run /rms-parity Phase 1' });
+  SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'snapshot has no typography section - run /rms-parity Phase 1' });
 } else if (!Object.keys(TYPO).length) {
-  SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'TYPO map empty in parity-map.mjs — add your type scale vars' });
+  SKIP.push({ dimension: 'typography', token: 'ALL', mode: '-', reason: 'TYPO map empty in parity-map.mjs - add your type scale vars' });
 }
 // Advisory: snapshot has ls/textTransform fields not yet covered by a TYPO map entry.
 // Phase 1 captures these when letterSpacing / textCase are present in the Figma text style.
@@ -517,7 +517,7 @@ if (snap.typography) {
         const cssSuffix = field === 'ls' ? 'ls' : 'text-transform';
         TYPO_INFO.push({
           cssVar: `--${scale}-${cssSuffix} (inferred)`,
-          note: `snapshot has ${scale}.${field}="${entry[field]}" — add '--${scale}-${cssSuffix}': ['${scale}', '${field}'] to TYPO in parity-map.mjs to gate-check it`,
+          note: `snapshot has ${scale}.${field}="${entry[field]}" - add '--${scale}-${cssSuffix}': ['${scale}', '${field}'] to TYPO in parity-map.mjs to gate-check it`,
         });
       }
     }
@@ -552,7 +552,7 @@ for (const [tokenName, expected] of Object.entries(strSnap)) {
   }
   const norm = s => String(s).replace(/^["']|["']$/g, '').trim().toLowerCase();
   if (norm(raw) !== norm(expected)) {
-    FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} — change ${cssVar}: ${raw} → ${expected}` });
+    FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} - change ${cssVar}: ${raw} → ${expected}` });
   } else {
     PASS.push(`strings ${tokenName}`);
   }
@@ -613,7 +613,7 @@ if (bpModeNames.length > 0) {
 
 // ── 6. BOOLEANS ───────────────────────────────────────────────────────────────
 // BOOLEAN-typed Figma variables from any collection (theme toggles, feature flags,
-// display controls). Advisory only — document implemented vars in BOOLEAN_SKIP.
+// display controls). Advisory only - document implemented vars in BOOLEAN_SKIP.
 const boolSnap = snap.booleans ?? {};
 const boolSeen = new Set();
 for (const [modeName, tokens] of Object.entries(boolSnap)) {
@@ -627,7 +627,7 @@ for (const [modeName, tokens] of Object.entries(boolSnap)) {
 }
 
 // ── 7. ANIMATION ──────────────────────────────────────────────────────────────
-// EASING and TIMING Figma variables — pre-formatted as CSS values in the snapshot:
+// EASING and TIMING Figma variables - pre-formatted as CSS values in the snapshot:
 //   EASING → 'cubic-bezier(p1x, p1y, p2x, p2y)'
 //   TIMING → 'Nms'
 // Each maps to a CSS custom property the same way sizing/string tokens do.
@@ -648,20 +648,20 @@ for (const [tokenName, expected] of Object.entries(animSnap)) {
     continue;
   }
   if (raw.trim() !== String(expected).trim()) {
-    FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} — change ${cssVar}: ${raw} → ${expected}` });
+    FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} - change ${cssVar}: ${raw} → ${expected}` });
   } else {
     PASS.push(`animation ${tokenName}`);
     // Usage advisory: var declared with right value but never referenced in transition/animation
     const usageRe = new RegExp(`var\\(${cssVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,)]`);
     if (!usageRe.test(rawCss)) {
-      ANIM_INFO.push({ token: tokenName, cssVar, note: 'declared but not referenced in any transition/animation rule — add to ANIMATION_SKIP if used via JS' });
+      ANIM_INFO.push({ token: tokenName, cssVar, note: 'declared but not referenced in any transition/animation rule - add to ANIMATION_SKIP if used via JS' });
     }
   }
 }
 
 // ── EFFECTS: declared CSS effects must be present in the merged CSS ───────────
 // Verifies that hardcoded visual effects (backdrop-filter, box-shadow, filter) declared
-// in EFFECTS are present in the actual CSS. Not driven by Figma variables — these are
+// in EFFECTS are present in the actual CSS. Not driven by Figma variables - these are
 // design-system-level effects documented manually in parity-map.mjs.
 for (const { selector, prop, expected } of EFFECTS) {
   const sEsc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -683,13 +683,13 @@ for (const { selector, type } of FOCUS_CONTRACT) {
   let ok = false;
   if (type === 'visible') {
     ok = new RegExp(`${sEsc}[^{,]*:focus-visible`).test(css);
-    if (!ok) FOCUS_INFO.push({ selector, type, note: ':focus-visible rule not found — add focus-visible styling or change to "suppress"' });
+    if (!ok) FOCUS_INFO.push({ selector, type, note: ':focus-visible rule not found - add focus-visible styling or change to "suppress"' });
   } else if (type === 'within') {
     ok = new RegExp(`${sEsc}[^{,]*:focus-within`).test(css);
     if (!ok) FOCUS_INFO.push({ selector, type, note: ':focus-within rule not found' });
   } else if (type === 'suppress') {
     ok = new RegExp(`${sEsc}[^{]*\\{[\\s\\S]*?outline\\s*:\\s*none`).test(css);
-    if (!ok) FOCUS_INFO.push({ selector, type, note: 'outline: none not found in selector block — add it or document as "visible"' });
+    if (!ok) FOCUS_INFO.push({ selector, type, note: 'outline: none not found in selector block - add it or document as "visible"' });
   }
 }
 
@@ -704,7 +704,7 @@ if (SCOPE_RULES.length) {
     for (const m of rulesCSS.matchAll(ruleRe)) {
       const usedProp = m[1].trim();
       if (!allowedProps.includes(usedProp)) {
-        SCOPE_FAIL.push({ var: varName, usedProp, allowedProps, issue: `${varName} used in "${usedProp}:" — allowed only in [${allowedProps.join(', ')}]` });
+        SCOPE_FAIL.push({ var: varName, usedProp, allowedProps, issue: `${varName} used in "${usedProp}:" - allowed only in [${allowedProps.join(', ')}]` });
       }
     }
   }
@@ -727,7 +727,7 @@ if (FIX_MODE && autoFixes.length > 0) {
   console.log(`\n🔧 Auto-fixed ${fixedCount} sizing/typography value(s) in ${THEME_PATH}`);
   const colorFails = FAIL.filter(f => f.dimension === 'color').length;
   if (colorFails > 0)
-    console.log(`   ℹ️  ${colorFails} color divergence(s) need manual review — see Fix hints below`);
+    console.log(`   ℹ️  ${colorFails} color divergence(s) need manual review - see Fix hints below`);
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
@@ -743,19 +743,19 @@ console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
 if (snap.aliases) console.log(`🔗 ALIAS FAIL  ${ALIAS_FAIL.length}  (same hex, wrong primitive chain)`);
 if (sourceSnap)   console.log(`⏳ PENDING FIGMA SYNC  ${PENDING_FIGMA_SYNC.length}  (code matches DS source; consumer file has a pending library update)`);
-if (BOOL_INFO.length) console.log(`ℹ️  BOOLEAN TOKENS  ${BOOL_INFO.length}  (implement via display rules or class toggles — add to BOOLEAN_SKIP in parity-map.mjs to suppress)`);
-if (EFFECTS_FAIL.length) console.log(`❌ EFFECTS FAIL  ${EFFECTS_FAIL.length}  (declared CSS effects missing — update EFFECTS in parity-map.mjs)`);
-if (SCOPE_FAIL.length)   console.log(`❌ SCOPE FAIL  ${SCOPE_FAIL.length}  (token used in wrong CSS property type — fix or update SCOPE_RULES)`);
+if (BOOL_INFO.length) console.log(`ℹ️  BOOLEAN TOKENS  ${BOOL_INFO.length}  (implement via display rules or class toggles - add to BOOLEAN_SKIP in parity-map.mjs to suppress)`);
+if (EFFECTS_FAIL.length) console.log(`❌ EFFECTS FAIL  ${EFFECTS_FAIL.length}  (declared CSS effects missing - update EFFECTS in parity-map.mjs)`);
+if (SCOPE_FAIL.length)   console.log(`❌ SCOPE FAIL  ${SCOPE_FAIL.length}  (token used in wrong CSS property type - fix or update SCOPE_RULES)`);
 if (TYPO_INFO.length)    console.log(`ℹ️  TYPO UNUSED  ${TYPO_INFO.length}  (typography vars not applied in component rules)`);
 if (FOCUS_INFO.length)   console.log(`ℹ️  FOCUS GAPS  ${FOCUS_INFO.length}  (update FOCUS_CONTRACT in parity-map.mjs)`);
 
 if (SKIP.length) {
-  console.log('\n─── Skipped (expected — each has a documented reason) ─────────');
-  for (const s of SKIP) console.log(`  ⏭  [${s.dimension}/${s.mode}] ${s.token} — ${s.reason}`);
+  console.log('\n─── Skipped (expected - each has a documented reason) ─────────');
+  for (const s of SKIP) console.log(`  ⏭  [${s.dimension}/${s.mode}] ${s.token} - ${s.reason}`);
 }
 if (NEW_SKIP.length) {
   console.log('\n─── ⚠️ NEW / UNEXPECTED SKIPS (must be signed off) ───────────');
-  for (const s of NEW_SKIP) console.log(`  ⚠️  [${s.dimension}/${s.mode}] ${s.token} — ${s.reason}`);
+  for (const s of NEW_SKIP) console.log(`  ⚠️  [${s.dimension}/${s.mode}] ${s.token} - ${s.reason}`);
 }
 if (FAIL.length) {
   console.log('\n─── Divergences ──────────────────────────────────────────────');
@@ -774,7 +774,7 @@ if (ALIAS_FAIL.length) {
   for (const a of ALIAS_FAIL) {
     console.log(`  🔗 [color/${a.mode}] ${a.token} → ${a.cssVar}`);
     console.log(`       Figma chain:  ${a.figmaChain.join(' → ')}`);
-    console.log(`       CSS chain:    ${a.cssChain?.join(' → ') || '(no alias chain — hardcoded hex)'}`);
+    console.log(`       CSS chain:    ${a.cssChain?.join(' → ') || '(no alias chain - hardcoded hex)'}`);
     if (a.mismatchAt !== undefined)
       console.log(`       Mismatch at hop #${a.mismatchAt}: expected ${a.expected}  got ${a.actual}`);
   }
@@ -809,17 +809,17 @@ if (TYPO_INFO.length) {
   console.log('\n─── ℹ️  Typography vars not applied in component rules ─────────');
   console.log('   These vars are declared in :root with the right Figma value but never');
   console.log('   referenced in any component-level CSS rule (font-size/weight/lh).');
-  for (const t of TYPO_INFO) console.log(`  ℹ️  ${t.cssVar}  —  ${t.note}`);
+  for (const t of TYPO_INFO) console.log(`  ℹ️  ${t.cssVar}  -  ${t.note}`);
 }
 if (EFFECTS_FAIL.length) {
   console.log('\n─── ❌ Missing declared CSS effects ────────────────────────────');
   console.log('   These effects are declared in EFFECTS (parity-map.mjs) but not found in CSS.');
-  for (const e of EFFECTS_FAIL) console.log(`  ❌  ${e.selector}  —  ${e.issue}`);
+  for (const e of EFFECTS_FAIL) console.log(`  ❌  ${e.selector}  -  ${e.issue}`);
 }
 if (FOCUS_INFO.length) {
   console.log('\n─── ℹ️  Focus contract gaps ─────────────────────────────────────');
   console.log('   Declare focus treatment in FOCUS_CONTRACT (parity-map.mjs).');
-  for (const f of FOCUS_INFO) console.log(`  ℹ️  ${f.selector} [${f.type}]  —  ${f.note}`);
+  for (const f of FOCUS_INFO) console.log(`  ℹ️  ${f.selector} [${f.type}]  -  ${f.note}`);
 }
 if (SCOPE_FAIL.length) {
   console.log('\n─── ❌ Token scope violations ───────────────────────────────────');

@@ -1,22 +1,22 @@
-// pseudo-element-check.mjs — Run from project root: node ../rms-parity/pseudo-element-check.mjs
+// pseudo-element-check.mjs - Run from project root: node ../rms-parity/pseudo-element-check.mjs
 //
-// Hard Rule #14 — Pseudo-element content audit:
+// Hard Rule #14 - Pseudo-element content audit:
 //   Every ::before / ::after rule on a DS component selector that sets `content`
 //   (creating a visible layer) must be declared in PSEUDO_ELEMENTS in
 //   structure-contract.mjs with what Figma layer it corresponds to.
 //
-//   Why: pseudo-elements are invisible to token checks — they can add visual
+//   Why: pseudo-elements are invisible to token checks - they can add visual
 //   content (chevrons, pills, indicators) that has no Figma backing. Without
 //   this gate, those additions silently diverge from DS design.
 //
 //   Each entry in PSEUDO_ELEMENTS must be one of:
-//     DS PILL      — pill/fill layer that exists in the Figma DS component
-//     DS INDICATOR — visual indicator explicitly in the DS component
-//     LAYOUT       — non-visual utility (resize handles, clearfixes, etc.)
+//     DS PILL      - pill/fill layer that exists in the Figma DS component
+//     DS INDICATOR - visual indicator explicitly in the DS component
+//     LAYOUT       - non-visual utility (resize handles, clearfixes, etc.)
 //
 // Requires at project root:
-//   ds-config.json   — themeCSS + pluginCSS paths (sources to scan)
-//   structure-contract.mjs — PSEUDO_ELEMENTS export
+//   ds-config.json   - themeCSS + pluginCSS paths (sources to scan)
+//   structure-contract.mjs - PSEUDO_ELEMENTS export
 //
 // Exit 0 = all content-setting pseudo-elements documented. Exit 1 = new ones found.
 

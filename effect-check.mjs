@@ -1,4 +1,4 @@
-// effect-check.mjs — Gate: effect-style parity (Figma shadow styles → CSS box-shadow).
+// effect-check.mjs - Gate: effect-style parity (Figma shadow styles → CSS box-shadow).
 //
 // DS-AGNOSTIC and OPT-IN. A no-op (exit 0) unless BOTH:
 //   • the snapshot has an `effects` map ({ styleName: "<canonical box-shadow>" }), captured from
@@ -32,7 +32,7 @@ const effects = snap.effects || {};
 const ecfg    = cfg.figma?.effects || null;
 
 if (!ecfg || Object.keys(effects).length === 0) {
-  console.log('\n⏭  Effect parity — not configured (no snapshot.effects or figma.effects). Skipped.\n');
+  console.log('\n⏭  Effect parity - not configured (no snapshot.effects or figma.effects). Skipped.\n');
   process.exit(0);
 }
 

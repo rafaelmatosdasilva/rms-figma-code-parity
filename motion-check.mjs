@@ -1,4 +1,4 @@
-// motion-check.mjs — Gate: motion-token parity (easing + duration variables → CSS).
+// motion-check.mjs - Gate: motion-token parity (easing + duration variables → CSS).
 //
 // DS-AGNOSTIC and OPT-IN. A no-op (exit 0) unless BOTH:
 //   • the snapshot has a `motion` map ({ tokenName: value }), and
@@ -31,7 +31,7 @@ const motion = snap.motion || {};
 const mcfg   = cfg.figma?.motion || null;
 
 if (!mcfg || Object.keys(motion).length === 0) {
-  console.log('\n⏭  Motion parity — not configured (no snapshot.motion or figma.motion). Skipped.\n');
+  console.log('\n⏭  Motion parity - not configured (no snapshot.motion or figma.motion). Skipped.\n');
   process.exit(0);
 }
 

@@ -1,4 +1,4 @@
-// naming-check.mjs — Gate [11]: CSS var naming round-trip.
+// naming-check.mjs - Gate [11]: CSS var naming round-trip.
 // Every CSS var declared in ANY project CSS file (theme.css + pluginCSS) must
 // trace back to a Figma token in the snapshot (via convention or EXPLICIT) or
 // be on the SYSTEM_VARS exemption list in parity-map.mjs.
@@ -7,8 +7,8 @@
 // A var with no Figma backing is either hallucinated or needs to be documented.
 //
 // Requires at project root:
-//   ds-config.json   — snapshot path, themeCSS, pluginCSS
-//   parity-map.mjs   — EXPLICIT, EXPLICIT_SIZING, SKIP_TOKENS, SIZING_SKIP,
+//   ds-config.json   - snapshot path, themeCSS, pluginCSS
+//   parity-map.mjs   - EXPLICIT, EXPLICIT_SIZING, SKIP_TOKENS, SIZING_SKIP,
 //                      SYSTEM_VARS (known structural/semantic vars with no 1:1 token)
 //
 // Exit 0 = all CSS vars traceable.  Exit 1 = uninvented vars found.
@@ -98,7 +98,7 @@ for (const m of themeRaw.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) themeVarsDe
 
 // ── Plugin CSS override detection ─────────────────────────────────────────────
 // Any plugin :root block that re-declares a theme var will override the DS token
-// value for the plugin's runtime context — this is a hard parity violation.
+// value for the plugin's runtime context - this is a hard parity violation.
 // Exempt intentional overrides via ds-config.json → knownPluginOverrides: ["--var"].
 const PLUGIN_OVERRIDE = [];
 const knownPluginOverrides = new Set(cfg.knownPluginOverrides ?? []);
@@ -155,11 +155,11 @@ if (PLUGIN_OVERRIDE.length) {
 
 // ── SYSTEM_VARS staleness ─────────────────────────────────────────────────────
 // Entries in SYSTEM_VARS that no longer appear as declarations in any CSS file.
-// These are phantom exemptions — if a var is re-added later, the stale entry would
+// These are phantom exemptions - if a var is re-added later, the stale entry would
 // silently exempt it from the naming round-trip check.
 const STALE_SYSTEM_VARS = [...SYSTEM_VARS].filter(v => !declared.has(v));
 if (STALE_SYSTEM_VARS.length) {
-  console.log(`\nℹ️  STALE SYSTEM_VARS (${STALE_SYSTEM_VARS.length}) — in parity-map.mjs but not declared in any CSS file:`);
+  console.log(`\nℹ️  STALE SYSTEM_VARS (${STALE_SYSTEM_VARS.length}) - in parity-map.mjs but not declared in any CSS file:`);
   for (const v of STALE_SYSTEM_VARS) console.log(`     ${v}`);
   console.log('   Remove these entries from SYSTEM_VARS to keep the exemption list accurate.\n');
 }
@@ -167,7 +167,7 @@ if (STALE_SYSTEM_VARS.length) {
 // ── CSS class selector → CONTRACT cross-reference ─────────────────────────────
 // Flags camelCase top-level CSS class selectors (e.g. .buttonPrimary, .sidePanel)
 // that have no CONTRACT entry and no knownPluginSelectors exemption.
-// FAIL — undocumented selectors indicate a plugin-specific component that should not exist.
+// FAIL - undocumented selectors indicate a plugin-specific component that should not exist.
 const knownPluginSelectors = new Set(cfg.knownPluginSelectors ?? []);
 let CONTRACT_KEYS = new Set();
 try {
@@ -184,7 +184,7 @@ if (CONTRACT_KEYS.size) {
   }
   if (seen.size) {
     selectorFails = true;
-    console.log(`\n❌ UNDOCUMENTED SELECTORS (${seen.size}) — CSS component classes with no DS backing:\n`);
+    console.log(`\n❌ UNDOCUMENTED SELECTORS (${seen.size}) - CSS component classes with no DS backing:\n`);
     for (const cls of [...seen].sort()) {
       console.log(`   .${cls}`);
       console.log(`     → Not in CONTRACT and not in ds-config.json → knownPluginSelectors.`);

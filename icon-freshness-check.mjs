@@ -1,4 +1,4 @@
-// icon-freshness-check.mjs — Gate [17]
+// icon-freshness-check.mjs - Gate [17]
 //
 // Verifies that figma-icons.snapshot.json is still accurate against live Figma.
 // For each DS icon (those with a nodeId in the snapshot), fetches the exported SVG
@@ -8,8 +8,8 @@
 // knows to run Phase 1 (which re-exports the SVG and updates the snapshot + sprite).
 //
 // Requires:
-//   FIGMA_TOKEN  — env var with a Figma personal access token (file_content:read scope)
-//   ds-config.json  — figmaFileKey, paths.snapshotIcons
+//   FIGMA_TOKEN  - env var with a Figma personal access token (file_content:read scope)
+//   ds-config.json  - figmaFileKey, paths.snapshotIcons
 //
 // Exit 0 = all icon paths match live Figma (or FIGMA_TOKEN missing → skipped).
 // Exit 1 = at least one icon changed in Figma since the snapshot was committed.
@@ -30,14 +30,14 @@ const FILE_KEY       = cfg.figmaFileKey;
 const SNAP_ICONS_REL = cfg.paths?.snapshotIcons;
 
 if (!TOKEN) {
-  console.log('\n⏭  Gate [17] skipped — FIGMA_TOKEN not set (add to .env to enable icon freshness checks)\n');
+  console.log('\n⏭  Gate [17] skipped - FIGMA_TOKEN not set (add to .env to enable icon freshness checks)\n');
   process.exit(0);
 }
 if (!FILE_KEY) {
   console.error('❌ figmaFileKey missing in ds-config.json'); process.exit(1);
 }
 if (!SNAP_ICONS_REL || !existsSync(join(ROOT, SNAP_ICONS_REL))) {
-  console.log(`\n⏭  Gate [17] skipped — ${SNAP_ICONS_REL ?? 'paths.snapshotIcons'} not found\n`);
+  console.log(`\n⏭  Gate [17] skipped - ${SNAP_ICONS_REL ?? 'paths.snapshotIcons'} not found\n`);
   process.exit(0);
 }
 
@@ -47,10 +47,10 @@ try { iconSnap = JSON.parse(readFileSync(join(ROOT, SNAP_ICONS_REL), 'utf8')); }
   console.error(`❌ Could not parse ${SNAP_ICONS_REL}: ${e.message}`); process.exit(1);
 }
 
-// Collect DS icons that have a nodeId (skip PLUGIN-SPECIFIC icons — no Figma node to check)
+// Collect DS icons that have a nodeId (skip PLUGIN-SPECIFIC icons - no Figma node to check)
 const dsIcons = Object.entries(iconSnap).filter(([, entry]) => entry?.nodeId);
 if (!dsIcons.length) {
-  console.log('\n⏭  Gate [17] skipped — no DS icons with nodeIds in snapshot\n');
+  console.log('\n⏭  Gate [17] skipped - no DS icons with nodeIds in snapshot\n');
   process.exit(0);
 }
 
@@ -117,7 +117,7 @@ for (const [iconId, entry] of dsIcons) {
   nodeIdToIconId[entry.nodeId] = iconId;
 }
 
-console.log(`\n─── Gate [17] — Icon snapshot freshness (${dsIcons.length} DS icons) ─────────────\n`);
+console.log(`\n─── Gate [17] - Icon snapshot freshness (${dsIcons.length} DS icons) ─────────────\n`);
 
 const changed = [];
 const checked = [];
@@ -125,7 +125,7 @@ const checked = [];
 // ── Icon RENAME check ─────────────────────────────────────────────────────────
 // Code references DS icons by their EXACT Figma name (`#icon-download` ↔ recorded name
 // 'Icon-download'; HARD RULE: icon ids = exact Figma names). If the DS renames the node
-// (same nodeId, new name — e.g. Icon-download → Icon-export), the code's id is stale and the
+// (same nodeId, new name - e.g. Icon-download → Icon-export), the code's id is stale and the
 // SVG-path check alone can miss it (a rename need not change the geometry). Fetch each icon
 // node's LIVE name via /nodes and flag any drift from the snapshot's recorded name.
 const renamed = [];
@@ -137,7 +137,7 @@ const renamed = [];
     const url = `https://api.figma.com/v1/files/${FILE_KEY}/nodes?ids=${encodeURIComponent(slice.join(','))}&depth=1`;
     try {
       const r = await fetch(url, { headers: { 'X-Figma-Token': TOKEN } });
-      if (!r.ok) { console.log(`   ⚠️  icon rename check skipped for a batch — /nodes ${r.status}`); continue; }
+      if (!r.ok) { console.log(`   ⚠️  icon rename check skipped for a batch - /nodes ${r.status}`); continue; }
       const json = await r.json();
       for (const id of slice) { const doc = json.nodes?.[id]?.document; if (doc?.name) liveNames[id] = doc.name; }
     } catch (e) { console.log(`   ⚠️  icon rename check network error: ${e.message}`); }
@@ -145,7 +145,7 @@ const renamed = [];
   for (const [iconId, entry] of dsIcons) {
     const live = liveNames[entry.nodeId];
     if (!live || !entry.name) continue;
-    // A live name like "size=small" is a VARIANT PROPERTY, not an icon name — it means the
+    // A live name like "size=small" is a VARIANT PROPERTY, not an icon name - it means the
     // nodeId now resolves into a component-set variant (the icon gained size variants); the
     // icon's real name (the set) is unchanged, so this is a nodeId restructure, not a rename.
     // Skip it here (the SVG-path check still exports the variant fine).
@@ -168,18 +168,18 @@ for (const batch of batches) {
   try {
     const resp = await fetch(apiUrl, { headers: { 'X-Figma-Token': TOKEN } });
     if (resp.status === 403) {
-      console.log('⏭  Gate [17] skipped — FIGMA_TOKEN lacks file_content:read scope (403)');
+      console.log('⏭  Gate [17] skipped - FIGMA_TOKEN lacks file_content:read scope (403)');
       process.exit(0);
     }
     if (!resp.ok) {
       const text = await resp.text();
-      console.log(`⏭  Gate [17] skipped — Figma images API ${resp.status}: ${text.slice(0, 120)}`);
+      console.log(`⏭  Gate [17] skipped - Figma images API ${resp.status}: ${text.slice(0, 120)}`);
       process.exit(0);
     }
     const json = await resp.json();
     imageUrls  = json.images ?? {};
   } catch (e) {
-    console.log(`⏭  Gate [17] skipped — network error fetching image URLs: ${e.message}`);
+    console.log(`⏭  Gate [17] skipped - network error fetching image URLs: ${e.message}`);
     process.exit(0);
   }
 
@@ -187,7 +187,7 @@ for (const batch of batches) {
   for (const [iconId, entry] of batch) {
     const svgUrl = imageUrls[entry.nodeId];
     if (!svgUrl) {
-      console.log(`   ⚠️  No SVG URL returned for ${iconId} (${entry.nodeId}) — skipped`);
+      console.log(`   ⚠️  No SVG URL returned for ${iconId} (${entry.nodeId}) - skipped`);
       continue;
     }
 
@@ -235,7 +235,7 @@ if (!changed.length && !renamed.length) {
   console.log('All DS icon snapshots are fresh (paths + names). ✓\n');
   process.exit(0);
 }
-if (!changed.length) process.exit(1);   // rename-only failure — report already printed above
+if (!changed.length) process.exit(1);   // rename-only failure - report already printed above
 
 console.log(`❌ CHANGED  ${changed.length} icon(s) differ from live Figma`);
 for (const { iconId, nodeId, livePaths, snapPaths } of changed) {

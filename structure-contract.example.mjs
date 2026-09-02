@@ -1,19 +1,19 @@
-// structure-contract.mjs — Copy to your PROJECT ROOT and fill in your DS component contracts.
+// structure-contract.mjs - Copy to your PROJECT ROOT and fill in your DS component contracts.
 // This file is consumed by structure-check.mjs.
 
 // ─── Structural contract (ground-truth per component, State=Default variant) ──
 // Captured from live Figma via /rms-parity Phase 1.
 // Fields:
-//   h              — height in px, or 'auto'
-//   paddingVar     — { tb: 'padding/token', lr: 'padding/token' } or null
-//   gapVar         — 'gap/token' or null
-//   fontSizeVar    — scale key ('m', 's', 'l') or null
-//   fontWeightVar  — scale key or null
-//   fillStructure  — 'direct' | 'before' | 'none'
+//   h              - height in px, or 'auto'
+//   paddingVar     - { tb: 'padding/token', lr: 'padding/token' } or null
+//   gapVar         - 'gap/token' or null
+//   fontSizeVar    - scale key ('m', 's', 'l') or null
+//   fontWeightVar  - scale key or null
+//   fillStructure  - 'direct' | 'before' | 'none'
 //                    'before' = fill is on a child Background rect → CSS ::before
-//   innerRadiusVar — 'radii/token' or null
-//   strokeOnDefault — true if Figma State=Default has a stroke
-//   strokeSides    — 'all' | 'top'|'right'|'bottom'|'left' | 'none'. Gate [3b] enforces which
+//   innerRadiusVar - 'radii/token' or null
+//   strokeOnDefault - true if Figma State=Default has a stroke
+//   strokeSides    - 'all' | 'top'|'right'|'bottom'|'left' | 'none'. Gate [3b] enforces which
 //                    CSS border sides are used:
 //                    'all'   → requires the border: shorthand.
 //                    <side>  → requires border-<side> and forbids the border: shorthand.
@@ -25,17 +25,17 @@
 //                    unless parked in ds-config.json → knownUndeclaredStrokeSides. Omit only
 //                    when the component has no stroke in any state. Read the DS component's
 //                    per-side strokeTopWeight/…/strokeLeftWeight to pick the value.
-//   hoverPill      — { innerH, radiusVar, insetH } (optional). When set, Gate [3d]
+//   hoverPill      - { innerH, radiusVar, insetH } (optional). When set, Gate [3d]
 //                    verifies the ::before pseudo-element geometry:
-//                      innerH    — pill height in px (outer h minus vertical inset × 2)
-//                      radiusVar — Figma token for border-radius (e.g. 'radii/button')
-//                      insetH    — horizontal inset in px (0 = full outer width, no side gap)
-//   children       — [{ name, cssSelector, gapVar?, paddingVar? }] (optional). Inner Figma
+//                      innerH    - pill height in px (outer h minus vertical inset × 2)
+//                      radiusVar - Figma token for border-radius (e.g. 'radii/button')
+//                      insetH    - horizontal inset in px (0 = full outer width, no side gap)
+//   children       - [{ name, cssSelector, gapVar?, paddingVar? }] (optional). Inner Figma
 //                    frames with their own bound gap/padding. Gate [3f] verifies the CSS
 //                    selector uses the matching var; the snapshot cross-check verifies the
 //                    contracted values still match Figma (childFrameGaps/childFramePadding).
 //                    cssSelector: null = frame is flattened into the parent (gap/padding on
-//                    the root rule or geometric) — CSS lookup skipped, cross-check still runs.
+//                    the root rule or geometric) - CSS lookup skipped, cross-check still runs.
 export const CONTRACT = {
   // Example:
   // button: {
@@ -62,11 +62,11 @@ export const RENDERED_ASSERTIONS = [
   // { plugin: 'my-plugin', selector: '.toast', prop: 'columnGap', expected: '4px',
   //   probe: '<div class="toast"><span class="toast-icon"></span><span>Done</span></div>',
   //   note: 'DS toast icon↔title gap/s' },
-  // forcePseudo: measure a pseudo-class state via CSS.forcePseudoState — e.g. lock
+  // forcePseudo: measure a pseudo-class state via CSS.forcePseudoState - e.g. lock
   // "content must not shift on hover" by asserting the :hover gap equals the default:
   // { plugin: 'my-plugin', selector: 'button.listRow', prop: 'columnGap', expected: '4px',
   //   forcePseudo: ['hover'], probe: '<button class="listRow">Item</button>',
-  //   note: 'gap unchanged on hover — label must not move' },
+  //   note: 'gap unchanged on hover - label must not move' },
 ];
 
 // ─── Plugin overrides of DS base classes (Gate [9] second check) ──────────────
@@ -77,9 +77,9 @@ export const RENDERED_ASSERTIONS = [
 export const PLUGIN_DS_OVERRIDES = {
   // Example:
   // '.scroll-area':
-  //   'LAYOUT — scroll container content padding is per-plugin placement, not identity',
+  //   'LAYOUT - scroll container content padding is per-plugin placement, not identity',
   // '.node.node-external':
-  //   'DS-FRAME STATE — dashed dimmed pill designed in the DS frame, no component variant exists',
+  //   'DS-FRAME STATE - dashed dimmed pill designed in the DS frame, no component variant exists',
 };
 
 // ─── CSS height/min-height rules to verify ────────────────────────────────────
@@ -126,11 +126,11 @@ export const FONT_SCALE_TO_CSS = {
 
 // ─── Per-component CSS selector config ───────────────────────────────────────
 // Used by the property binding checks in Gate [3].
-//   main        — selector for gap, padding, font, radius (default)
-//   gapSel      — override for gap (e.g. gap only in a state sub-rule)
-//   fontSel     — override for font-size/weight (e.g. font on a child element)
-//   radiusSel   — override for border-radius (e.g. on ::before pseudo-element)
-//   skipTBPadding — omit top/bottom padding check (height-based layout, no tb padding in CSS)
+//   main        - selector for gap, padding, font, radius (default)
+//   gapSel      - override for gap (e.g. gap only in a state sub-rule)
+//   fontSel     - override for font-size/weight (e.g. font on a child element)
+//   radiusSel   - override for border-radius (e.g. on ::before pseudo-element)
+//   skipTBPadding - omit top/bottom padding check (height-based layout, no tb padding in CSS)
 export const COMPONENT_CSS_SELECTORS = {
   // button: { main: '.button' },
   // input:  { main: '.inputWrap', fontSel: '.inputField', skipTBPadding: true },
@@ -140,9 +140,9 @@ export const COMPONENT_CSS_SELECTORS = {
 // ─── CSS property assertions (Gate [3e]) ─────────────────────────────────────
 // Guards plugin-specific selectors that aren't in CONTRACT but must stay in sync
 // with DS geometry. Each entry: { sel, prop, expected|present|expectedVar }.
-//   expected    — exact CSS value string (e.g. '40px', '4px 0')
-//   present     — boolean: property must (true) or must NOT (false) appear in that block
-//   expectedVar — property must use var(expectedVar) (e.g. '--radius-full')
+//   expected    - exact CSS value string (e.g. '40px', '4px 0')
+//   present     - boolean: property must (true) or must NOT (false) appear in that block
+//   expectedVar - property must use var(expectedVar) (e.g. '--radius-full')
 // Use for plugin-level wrappers that mirror a DS component's geometry.
 export const CSS_PROPERTY_ASSERTIONS = [
   // Example: a .listRow wrapper that mirrors the buttonList DS component
@@ -157,31 +157,31 @@ export const CSS_PROPERTY_ASSERTIONS = [
 // Consumed by subcomponent-isolation-check.mjs (Gate [8]).
 // Key   = normalized CSS selector (single spaces, no leading/trailing whitespace).
 // Value = isolation proof category:
-//   LEAF             — no DS sub-component ever nests inside this component
-//   ISOLATED         — explicit sub-component overrides appear later in the cascade
-//   NON-VISUAL       — rule sets only layout/motion properties (no color/fill/stroke)
-//   OWNED CHILDREN   — children are native HTML elements, not DS sub-components
-//   ISOLATION FIX    — this rule IS the isolation override for a parent's broad rule
-//   PLUGIN-SPECIFIC  — product-level wrapper; children are not DS components
-//   DECORATIVE       — icon/illustration slot with no DS sub-components
+//   LEAF             - no DS sub-component ever nests inside this component
+//   ISOLATED         - explicit sub-component overrides appear later in the cascade
+//   NON-VISUAL       - rule sets only layout/motion properties (no color/fill/stroke)
+//   OWNED CHILDREN   - children are native HTML elements, not DS sub-components
+//   ISOLATION FIX    - this rule IS the isolation override for a parent's broad rule
+//   PLUGIN-SPECIFIC  - product-level wrapper; children are not DS components
+//   DECORATIVE       - icon/illustration slot with no DS sub-components
 export const ALLOWED_BROAD_RULES = {
-  // '.buttonTertiary svg': 'LEAF — leaf component; no nested DS sub-component',
-  // '.node svg': 'ISOLATED — sub-component override rules appear later in cascade',
+  // '.buttonTertiary svg': 'LEAF - leaf component; no nested DS sub-component',
+  // '.node svg': 'ISOLATED - sub-component override rules appear later in cascade',
 };
 
 // ─── Figma state/variant → CSS selector + var binding mapping ─────────────────
 // Full verification chain per state (Gate [3]):
 //   1. The CSS selector exists in your source files (theme CSS or plugin CSS)
 //   2. The selector's rule uses the correct token var for each declared property
-//   3. That token var resolves to the correct hex — Gate [2] covers this
+//   3. That token var resolves to the correct hex - Gate [2] covers this
 //
 // Fields:
-//   component  — matches a key in CONTRACT above
-//   figmaState — Figma variant property value (e.g. 'Hover', 'Disabled', 'Small')
-//   selector   — CSS selector that activates this state in code
-//   vars       — array of { prop, expectedVar }
-//                prop        — CSS property name (e.g. 'background-color', 'color')
-//                expectedVar — token var that MUST be used for this prop in this rule
+//   component  - matches a key in CONTRACT above
+//   figmaState - Figma variant property value (e.g. 'Hover', 'Disabled', 'Small')
+//   selector   - CSS selector that activates this state in code
+//   vars       - array of { prop, expectedVar }
+//                prop        - CSS property name (e.g. 'background-color', 'color')
+//                expectedVar - token var that MUST be used for this prop in this rule
 //
 // If vars is omitted, only selector existence is verified.
 // If vars is present, both existence AND correct var binding are verified.
@@ -240,8 +240,8 @@ export const STATE_SELECTORS = [
 // automatically inherit the correct surface background.
 //
 // Fields:
-//   sel   — CSS selector for the surface container
-//   bgVar — the CSS custom property this surface uses for its background
+//   sel   - CSS selector for the surface container
+//   bgVar - the CSS custom property this surface uses for its background
 export const SURFACE_CONTAINERS = [
   // { sel: '.main-panel',   bgVar: '--bg'           },
   // { sel: '.detail-panel', bgVar: '--bg-secondary'  },

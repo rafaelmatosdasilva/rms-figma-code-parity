@@ -1,4 +1,4 @@
-// component-slot-check.mjs — Gate [14]: Component slot parity
+// component-slot-check.mjs - Gate [14]: Component slot parity
 // Run from project root: node ../rms-figma-code-parity/component-slot-check.mjs
 //
 // For every entry in COMPONENT_USAGES (structure-contract.mjs), locates the element
@@ -21,10 +21,10 @@ let COMPONENT_USAGES = [];
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
   if (m.COMPONENT_USAGES && Array.isArray(m.COMPONENT_USAGES)) COMPONENT_USAGES = m.COMPONENT_USAGES;
-} catch { /* optional — skip if not present */ }
+} catch { /* optional - skip if not present */ }
 
 if (!COMPONENT_USAGES.length) {
-  console.log('⚠️  COMPONENT_USAGES not found in structure-contract.mjs — skipping Gate [14]');
+  console.log('⚠️  COMPONENT_USAGES not found in structure-contract.mjs - skipping Gate [14]');
   process.exit(0);
 }
 
@@ -64,7 +64,7 @@ function findClassInSlot(html, selector) {
 
 // Individual CTA button component classes that require slot declarations.
 // Repeating components (buttonList, overflowList, segmented-control, badge, etc.)
-// intentionally excluded — they appear N times per list and don't need per-slot entries.
+// intentionally excluded - they appear N times per list and don't need per-slot entries.
 const DECLARED_COMPONENT_CLASSES = new Set([
   'buttonPrimary', 'buttonSecondary', 'buttonTertiary', 'buttonQuaternary',
 ]);
@@ -76,13 +76,13 @@ for (const entry of COMPONENT_USAGES) {
   const { plugin, selector, expectedClass } = entry;
   const srcPath = pluginToSrc[plugin];
   if (!srcPath) {
-    console.log(`⚠️  [14] ${plugin}: no source HTML in ds-config.json — skipping`);
+    console.log(`⚠️  [14] ${plugin}: no source HTML in ds-config.json - skipping`);
     continue;
   }
 
   const absPath = join(ROOT, srcPath);
   if (!existsSync(absPath)) {
-    console.log(`⚠️  [14] ${plugin} ${selector}: ${srcPath} not found — skipping`);
+    console.log(`⚠️  [14] ${plugin} ${selector}: ${srcPath} not found - skipping`);
     continue;
   }
 
@@ -106,7 +106,7 @@ for (const entry of COMPONENT_USAGES) {
 // ── Exhaustiveness: every <button id="X"> with a DS component class must be declared ──
 // This catches slots that were added or changed without updating COMPONENT_USAGES.
 // Without exhaustiveness a developer can change buttonTertiary→buttonPrimary on a new
-// undeclared button and Gate [14] will never see it — it only checks declared selectors.
+// undeclared button and Gate [14] will never see it - it only checks declared selectors.
 const declaredByPlugin = {};
 for (const e of COMPONENT_USAGES) {
   (declaredByPlugin[e.plugin] ??= new Set()).add(e.selector);
@@ -134,7 +134,7 @@ for (const [plugin, srcPath] of Object.entries(pluginToSrc)) {
 
     const sel = `#${btnId}`;
     if (!declared.has(sel)) {
-      console.log(`❌ [14] ${plugin} ${sel}: undeclared DS component "${dsClass}" — missing from COMPONENT_USAGES`);
+      console.log(`❌ [14] ${plugin} ${sel}: undeclared DS component "${dsClass}" - missing from COMPONENT_USAGES`);
       pass = false;
     }
   }

@@ -1,8 +1,8 @@
-# /rms-parity — Figma DS ↔ Code Parity
+# /rms-parity - Figma DS ↔ Code Parity
 
-Full parity workflow in one command. Phase 1 (live Figma refresh) always runs before Phase 2 (code audit) — you can never accidentally audit against a stale snapshot.
+Full parity workflow in one command. Phase 1 (live Figma refresh) always runs before Phase 2 (code audit) - you can never accidentally audit against a stale snapshot.
 
-> **Phase 1 is never skipped** — unless you ran `/rms-parity` earlier in this same conversation and the snapshot was updated then. A same-day snapshot from a *prior session or context window* is not safe — renames and additions since that run would be invisible without a fresh query. If you are resuming after a context summary, compaction, or a new conversation, always re-query.
+> **Phase 1 is never skipped** - unless you ran `/rms-parity` earlier in this same conversation and the snapshot was updated then. A same-day snapshot from a *prior session or context window* is not safe - renames and additions since that run would be invisible without a fresh query. If you are resuming after a context summary, compaction, or a new conversation, always re-query.
 
 ## Usage
 
@@ -10,7 +10,7 @@ Full parity workflow in one command. Phase 1 (live Figma refresh) always runs be
 /rms-parity
 ```
 
-**Utility flags (no full audit — just run the script directly):**
+**Utility flags (no full audit - just run the script directly):**
 ```bash
 node scripts/audit.mjs --init           # first-time setup only: scaffold config files, then exit
 node scripts/audit.mjs --trend          # show last 20 audit runs + pass/fail trend
@@ -24,21 +24,21 @@ node scripts/setup-webhook.mjs --list   # list registered Figma webhooks for thi
 
 At the start of every run, read `./ds-config.json` from the project root.
 
-**If it doesn't exist** (or `--init` flag is passed), ask the user for exactly four things — nothing else:
+**If it doesn't exist** (or `--init` flag is passed), ask the user for exactly four things - nothing else:
 
-1. **Main Design System Figma file** — the full browser URL of the DS file. Extract the file key (path segment after `/design/` or `/file/`). Accept URL, never ask for raw key.
-2. **Theme CSS path** — relative path to the token CSS file(s). Auto-scan common locations; show as default if exactly one is found.
-3. **Figma personal access token** *(optional)* — needed for collection auto-detection and Gate [9]. If already in `.env`, use it silently. Write to `.env` if provided. Never store in `ds-config.json`.
-4. **Is this a consumer file?** *(optional)* — if yes, ask for the DS source Figma URL (parse `figmaSourceKey` from it). Enables `⏳ PENDING FIGMA SYNC` cross-check in Gate [2].
+1. **Main Design System Figma file** - the full browser URL of the DS file. Extract the file key (path segment after `/design/` or `/file/`). Accept URL, never ask for raw key.
+2. **Theme CSS path** - relative path to the token CSS file(s). Auto-scan common locations; show as default if exactly one is found.
+3. **Figma personal access token** *(optional)* - needed for collection auto-detection and Gate [9]. If already in `.env`, use it silently. Write to `.env` if provided. Never store in `ds-config.json`.
+4. **Is this a consumer file?** *(optional)* - if yes, ask for the DS source Figma URL (parse `figmaSourceKey` from it). Enables `⏳ PENDING FIGMA SYNC` cross-check in Gate [2].
 
-**Do not ask for frame node IDs, collection names, or primitive prefixes** — these are either auto-detected or added later.
+**Do not ask for frame node IDs, collection names, or primitive prefixes** - these are either auto-detected or added later.
 
 Then auto-detect and write `ds-config.json`:
 - `snapshotVars` / `snapshotStructure` → sibling files next to theme CSS
 - `pluginCSS` → scan `apps/*/ui.src.html` and `src/ui.src.html`
 - `plugins` → derived from pluginCSS paths
 - `figma.primitivePrefix` / `animationCollection` / `excludeCollections` / `breakpointCollection` → **queried from Figma API** if token available. Falls back to defaults when the token is absent or the call fails.
-- `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default — edit if your DS has more modes)
+- `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default - edit if your DS has more modes)
 - `frames` → `[]` (add frame node IDs manually after setup)
 
 Also:
@@ -50,27 +50,27 @@ Also:
 With `--init`: stop after setup (print checklist, exit). Without `--init` and when called because `ds-config.json` was missing: continue the audit immediately.
 
 Once `ds-config.json` exists, extract:
-- `figmaFileKey` — Figma consumer/product file key (the file being audited)
-- `figmaSourceKey` *(optional)* — DS library source file key; when set, Phase 1 queries both files. Mismatches where code matches source but not consumer → `⏳ PENDING FIGMA SYNC` (not a gate failure). Absent = no cross-check.
-- `frames` — array of `{ name, nodeId }` — the DS frame(s) to audit
-- `figma.colorCollection` *(optional scope limiter)* — if set, restrict COLOR var extraction to this collection. If absent, COLOR vars come from **all non-excluded collections** (type-based routing).
-- `figma.sizingCollection` *(optional scope limiter)* — if set, restrict single-mode FLOAT extraction to this collection.
-- `figma.excludeCollections` *(optional)* — collections to skip entirely (e.g. `["Language"]` for i18n/copy-string collections).
-- `figma.animationCollection` *(optional)* — collection containing EASING/TIMING vars. Auto-detected.
-- `figma.breakpointCollection` *(optional)* — if set, restrict multi-mode FLOAT/BOOLEAN extraction to this collection.
-- `figma.modes` — array of `{ name, snapshotKey, cssSelector }` defining all DS modes
+- `figmaFileKey` - Figma consumer/product file key (the file being audited)
+- `figmaSourceKey` *(optional)* - DS library source file key; when set, Phase 1 queries both files. Mismatches where code matches source but not consumer → `⏳ PENDING FIGMA SYNC` (not a gate failure). Absent = no cross-check.
+- `frames` - array of `{ name, nodeId }` - the DS frame(s) to audit
+- `figma.colorCollection` *(optional scope limiter)* - if set, restrict COLOR var extraction to this collection. If absent, COLOR vars come from **all non-excluded collections** (type-based routing).
+- `figma.sizingCollection` *(optional scope limiter)* - if set, restrict single-mode FLOAT extraction to this collection.
+- `figma.excludeCollections` *(optional)* - collections to skip entirely (e.g. `["Language"]` for i18n/copy-string collections).
+- `figma.animationCollection` *(optional)* - collection containing EASING/TIMING vars. Auto-detected.
+- `figma.breakpointCollection` *(optional)* - if set, restrict multi-mode FLOAT/BOOLEAN extraction to this collection.
+- `figma.modes` - array of `{ name, snapshotKey, cssSelector }` defining all DS modes
   - OR legacy: `figma.darkMode` / `figma.lightMode` (two-mode shorthand)
-- `figma.primitivePrefix` — token path prefix to exclude from component token walks (e.g. `"primitives/"`)
-- `figma.namingConvention` *(optional)* — overrides for how Figma token paths are converted to CSS var names:
-  - `dropSegments` — array of path segments to strip from the end of a token path before deriving the var name. Default: `["color", "default"]`. Set to `[]` to preserve all segments (e.g. when CSS vars end in `-color`).
-  - `iconTextAlias` — when `true` (default), `/iconText/` in a token path is normalised to `/text/`. Set to `false` when the codebase keeps `iconText` as-is.
-- `paths.themeCSS` — path to the token CSS file, **or an array of paths** for projects that split tokens across multiple files (e.g. `["src/tokens/base.css", "src/tokens/components.css"]`). All files are merged before any gate runs. Auto-detection finds any `.css`/`.scss` file containing `:root {` and `--` — no need to manually configure `pluginCSS` for component files in Vue/React/Svelte projects.
-- `visualRefs` — directory for stored reference screenshots (default: `.parity-refs`)
-- `webhook.port` / `webhook.secret` — webhook server config
+- `figma.primitivePrefix` - token path prefix to exclude from component token walks (e.g. `"primitives/"`)
+- `figma.namingConvention` *(optional)* - overrides for how Figma token paths are converted to CSS var names:
+  - `dropSegments` - array of path segments to strip from the end of a token path before deriving the var name. Default: `["color", "default"]`. Set to `[]` to preserve all segments (e.g. when CSS vars end in `-color`).
+  - `iconTextAlias` - when `true` (default), `/iconText/` in a token path is normalised to `/text/`. Set to `false` when the codebase keeps `iconText` as-is.
+- `paths.themeCSS` - path to the token CSS file, **or an array of paths** for projects that split tokens across multiple files (e.g. `["src/tokens/base.css", "src/tokens/components.css"]`). All files are merged before any gate runs. Auto-detection finds any `.css`/`.scss` file containing `:root {` and `--` - no need to manually configure `pluginCSS` for component files in Vue/React/Svelte projects.
+- `visualRefs` - directory for stored reference screenshots (default: `.parity-refs`)
+- `webhook.port` / `webhook.secret` - webhook server config
 
 Use these throughout all Figma queries. Never hardcode collection or mode names.
 
-> **Key architectural rule:** Phase 1 routes variables by `resolvedType` across ALL collections (not by collection name). Collections are just organizational containers — any collection can hold any mix of types. The routing rules:
+> **Key architectural rule:** Phase 1 routes variables by `resolvedType` across ALL collections (not by collection name). Collections are just organizational containers - any collection can hold any mix of types. The routing rules:
 > - `COLOR` (excluding `primitivePrefix` path) → `snapshot.color[modeKey]`
 > - `FLOAT` in collections with ≥3 modes → `snapshot.breakpoints[modeName]`
 > - `FLOAT` in collections with 1-2 modes → `snapshot.sizing`
@@ -101,12 +101,12 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 1. **Every Figma component token must have a dedicated CSS variable.** No token may be covered only by an inline value. `via` is acceptable only when a semantic alias is documented in `parity-map.mjs`.
 2. **Every CSS variable must be wired into at least one CSS rule.** A declared-but-unused var must be deleted. Variables are declared when the component exists in code, not before.
 3. **Naming convention must be followed exactly.** A correct value under a wrong name is still a divergence.
-4. **All modes must match.** A token correct in one mode but wrong in another is still a divergence — this applies to every mode your DS defines: light/dark, compact/comfortable, any breakpoint-based sizing mode, etc.
+4. **All modes must match.** A token correct in one mode but wrong in another is still a divergence - this applies to every mode your DS defines: light/dark, compact/comfortable, any breakpoint-based sizing mode, etc.
 5. **Hardcoded values in CSS rules are always flagged.** Colors must use `var(--)`, font-sizes must use scale vars, border widths and radii must use your DS sizing tokens. Raw literal values in a CSS rule (not a `:root` declaration) are a divergence. Document intentional exceptions in `ds-config.json → knownHardcodedExceptions`.
 6. **New Figma component tokens detected during any audit step must be implemented in code before the audit closes.**
-7. **Hidden elements (visible=false) with a bound boolean variable → implement their tokens.** The boolean controls visibility and can be toggled on in other states or projects — the tokens are real. Add the boolean variable itself to CSS (e.g. a show/hide class or `display` binding). **Hidden elements with no boolean variable → flag but never implement.** A token whose only binding is on a statically hidden node (no `boundVariables.visible`) is not a code requirement.
-9. **CSS alias chains must mirror Figma exactly.** When Figma aliases a component token directly to a primitive (e.g. `primitives/Neutral 700`), the CSS var must chain through the matching primitive var (e.g. `var(--neutral-700)`). Routing through a semantic intermediate (`var(--border)`, `var(--bg)`, `var(--text-muted)`) is never acceptable as a substitute — even when the resolved hex is identical. A `🔗 ALIAS FAIL` from Gate [2] is always fixed in CSS; there is no exemption map.
-8. **Every DS sub-component nested inside another DS component must retain its own CSS styles.** A parent component's rule that combines a component class with a bare element tag (`.card svg { color: X }`) directly targets that element — direct targeting beats inheritance. When adding any CSS rule of the form `.<componentClass> <elementTag> { <visual-property> }`, either (a) prove it's a leaf component, or (b) add explicit `.<subComponent> <elementTag> { }` overrides later in the cascade. Add every such rule to the `ALLOWED` map in `subcomponent-isolation-check.mjs`. Gate [8] enforces this mechanically.
+7. **Hidden elements (visible=false) with a bound boolean variable → implement their tokens.** The boolean controls visibility and can be toggled on in other states or projects - the tokens are real. Add the boolean variable itself to CSS (e.g. a show/hide class or `display` binding). **Hidden elements with no boolean variable → flag but never implement.** A token whose only binding is on a statically hidden node (no `boundVariables.visible`) is not a code requirement.
+9. **CSS alias chains must mirror Figma exactly.** When Figma aliases a component token directly to a primitive (e.g. `primitives/Neutral 700`), the CSS var must chain through the matching primitive var (e.g. `var(--neutral-700)`). Routing through a semantic intermediate (`var(--border)`, `var(--bg)`, `var(--text-muted)`) is never acceptable as a substitute - even when the resolved hex is identical. A `🔗 ALIAS FAIL` from Gate [2] is always fixed in CSS; there is no exemption map.
+8. **Every DS sub-component nested inside another DS component must retain its own CSS styles.** A parent component's rule that combines a component class with a bare element tag (`.card svg { color: X }`) directly targets that element - direct targeting beats inheritance. When adding any CSS rule of the form `.<componentClass> <elementTag> { <visual-property> }`, either (a) prove it's a leaf component, or (b) add explicit `.<subComponent> <elementTag> { }` overrides later in the cascade. Add every such rule to the `ALLOWED` map in `subcomponent-isolation-check.mjs`. Gate [8] enforces this mechanically.
 
 ---
 
@@ -117,7 +117,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 | `figma-vars.snapshot.json` | color (all modes), sizing, typography, breakpoints (all modes), strings, booleans (all modes), animation | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
-Both are machine-generated — never hand-edit. `bound-tokens.json` (project root, gitignored) is a transient capture of Phase 2 Step 1b.
+Both are machine-generated - never hand-edit. `bound-tokens.json` (project root, gitignored) is a transient capture of Phase 2 Step 1b.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `node scripts/audit.mjs --trend`.
 
@@ -129,21 +129,21 @@ Both are machine-generated — never hand-edit. `bound-tokens.json` (project roo
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
 | **2** | **Bound token walk** | **Walk all DS frames → save to `bound-tokens.json`** | **File written** |
-| **2** | **`node scripts/audit.mjs`** | **All 13 gates — Gate [1] always ✅ since Phase 1 just ran** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 13 gates - Gate [1] always ✅ since Phase 1 just ran** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
 ---
 
-# PHASE 1 — Figma Refresh
+# PHASE 1 - Figma Refresh
 
 ---
 
-## Phase 1 — Step 1: Query live Figma values
+## Phase 1 - Step 1: Query live Figma values
 
 > **⚠️ Figma MCP 20 kb limit:** the `use_figma` tool silently truncates responses above ~20 kb. A single query for a large collection (>200 tokens) will be cut off mid-JSON with no error. **Always run the probe first to check the count, then decide whether to batch.**
 
-### Step 1a — Probe (always run first)
+### Step 1a - Probe (always run first)
 
 Fill in `PRIMITIVE_PREFIX` and `EXCLUDE_COLLECTIONS` from `ds-config.json`.
 
@@ -181,7 +181,7 @@ return { colorCount, sizingCount, bpCount, stringCount, booleanCount, animCount 
 
 ---
 
-### Step 1b-single — Full query (≤190 color tokens)
+### Step 1b-single - Full query (≤190 color tokens)
 
 Use this when `colorCount ≤ 190`. Routes all variable types from all collections in one call.
 
@@ -260,14 +260,14 @@ return {color:colorOut,aliases:aliasesOut,sizing:sizingOut,breakpoints:bpOut,str
 
 ---
 
-### Step 1b-batched — Batch queries (>190 color tokens)
+### Step 1b-batched - Batch queries (>190 color tokens)
 
 When `colorCount > 190`, batch the COLOR extraction (other types come in one separate pass).
 
 Run `Math.ceil(colorCount / 190)` color-batch calls, substituting `BATCH_START` and `BATCH_END`:
 
 ```js
-// COLOR batch — substitute BATCH_START and BATCH_END each iteration
+// COLOR batch - substitute BATCH_START and BATCH_END each iteration
 function toHex(c){return '#'+[c.r,c.g,c.b].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('');}
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
@@ -334,7 +334,7 @@ return {sizing:sizingOut,breakpoints:bpOut,strings:strOut,booleans:boolOut,anima
   sizing: sizingOut,
   breakpoints: bpOut,    // {} when no multi-mode FLOAT collections
   strings: strOut,       // {} when no STRING vars (outside excluded collections)
-  booleans: boolOut,     // {} when no BOOLEAN vars — advisory only in Gate [2]
+  booleans: boolOut,     // {} when no BOOLEAN vars - advisory only in Gate [2]
   animation: animOut,    // {} when no EASING/TIMING vars
   typography: typo
 }
@@ -344,9 +344,9 @@ return {sizing:sizingOut,breakpoints:bpOut,strings:strOut,booleans:boolOut,anima
 
 ---
 
-## Phase 1 — Step 1c: Capture component structure → `figma-structure.snapshot.json`
+## Phase 1 - Step 1c: Capture component structure → `figma-structure.snapshot.json`
 
-Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the `State=Default` child (never the SET — its height equals all variants stacked), and extract structural facts:
+Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the `State=Default` child (never the SET - its height equals all variants stacked), and extract structural facts:
 
 ```js
 // Extract: h, paddingVar {tb,lr}, gapVar, fontSizeVar, fontWeightVar,
@@ -357,9 +357,9 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 //                 'none' when default state has no fill
 // strokeOnDefault  = node.strokes?.length > 0 on the State=Default variant's top-level frame
 // strokeOnAnyState = true if a stroke exists ANYWHERE in ANY variant's subtree (deep walk).
-//                    Must walk recursively into children — many components put strokes on a
+//                    Must walk recursively into children - many components put strokes on a
 //                    "Background" child rect rather than the component frame itself.
-//                    Controls Gate [3c] phantom border scan — when false, any CSS `border`
+//                    Controls Gate [3c] phantom border scan - when false, any CSS `border`
 //                    or `outline` on any selector matching this component is a phantom and fails.
 // childFramePadding = direct child FRAME nodes (not RECTANGLE/TEXT/INSTANCE) that have at
 //                    least one bound padding variable. These "wrapper frames" (e.g. LabelContainer)
@@ -429,8 +429,8 @@ Write the result in this shape:
 
 **`childFramePadding` → CSS rule required.** Each entry is a Figma wrapper frame that adds padding inside the component, stacking on top of the outer frame's padding. The CSS must apply equivalent padding to the matching HTML child element. When you find a `childFramePadding` entry:
 
-1. **Identify the HTML equivalent** — determine which element in the rendered HTML corresponds to the Figma child frame (e.g. `LabelContainer` → `<span>` inside `.buttonTertiary`).
-2. **Verify or add a CSS rule** — grep for `.<component> <element> { padding`. If none exists, the padding layer is missing from the implementation — add it.
+1. **Identify the HTML equivalent** - determine which element in the rendered HTML corresponds to the Figma child frame (e.g. `LabelContainer` → `<span>` inside `.buttonTertiary`).
+2. **Verify or add a CSS rule** - grep for `.<component> <element> { padding`. If none exists, the padding layer is missing from the implementation - add it.
 3. **Document in `structure-contract.mjs`** so Gate [3] enforces it automatically:
    ```js
    buttonTertiary: {
@@ -443,17 +443,17 @@ Write the result in this shape:
 
 ---
 
-## Phase 1 — Step 2: Read the snapshots
+## Phase 1 - Step 2: Read the snapshots
 
 Read both snapshot files. Parse them. If either is missing, treat all live values as new and skip to Step 4.
 
 ---
 
-## Phase 1 — Step 3: Diff
+## Phase 1 - Step 3: Diff
 
 Compare live vs snapshot across all sections: `color` (all modes), `sizing`, `typography`, `structure`.
 
-**Lead with the name-set diff** before comparing values — print these two lines first:
+**Lead with the name-set diff** before comparing values - print these two lines first:
 ```
 Token names added   (+N): foo/background/hover/color, …
 Token names removed (−N): foo/background/color, …
@@ -467,30 +467,30 @@ A rename shows as both added and removed. A pure addition shows only as added. T
   - If the CSS var is **used in a CSS rule** → do NOT just delete it. Replace the var with the nearest equivalent remaining token from the same component (e.g. if `--foo-text-hover` is used in a `:hover` rule, replace it with `--foo-text`). Then delete the declaration. Document the decision as a comment.
   - Never leave a dangling `var(--deleted-name)` reference in a rule.
 
-**Rename pattern** (REMOVED + NEW pair with same value) → A token rename adds a `/default/` or other state segment (e.g. `foo/background/color` → `foo/background/default/color`). Check whether the new name maps to the same CSS var via convention — if dropping `/default` produces the same var name, no CSS var change is needed, only a snapshot and comment update. **Also check if sibling state tokens were added alongside the rename** (e.g. `foo/background/hover/color`) — those are genuine new tokens requiring their own CSS vars and rule wiring.
+**Rename pattern** (REMOVED + NEW pair with same value) → A token rename adds a `/default/` or other state segment (e.g. `foo/background/color` → `foo/background/default/color`). Check whether the new name maps to the same CSS var via convention - if dropping `/default` produces the same var name, no CSS var change is needed, only a snapshot and comment update. **Also check if sibling state tokens were added alongside the rename** (e.g. `foo/background/hover/color`) - those are genuine new tokens requiring their own CSS vars and rule wiring.
 
-After any token rename, **re-run the bound walk** before Gate [4] — `bound-tokens.json` still has old names and may diverge from what Figma currently binds in the frames. Also update any matching entries in the `EXPLICIT` map in `parity-check.mjs` and the `EXPLICIT`/`COVERED` sets in `bound-check.mjs` — these two files maintain independent maps that can silently diverge after a rename.
+After any token rename, **re-run the bound walk** before Gate [4] - `bound-tokens.json` still has old names and may diverge from what Figma currently binds in the frames. Also update any matching entries in the `EXPLICIT` map in `parity-check.mjs` and the `EXPLICIT`/`COVERED` sets in `bound-check.mjs` - these two files maintain independent maps that can silently diverge after a rename.
 
 If diff is empty: print `✅ No DS changes since last snapshot (YYYY-MM-DD).`
 
 ---
 
-## Phase 1 — Step 4: Impact analysis
+## Phase 1 - Step 4: Impact analysis
 
 For every changed or new token:
-- ✅ CSS var exists and already correct — no action
-- ⚠️ CSS var exists but value wrong — list it
-- ❌ No CSS var — must add one (Hard Rule #1)
+- ✅ CSS var exists and already correct - no action
+- ⚠️ CSS var exists but value wrong - list it
+- ❌ No CSS var - must add one (Hard Rule #1)
 
 **Blocking:** reconcile all changes in CSS before running Phase 2.
 
 ---
 
-## Phase 1 — Step 5: Update snapshots
+## Phase 1 - Step 5: Update snapshots
 
-Write fresh live data to both files. **Always stamp `_updated` to today's date on both snapshots**, even when no changes were detected — this is what tells Gate [1] the data is fresh. Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query — it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
+Write fresh live data to both files. **Always stamp `_updated` to today's date on both snapshots**, even when no changes were detected - this is what tells Gate [1] the data is fresh. Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query - it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
 
-**Consumer file projects (`figmaSourceKey` set):** After querying the consumer file (`figmaFileKey`), also query the DS source file (`figmaSourceKey`) using the same variable script. Write the source results to `figma-vars.snapshot.json` under a `"source"` key alongside the normal `"color"` key. The source data does not replace the consumer data — both are written:
+**Consumer file projects (`figmaSourceKey` set):** After querying the consumer file (`figmaFileKey`), also query the DS source file (`figmaSourceKey`) using the same variable script. Write the source results to `figma-vars.snapshot.json` under a `"source"` key alongside the normal `"color"` key. The source data does not replace the consumer data - both are written:
 ```json
 {
   "_updated": "YYYY-MM-DD",
@@ -501,11 +501,11 @@ Write fresh live data to both files. **Always stamp `_updated` to today's date o
 ```
 `parity-check.mjs` reads `snap.source` automatically and routes mismatches where CSS matches source (but not consumer) to `⏳ PENDING FIGMA SYNC` instead of `❌ FAIL`. Gate [2] only fails on genuine divergences.
 
-> **⚠️ 32k output token limit:** Claude's response (including all tool call parameters) must stay under 32,000 output tokens. A snapshot for a large collection (>300 tokens) cannot be written in a single `Write` call — the JSON content alone exceeds the limit. **Always use the chunked write protocol below for large snapshots.**
+> **⚠️ 32k output token limit:** Claude's response (including all tool call parameters) must stay under 32,000 output tokens. A snapshot for a large collection (>300 tokens) cannot be written in a single `Write` call - the JSON content alone exceeds the limit. **Always use the chunked write protocol below for large snapshots.**
 
 ### Chunked snapshot write protocol
 
-**Step A — Write the skeleton** (tiny, always safe):
+**Step A - Write the skeleton** (tiny, always safe):
 
 ```json
 {
@@ -523,29 +523,29 @@ Write fresh live data to both files. **Always stamp `_updated` to today's date o
 
 `__L__`, `__D__`, `__AL__`, `__AD__` are placeholder entries that act as write cursors.
 
-**Step B — Fill each section per batch** using Edit. For each batch of ~190 tokens, replace the placeholder:
+**Step B - Fill each section per batch** using Edit. For each batch of ~190 tokens, replace the placeholder:
 
 - old: `"__L__": 0`
 - new: `"token/name/a": "#hex", ...(~190 entries)..., "token/name/z": "#hex", "__L__": 0`
 
 Repeat for every batch. The placeholder migrates to the end of each inserted block.
 
-**Step C — Remove the placeholder** after the last batch:
+**Step C - Remove the placeholder** after the last batch:
 
 - old: `, "__L__": 0` (with leading comma)
-- new: `` (empty — delete it entirely)
+- new: `` (empty - delete it entirely)
 
 Apply the same B→C pattern for `__D__` (dark), `__AL__` (alias light), `__AD__` (alias dark).
 
-**Step D — Fill sizing and typography** in a single Edit each (these sections are always small).
+**Step D - Fill sizing and typography** in a single Edit each (these sections are always small).
 
-**Why this works:** each Edit contains ~190 tokens × ~70 chars ≈ 13 kb ≈ 3,200 output tokens — well under the 32k limit. The file stays valid JSON at every step.
+**Why this works:** each Edit contains ~190 tokens × ~70 chars ≈ 13 kb ≈ 3,200 output tokens - well under the 32k limit. The file stays valid JSON at every step.
 
-**ALIAS FAIL = fix the CSS, never add exceptions.** When `parity-check.mjs` reports `🔗 ALIAS FAIL`, the CSS must be updated to route through the same primitive as Figma. Semantic intermediate vars (`--border`, `--bg`, `--text-muted`) are not allowed as a shortcut when Figma aliases directly to a primitive. There is no exemption map — every alias chain must match exactly.
+**ALIAS FAIL = fix the CSS, never add exceptions.** When `parity-check.mjs` reports `🔗 ALIAS FAIL`, the CSS must be updated to route through the same primitive as Figma. Semantic intermediate vars (`--border`, `--bg`, `--text-muted`) are not allowed as a shortcut when Figma aliases directly to a primitive. There is no exemption map - every alias chain must match exactly.
 
 ---
 
-## Phase 1 — Step 6: Verify resolvers
+## Phase 1 - Step 6: Verify resolvers
 
 ```bash
 node scripts/parity-check.mjs
@@ -554,23 +554,23 @@ node scripts/structure-check.mjs
 
 If either reports FAIL, reconcile CSS before Phase 2.
 
-**NEW SKIP = missing CSS var.** A NEW SKIP in Gate [2] means a token is in the snapshot but has no CSS var and no explicit exemption. Treat it exactly like a NEW token from Phase 1 — implement the CSS var before proceeding. Do not accept a passing Gate [2] that has non-zero NEW SKIPs for non-exempt tokens.
+**NEW SKIP = missing CSS var.** A NEW SKIP in Gate [2] means a token is in the snapshot but has no CSS var and no explicit exemption. Treat it exactly like a NEW token from Phase 1 - implement the CSS var before proceeding. Do not accept a passing Gate [2] that has non-zero NEW SKIPs for non-exempt tokens.
 
-**ALIAS FAIL = wrong primitive chain.** A `🔗 ALIAS FAIL` means hex matches but the CSS var routes through a different primitive than Figma. Either fix the CSS chain or add an entry to `KNOWN_INDIRECT_ALIAS` in `parity-check.mjs` if the semantic intermediate is intentional. Treat non-zero ALIAS FAILs the same as FAIL — do not close the audit.
+**ALIAS FAIL = wrong primitive chain.** A `🔗 ALIAS FAIL` means hex matches but the CSS var routes through a different primitive than Figma. Either fix the CSS chain or add an entry to `KNOWN_INDIRECT_ALIAS` in `parity-check.mjs` if the semantic intermediate is intentional. Treat non-zero ALIAS FAILs the same as FAIL - do not close the audit.
 
 ---
 
-## Phase 1 — Step 7: Summary
+## Phase 1 - Step 7: Summary
 
 Print tokens changed/added/removed per section, which CSS vars need updating, confirmation both snapshots refreshed and resolvers pass.
 
 ---
 
-# PHASE 2 — Code Parity
+# PHASE 2 - Code Parity
 
 ---
 
-## Phase 2 — Step 1b: Bound token walk → `bound-tokens.json`
+## Phase 2 - Step 1b: Bound token walk → `bound-tokens.json`
 
 Walk all DS frames and capture every token bound to a node (Hard Rule #7 split: boolean-hidden → implement; statically hidden → flag only). Use frame IDs from `ds-config.json → frames`.
 
@@ -588,7 +588,7 @@ const frameIds = ['YOUR_FRAME_NODE_ID_1', 'YOUR_FRAME_NODE_ID_2'];
 const used = {}, hidden = {};
 for (const fid of frameIds) {
   const frame = figma.currentPage.findOne(n => n.id === fid);
-  if (!frame) { console.error(`❌ Frame not found: ${fid} — check ds-config.json → frames and ensure you are on the correct Figma page`); continue; }
+  if (!frame) { console.error(`❌ Frame not found: ${fid} - check ds-config.json → frames and ensure you are on the correct Figma page`); continue; }
   function walk(node, ancestorStaticHidden = false) {
     // Hard Rule #7: hidden WITH a boolean variable → implement (boolean can be toggled).
     //               hidden WITHOUT a boolean variable → statically hidden → flag, don't implement.
@@ -613,25 +613,25 @@ for (const fid of frameIds) {
   walk(frame);
 }
 if (Object.keys(hidden).length)
-  console.log('⚠️ STATICALLY HIDDEN — no boolean var, do not implement:', Object.keys(hidden));
+  console.log('⚠️ STATICALLY HIDDEN - no boolean var, do not implement:', Object.keys(hidden));
 return used;
 ```
 
 **Save output to `bound-tokens.json` at project root.**
 
-> **Output truncation fallback:** the Figma MCP tool may truncate large responses. If the walk output is cut off mid-JSON, run a compact second pass that returns only the keys — `bound-check.mjs` accepts either shape:
+> **Output truncation fallback:** the Figma MCP tool may truncate large responses. If the walk output is cut off mid-JSON, run a compact second pass that returns only the keys - `bound-check.mjs` accepts either shape:
 > ```js
-> // Compact pass — run if full walk was truncated
+> // Compact pass - run if full walk was truncated
 > // (reuse the same idToVar / walk logic above)
 > const compact = {};
 > for (const [k, arr] of Object.entries(used)) compact[k] = arr.length;
 > return { used: compact, hiddenTokens: Object.keys(hidden) };
 > ```
-> Write the compact object as `bound-tokens.json` — `bound-check.mjs` uses `Object.keys()` so counts work fine.
+> Write the compact object as `bound-tokens.json` - `bound-check.mjs` uses `Object.keys()` so counts work fine.
 
 ---
 
-## Phase 2 — Step 2: Run all 14 audit gates
+## Phase 2 - Step 2: Run all 14 audit gates
 
 ```bash
 node scripts/audit.mjs
@@ -641,20 +641,20 @@ All 14 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 | Gate | Script | What it checks |
 |---|---|---|
-| [1]  | inline | **Snapshot freshness** — Is the data fresh? Always ✅ after Phase 1 runs. |
-| [2]  | `parity-check.mjs` | **Token value parity** — Do the colors, sizes, and fonts match Figma? Every token across every mode. NEW SKIP = token in Figma but no CSS var yet — treat as ❌. `⏳ PENDING FIGMA SYNC` when the consumer file hasn't pulled the latest library update (not a code bug). |
-| [3]  | `structure-check.mjs` | **Structural parity** — Does the component look the way Figma says it should? Height, spacing, font, and radius must all point to the right design tokens — no hardcodes, no gaps. Also enforces `childFramePadding` HTML structure: for every entry in the structure contract's `childFramePadding[]`, grep every file in `paths.pluginCSS` for the component class and verify that any button/element containing visible text has the required child element (e.g. `<span>`) so the CSS padding rule can apply. A button with bare text instead of a wrapped child is flagged as ❌ structural mismatch — fix by wrapping the text in the required element, then rebuild and re-audit. |
-| [4]  | `bound-check.mjs` | **Bound-token coverage** — Is anything in the design that isn't in the code? Walks the Figma frames and finds tokens actively used in the design that have no CSS variable yet. |
-| [5]  | inline | **Unused CSS vars** — Are there CSS variables nobody's using? Declared-but-orphaned variables that can be safely deleted. Scans the whole repo (`.vue`, `.jsx`, `.tsx`, `.html`, `.css`, `.scss`, `.js`, `.ts`). |
-| [6]  | inline | **Hardcoded values** — Are there raw values that should be tokens? Every CSS rule is scanned — colors, padding, margin, width, height, border-radius, gap, font-size, line-height, and more. Any literal value written directly into a rule instead of `var(--)` is flagged. Intentional layout math (`100%`, `50%`) goes in `ds-config.json → knownHardcodedExceptions`. |
-| [7]  | inline | **Build freshness** — Is the built output up to date? Catches cases where you edited the source but forgot to rebuild. Skips if no build plugins are configured. |
-| [8]  | `subcomponent-isolation-check.mjs` | **Sub-component isolation** — Is a parent component accidentally overriding a child's styles? When one DS component lives inside another, their styles must not bleed into each other. |
-| [9]  | `visual-regression-check.mjs` | **Visual regression** — Does it still look the same? Compares a live screenshot of the Figma frame against the last accepted reference. Flags any visual drift. Skips if `FIGMA_TOKEN` isn't set or no frames are configured. |
-| [10] | `state-check.mjs` | **State completeness** — Are all component states covered? Every interactive state in Figma (hover, pressed, disabled, selected…) must have a token in the code. Skips if no state data is available. |
-| [11] | `exemption-check.mjs` | **Exemption validity** — Are the documented exceptions still valid? Tokens marked as "skip this" are cross-checked against the snapshot. If a token no longer exists or has changed, the exemption is flagged as stale. |
-| [12] | `mode-completeness-check.mjs` | **Mode completeness** — Do all modes actually adapt? Verifies that every token meant to vary between modes actually does — light vs dark, compact vs comfortable spacing, any breakpoint or density mode your DS defines. Nothing should be frozen at the same value across modes that are supposed to differ. |
-| [13] | `naming-check.mjs` | **CSS naming round-trip** — Do all CSS variable names trace back to a real Figma token? Catches variables someone invented that have no counterpart in the design system. |
-| [14] | `pseudo-element-check.mjs` | **Pseudo-element audit** — Are decorative `::before` / `::after` elements documented? Any visual element added via CSS pseudo-elements must be declared in the component's structure contract so it doesn't silently drift. |
+| [1]  | inline | **Snapshot freshness** - Is the data fresh? Always ✅ after Phase 1 runs. |
+| [2]  | `parity-check.mjs` | **Token value parity** - Do the colors, sizes, and fonts match Figma? Every token across every mode. NEW SKIP = token in Figma but no CSS var yet - treat as ❌. `⏳ PENDING FIGMA SYNC` when the consumer file hasn't pulled the latest library update (not a code bug). |
+| [3]  | `structure-check.mjs` | **Structural parity** - Does the component look the way Figma says it should? Height, spacing, font, and radius must all point to the right design tokens - no hardcodes, no gaps. Also enforces `childFramePadding` HTML structure: for every entry in the structure contract's `childFramePadding[]`, grep every file in `paths.pluginCSS` for the component class and verify that any button/element containing visible text has the required child element (e.g. `<span>`) so the CSS padding rule can apply. A button with bare text instead of a wrapped child is flagged as ❌ structural mismatch - fix by wrapping the text in the required element, then rebuild and re-audit. |
+| [4]  | `bound-check.mjs` | **Bound-token coverage** - Is anything in the design that isn't in the code? Walks the Figma frames and finds tokens actively used in the design that have no CSS variable yet. |
+| [5]  | inline | **Unused CSS vars** - Are there CSS variables nobody's using? Declared-but-orphaned variables that can be safely deleted. Scans the whole repo (`.vue`, `.jsx`, `.tsx`, `.html`, `.css`, `.scss`, `.js`, `.ts`). |
+| [6]  | inline | **Hardcoded values** - Are there raw values that should be tokens? Every CSS rule is scanned - colors, padding, margin, width, height, border-radius, gap, font-size, line-height, and more. Any literal value written directly into a rule instead of `var(--)` is flagged. Intentional layout math (`100%`, `50%`) goes in `ds-config.json → knownHardcodedExceptions`. |
+| [7]  | inline | **Build freshness** - Is the built output up to date? Catches cases where you edited the source but forgot to rebuild. Skips if no build plugins are configured. |
+| [8]  | `subcomponent-isolation-check.mjs` | **Sub-component isolation** - Is a parent component accidentally overriding a child's styles? When one DS component lives inside another, their styles must not bleed into each other. |
+| [9]  | `visual-regression-check.mjs` | **Visual regression** - Does it still look the same? Compares a live screenshot of the Figma frame against the last accepted reference. Flags any visual drift. Skips if `FIGMA_TOKEN` isn't set or no frames are configured. |
+| [10] | `state-check.mjs` | **State completeness** - Are all component states covered? Every interactive state in Figma (hover, pressed, disabled, selected…) must have a token in the code. Skips if no state data is available. |
+| [11] | `exemption-check.mjs` | **Exemption validity** - Are the documented exceptions still valid? Tokens marked as "skip this" are cross-checked against the snapshot. If a token no longer exists or has changed, the exemption is flagged as stale. |
+| [12] | `mode-completeness-check.mjs` | **Mode completeness** - Do all modes actually adapt? Verifies that every token meant to vary between modes actually does - light vs dark, compact vs comfortable spacing, any breakpoint or density mode your DS defines. Nothing should be frozen at the same value across modes that are supposed to differ. |
+| [13] | `naming-check.mjs` | **CSS naming round-trip** - Do all CSS variable names trace back to a real Figma token? Catches variables someone invented that have no counterpart in the design system. |
+| [14] | `pseudo-element-check.mjs` | **Pseudo-element audit** - Are decorative `::before` / `::after` elements documented? Any visual element added via CSS pseudo-elements must be declared in the component's structure contract so it doesn't silently drift. |
 
 **Gate [2] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -662,9 +662,9 @@ All 14 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 ---
 
-## Gate [3] — childFramePadding HTML structure check
+## Gate [3] - childFramePadding HTML structure check
 
-When `structure-contract.mjs` has a component entry with `childFramePadding[]`, the CSS padding rule targets a child element (e.g. `.buttonTertiary span`). If the HTML renders bare text without that child element, the padding is silently missing — the CSS rule matches nothing.
+When `structure-contract.mjs` has a component entry with `childFramePadding[]`, the CSS padding rule targets a child element (e.g. `.buttonTertiary span`). If the HTML renders bare text without that child element, the padding is silently missing - the CSS rule matches nothing.
 
 **Run this check after every Gate [3] pass** (or any time you add a `childFramePadding` entry to the contract):
 
@@ -674,7 +674,7 @@ For each component that has `childFramePadding` entries:
 3. For every match that is a **text-bearing button** (i.e. the button content is visible text, not a pure SVG icon), verify the text is wrapped in the required child element
 4. Flag any bare-text instance as ❌ with the file path, line number, and the required fix (wrap text in `<span>...</span>` or whichever element the `cssSelector` requires)
 
-**What counts as "text-bearing":** the button innerHTML contains a text node or interpolated string literal that is not an SVG — e.g. `>Cancel<`, `>${text}<`, `>${label}<`. Icon-only buttons (SVG-only content) do not need the child wrapper.
+**What counts as "text-bearing":** the button innerHTML contains a text node or interpolated string literal that is not an SVG - e.g. `>Cancel<`, `>${text}<`, `>${label}<`. Icon-only buttons (SVG-only content) do not need the child wrapper.
 
 **Example grep pattern for `.buttonTertiary`:**
 ```bash
@@ -684,9 +684,9 @@ Then for each matched line, check whether text content is wrapped: `>Cancel<` is
 
 ---
 
-## Phase 2 — State walk → `component-state-tokens.json` (enables Gate [10])
+## Phase 2 - State walk → `component-state-tokens.json` (enables Gate [10])
 
-Walk all COMPONENT_SET nodes (not just DS frame instances) to capture tokens bound in EVERY state variant — not just State=Default. This reveals tokens like `buttonList/icon/hover` that are used in Figma's design but may not be wired into CSS hover rules.
+Walk all COMPONENT_SET nodes (not just DS frame instances) to capture tokens bound in EVERY state variant - not just State=Default. This reveals tokens like `buttonList/icon/hover` that are used in Figma's design but may not be wired into CSS hover rules.
 
 ```js
 // Walk all COMPONENT_SET children (all state variants, not just State=Default)
@@ -720,19 +720,19 @@ return stateTokens;
 
 ---
 
-## Phase 2 — Steps 3–10: When are manual steps required?
+## Phase 2 - Steps 3–10: When are manual steps required?
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 10 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
-| Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
-| New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
+| All 10 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
+| New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 
 Gate failures take priority. Fix every ❌ before running the manual steps.
 
 ---
 
-## Phase 2 — Step 3: Component deep-walk
+## Phase 2 - Step 3: Component deep-walk
 
 For every DS component, walk all states and extract fill/stroke/padding/gap/radius/text with bound variable names. Use the `describe()` pattern:
 
@@ -769,42 +769,42 @@ function describe(n, depth=0) {
 
 Compare results against your `structure-contract.mjs`. Any drift → update contract AND CSS together.
 
-**State/variant selectors — full chain:** for every non-default Figma state or variant property value (Hover, Disabled, Selected, Size=Small, etc.), document in `structure-contract.mjs → STATE_SELECTORS`:
-- `selector` — the CSS selector that activates this state
-- `vars` — for each visual property in this state, the exact token var that must be used
+**State/variant selectors - full chain:** for every non-default Figma state or variant property value (Hover, Disabled, Selected, Size=Small, etc.), document in `structure-contract.mjs → STATE_SELECTORS`:
+- `selector` - the CSS selector that activates this state
+- `vars` - for each visual property in this state, the exact token var that must be used
 
-`structure-check.mjs` verifies: (1) the selector exists in CSS, and (2) the selector's rule uses the declared token var for each property. Token values are Gate [2]'s job — this gate verifies the *wiring*. Together they form the complete chain: Figma state exists → selector exists → correct var is bound → var resolves to correct hex.
+`structure-check.mjs` verifies: (1) the selector exists in CSS, and (2) the selector's rule uses the declared token var for each property. Token values are Gate [2]'s job - this gate verifies the *wiring*. Together they form the complete chain: Figma state exists → selector exists → correct var is bound → var resolves to correct hex.
 
 ---
 
-## Phase 2 — Step 4: Hardcoded value scan (A–F)
+## Phase 2 - Step 4: Hardcoded value scan (A–F)
 
 Run across all production CSS files:
 
-**A.** Hex colors in rules (not `:root` declarations) — must use `var(--)` 
-**B.** Hardcoded font sizes — must use your scale vars
-**C.** Hardcoded border radius — must use your sizing token vars
-**D.** Hardcoded border widths — must use your sizing token vars
-**E.** Hardcoded spacing — must use your gap/padding token vars
+**A.** Hex colors in rules (not `:root` declarations) - must use `var(--)` 
+**B.** Hardcoded font sizes - must use your scale vars
+**C.** Hardcoded border radius - must use your sizing token vars
+**D.** Hardcoded border widths - must use your sizing token vars
+**E.** Hardcoded spacing - must use your gap/padding token vars
 **F.** JS inline styles (`element.style.color = ...`)
 
 Document intentional exceptions in `ds-config.json → knownHardcodedExceptions`.
 
 ---
 
-## Phase 2 — Step 5: State coverage check
+## Phase 2 - Step 5: State coverage check
 
 For every DS component with multiple states, verify a corresponding CSS rule exists and is reachable.
 
 ---
 
-## Phase 2 — Step 6: Mode override completeness
+## Phase 2 - Step 6: Mode override completeness
 
 Every token where modes have different values must have an explicit CSS override for non-default modes (or use a self-resolving var that already carries both values). Gate [2] catches this automatically for all tokens in the snapshot.
 
 ---
 
-## Phase 2 — Step 7: Screenshots
+## Phase 2 - Step 7: Screenshots
 
 Gate [9] handles this automatically if `FIGMA_TOKEN` is set. For manual review: use `get_screenshot` with `figmaFileKey` and each `frames[].nodeId` from `ds-config.json`. Compare against `.parity-refs/` reference images. Flag any visible difference not already surfaced by the automated gates.
 
@@ -815,7 +815,7 @@ mv .parity-refs/<frame-id>.new.png .parity-refs/<frame-id>.png
 
 ---
 
-## Phase 2 — Step 8: Build freshness
+## Phase 2 - Step 8: Build freshness
 
 If your project has a build step:
 
@@ -828,7 +828,7 @@ Expected: empty output. Any listed file = stale build.
 
 ---
 
-## Phase 2 — Step 9: Master Token Table
+## Phase 2 - Step 9: Master Token Table
 
 Produce one table covering every Figma component token:
 
@@ -853,7 +853,7 @@ After the table: Divergence summary (❌ rows), Unused vars, New Figma tokens.
 | Drop `/color` suffix | Always omit |
 | `/` → `-` | Path separator becomes hyphen |
 | Preserve camelCase | Component names stay as-is |
-| State names verbatim | `active`, `selected`, `hover`, `disabled` — never substitute |
+| State names verbatim | `active`, `selected`, `hover`, `disabled` - never substitute |
 
 Any DS-specific shortenings are documented in `parity-map.mjs` under `EXPLICIT`.
 
@@ -861,7 +861,7 @@ Any DS-specific shortenings are documented in `parity-map.mjs` under `EXPLICIT`.
 
 ## Alias Chain Rule
 
-If Figma aliases `component/background → primitives/SomeToken`, CSS must use `var(--some-token)` — never a hardcoded literal. The alias chain must be fully traceable through CSS `var()` references.
+If Figma aliases `component/background → primitives/SomeToken`, CSS must use `var(--some-token)` - never a hardcoded literal. The alias chain must be fully traceable through CSS `var()` references.
 
 Document your primitive → CSS var mapping in `parity-map.mjs` under `NEUTRAL_LIGHT` / `NEUTRAL_DARK` (two modes) or `NEUTRAL_MAPS` (three or more modes) so the resolver can follow chains automatically.
 
@@ -873,7 +873,7 @@ Document your primitive → CSS var mapping in `parity-map.mjs` under `NEUTRAL_L
 
 ## When to use
 
-A consumer file is a Figma product file (e.g. a client project) that uses the DS as a linked library and maintains a local variable collection to override DS tokens with brand-specific values. Run this audit to find DS tokens the consumer file has not yet adopted — i.e. new tokens added to the DS after the consumer file was set up.
+A consumer file is a Figma product file (e.g. a client project) that uses the DS as a linked library and maintains a local variable collection to override DS tokens with brand-specific values. Run this audit to find DS tokens the consumer file has not yet adopted - i.e. new tokens added to the DS after the consumer file was set up.
 
 ## Usage
 
@@ -887,7 +887,7 @@ node consumer-audit.mjs --file GfHErcAjjw277iPunsZXCU --report-md consumer-token
 # + Interactive HTML report (filterable, searchable, color swatches):
 node consumer-audit.mjs --file GfHErcAjjw277iPunsZXCU --report-md consumer-token-status.md --report-html consumer-token-parity.html
 
-# Regenerate HTML from existing markdown (no API call — use when rate-limited):
+# Regenerate HTML from existing markdown (no API call - use when rate-limited):
 # Parse consumer-token-status.md directly and write the HTML. Read the md file,
 # split by section headers (## ✅ SYNCED / ## ⏳ PENDING UPDATE / ## 🗑 STALE),
 # parse each | token | type | Light | Dark | row, then build the HTML using the
@@ -900,13 +900,13 @@ Run from the **DS project root** (where `ds-config.json` and `figma-vars.snapsho
 
 ## Prerequisites
 
-- `FIGMA_TOKEN` in `.env` — personal access token with "File content: Read" scope. The token owner needs at least **viewer** access to the consumer file; no edit access required.
-- A fresh DS snapshot (`figma-vars.snapshot.json`) — run Phase 1 first if stale.
+- `FIGMA_TOKEN` in `.env` - personal access token with "File content: Read" scope. The token owner needs at least **viewer** access to the consumer file; no edit access required.
+- A fresh DS snapshot (`figma-vars.snapshot.json`) - run Phase 1 first if stale.
 
 ## How it works
 
 1. Reads the DS snapshot (ground truth of all DS tokens).
-2. Calls Figma REST API `/v1/files/:consumerKey/variables/local` — **no edit access required**.
+2. Calls Figma REST API `/v1/files/:consumerKey/variables/local` - **no edit access required**.
 3. Classifies collections by `remote` flag:
    - `remote: false` → local collection (consumer's brand overrides)
    - `remote: true`  → linked library collection (the DS)
@@ -918,9 +918,9 @@ Run from the **DS project root** (where `ds-config.json` and `figma-vars.snapsho
 | Flag | Output |
 |---|---|
 | *(none)* | Console report grouped by component with counts |
-| `--report-md <file>` | Full master token table (markdown) — all types, all modes |
-| `--report-html <file>` | Interactive HTML — all collections, per-collection mode columns, filterable by status, searchable, color swatches |
-| *(always)* | `consumer-audit-report.json` — machine-readable lists for CI integration |
+| `--report-md <file>` | Full master token table (markdown) - all types, all modes |
+| `--report-html <file>` | Interactive HTML - all collections, per-collection mode columns, filterable by status, searchable, color swatches |
+| *(always)* | `consumer-audit-report.json` - machine-readable lists for CI integration |
 
 ### Variable value display
 
@@ -932,11 +932,11 @@ All variable types are resolved:
 | FLOAT | numeric value (rounded to 2 decimal places) |
 | BOOLEAN | `true` / `false` |
 | STRING | string value |
-| VARIABLE_ALIAS | `→ alias/token/name` (one hop — shows what it aliases) |
+| VARIABLE_ALIAS | `→ alias/token/name` (one hop - shows what it aliases) |
 
-**All collections covered** — the HTML report iterates every collection in the consumer file (Theme, Breakpoint, Radius, Language, Mode Colors, local brand overrides, etc.). Each collection gets its own section with its own mode columns (e.g. Theme → Light/Dark; Breakpoint → Phone/Tablet/Desktop). The status column adds a `📁 Local` badge for consumer-local collections.
+**All collections covered** - the HTML report iterates every collection in the consumer file (Theme, Breakpoint, Radius, Language, Mode Colors, local brand overrides, etc.). Each collection gets its own section with its own mode columns (e.g. Theme → Light/Dark; Breakpoint → Phone/Tablet/Desktop). The status column adds a `📁 Local` badge for consumer-local collections.
 
-**PENDING tokens** show the DS snapshot value with a `*(DS)*` suffix — so you can see what value the consumer will receive once the library update is accepted.
+**PENDING tokens** show the DS snapshot value with a `*(DS)*` suffix - so you can see what value the consumer will receive once the library update is accepted.
 
 ## Interpreting results
 
@@ -945,16 +945,16 @@ All variable types are resolved:
 | ✅ SYNCED | Token in DS snapshot AND in consumer's linked library | No action needed |
 | ⏳ PENDING UPDATE | Token in DS snapshot but missing from consumer's linked library | Consumer must accept the DS library update in Figma → Assets → Libraries |
 | 🗑 STALE | Token removed from DS, still in consumer's old linked copy | Disappears automatically when consumer accepts library update |
-| 📁 LOCAL | Token belongs to the consumer's own local collection (brand overrides) | No action — these are intentional consumer values |
+| 📁 LOCAL | Token belongs to the consumer's own local collection (brand overrides) | No action - these are intentional consumer values |
 | No remote collections found | Consumer may not use this DS as a library, OR `FIGMA_TOKEN` lacks access | Verify in Figma → Assets → Libraries; check token scope |
 
 ## ⚠️ Hard rule: never infer library linkage from component names
 
-**NEVER use `get_metadata` page structure or component/instance names to determine whether a consumer file uses the DS library.** Consumer files wrap DS instances in local components — wrapper names (`list-item`, `button-primary`, `card`) reveal nothing about library linkage. A consumer file's components can have the same names as DS components while being completely independent.
+**NEVER use `get_metadata` page structure or component/instance names to determine whether a consumer file uses the DS library.** Consumer files wrap DS instances in local components - wrapper names (`list-item`, `button-primary`, `card`) reveal nothing about library linkage. A consumer file's components can have the same names as DS components while being completely independent.
 
 The ONLY authoritative signals for library linkage are:
-1. `collection.remote === true` in the Figma Variables API response — used by `consumer-audit.mjs`
-2. `instance.mainComponent.remote === true` in plugin API — requires edit access via `use_figma`
+1. `collection.remote === true` in the Figma Variables API response - used by `consumer-audit.mjs`
+2. `instance.mainComponent.remote === true` in plugin API - requires edit access via `use_figma`
 
 If `use_figma` is attempted but returns an edit-access error, **do not fall back to inferring linkage from `get_metadata`**. Fall back to the REST API approach (`consumer-audit.mjs`) instead.
 
@@ -982,7 +982,7 @@ Configure `webhook.port` and `webhook.secret` in `ds-config.json`.
 
 ## Audit Rules
 
-- Never change source files to *hide* a divergence — report it.
+- Never change source files to *hide* a divergence - report it.
 - Always compare **all** configured modes.
 - Naming violations are flagged regardless of whether the value is correct.
 - When renaming: update declarations, all usages, then rebuild. Update `EXPLICIT` in both `parity-check.mjs` and `bound-check.mjs` if the old name had an explicit entry.
@@ -998,15 +998,15 @@ After every run, report this table so the practitioner knows exactly what the au
 
 | Area | Method | Confidence |
 |---|---|---|
-| Token values match Figma | Automated (Gate [2] — resolver against live snapshot) | High |
-| All Figma tokens have a CSS var | Automated (Gate [4] — bound-check against frame walk) | High if frames configured; **not run** if `frames: []` |
+| Token values match Figma | Automated (Gate [2] - resolver against live snapshot) | High |
+| All Figma tokens have a CSS var | Automated (Gate [4] - bound-check against frame walk) | High if frames configured; **not run** if `frames: []` |
 | No unused CSS vars | Automated (Gate [5]) | High |
 | No hardcoded values in rules | Automated (Gate [6]) | High |
 | Structural parity (height, padding, gap) | Automated (Gate [3]) | High |
 | Sub-component isolation | Automated (Gate [8]) | High |
 | Build freshness | Automated (Gate [7]) | High |
-| Removed tokens reconciled | Manual (Phase 1 diff) | Medium — verify any "used in a rule" replacements visually |
+| Removed tokens reconciled | Manual (Phase 1 diff) | Medium - verify any "used in a rule" replacements visually |
 | Component states fully wired | Manual (Step 3 deep-walk) | Low if skipped; High if run |
 | Visual regression | Automated (Gate [9], requires FIGMA_TOKEN) or Manual (Step 7 screenshots) | **Not run** if neither is configured |
 
-Flag any row marked **not run** or **skipped** explicitly in the summary — do not imply full coverage.
+Flag any row marked **not run** or **skipped** explicitly in the summary - do not imply full coverage.

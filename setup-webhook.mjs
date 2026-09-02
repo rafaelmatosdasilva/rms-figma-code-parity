@@ -1,4 +1,4 @@
-// setup-webhook.mjs — Register a Figma webhook that points at webhook-server.mjs.
+// setup-webhook.mjs - Register a Figma webhook that points at webhook-server.mjs.
 // Run once after deploying webhook-server.mjs to a public URL.
 //
 // Usage:
@@ -10,8 +10,8 @@
 //   --delete <id>   Delete a webhook by ID and exit
 //
 // Reads from ds-config.json:
-//   figmaFileKey    — the Figma file to watch
-//   webhook.secret  — passcode sent with every event (or FIGMA_WEBHOOK_SECRET env var)
+//   figmaFileKey    - the Figma file to watch
+//   webhook.secret  - passcode sent with every event (or FIGMA_WEBHOOK_SECRET env var)
 
 import { readFileSync } from 'fs';
 import { join }         from 'path';

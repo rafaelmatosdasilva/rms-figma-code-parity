@@ -1,7 +1,7 @@
-// rendered-check.mjs — Run from project root: node scripts/rendered-check.mjs
-// Gate [16] — Rendered parity: the audit's static gates read CSS text; this gate
+// rendered-check.mjs - Run from project root: node scripts/rendered-check.mjs
+// Gate [16] - Rendered parity: the audit's static gates read CSS text; this gate
 // verifies what the browser actually computes. It launches headless Chrome via the
-// DevTools Protocol (no npm deps — requires Node >= 22 for built-in WebSocket),
+// DevTools Protocol (no npm deps - requires Node >= 22 for built-in WebSocket),
 // loads each built plugin ui.html from file://, and asserts getComputedStyle values
 // declared in RENDERED_ASSERTIONS (structure-contract.mjs).
 //
@@ -47,7 +47,7 @@ try {
 // #2 element-geometry auto-expand: a FRAME_GEOMETRY_MAP entry maps a CSS selector to a
 // DS frame node ONCE and expands into one frameGeom assertion per listed prop (default:
 // the four padding sides). Expected values then flow from the live frame-geometry snapshot
-// via the frameGeom resolver below — mapping a container once auto-checks all its box
+// via the frameGeom resolver below - mapping a container once auto-checks all its box
 // geometry against the DS, with no hand-typed pixels.
 for (const e of FRAME_GEOMETRY_MAP) {
   const props = e.props ?? ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'];
@@ -72,17 +72,17 @@ try {
     if (!a.iconSizeOf) return true;
     const size = comps[a.iconSizeOf]?.iconSize;
     if (typeof size !== 'number') {
-      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: iconSizeOf '${a.iconSizeOf}' has no iconSize in the snapshot — assertion skipped`);
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: iconSizeOf '${a.iconSizeOf}' has no iconSize in the snapshot - assertion skipped`);
       return false;
     }
     a.expected = `${size}px`;
     return true;
   });
-} catch { /* snapshot optional — iconSizeOf assertions simply won't resolve */ }
+} catch { /* snapshot optional - iconSizeOf assertions simply won't resolve */ }
 
 // DS-sourced container geometry: an assertion with `frameGeom: { node, path? }` takes
 // its expected value from that named node's box in the frame-geometry snapshot, mapped
-// by `prop` — paddingTop/Right/Bottom/Left → pad[0..3], columnGap/rowGap/gap → gap,
+// by `prop` - paddingTop/Right/Bottom/Left → pad[0..3], columnGap/rowGap/gap → gap,
 // height → h. Container/context spacing (e.g. the 7px above the first divider) thus
 // tracks the LIVE DS frame instead of a hand-typed pixel that silently goes stale.
 try {
@@ -96,7 +96,7 @@ try {
     const list = entry == null ? [] : (Array.isArray(entry) ? entry : [entry]);
     const box = list.find(v => !a.frameGeom.path || (v._path ?? '').includes(a.frameGeom.path)) ?? list[0];
     if (!box) {
-      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom node '${a.frameGeom.node}'${a.frameGeom.path ? ` (path ~ '${a.frameGeom.path}')` : ''} not in frame-geometry snapshot — assertion skipped`);
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom node '${a.frameGeom.node}'${a.frameGeom.path ? ` (path ~ '${a.frameGeom.path}')` : ''} not in frame-geometry snapshot - assertion skipped`);
       return false;
     }
     let px = null;
@@ -104,7 +104,7 @@ try {
     else if (/gap/i.test(a.prop)) px = box.gap;
     else if (a.prop === 'height') px = box.h;
     if (typeof px !== 'number') {
-      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom cannot map prop '${a.prop}' — assertion skipped`);
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: frameGeom cannot map prop '${a.prop}' - assertion skipped`);
       return false;
     }
     a.expected = `${px}px`;
@@ -114,7 +114,7 @@ try {
 
 // DS-sourced text styles: an assertion with `textStyle: '<name>'` verifies the element's
 // COMPUTED font-size, font-weight and line-height all match that named DS text style from
-// the typography snapshot. This catches the class of bug a static CSS scan can't see — an
+// the typography snapshot. This catches the class of bug a static CSS scan can't see - an
 // element whose own rule looks fine but that inherits a heavier weight or a different size
 // from a container (a partial/hardcoded text style), and any drift from the DS type scale.
 // One entry expands into up to three per-property assertions; a style with no line-height
@@ -127,7 +127,7 @@ try {
     if (!a.textStyle) { expanded.push(a); continue; }
     const style = typo[a.textStyle];
     if (!style) {
-      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: textStyle '${a.textStyle}' not in the typography snapshot — assertion skipped`);
+      console.log(`⚠️  [16] ${a.plugin} ${a.selector}: textStyle '${a.textStyle}' not in the typography snapshot - assertion skipped`);
       continue;
     }
     const byProp = { fontSize: style.size, fontWeight: style.weight, lineHeight: style.lh };
@@ -141,16 +141,16 @@ try {
     }
   }
   ASSERTIONS = expanded;
-} catch { /* vars snapshot optional — textStyle assertions simply won't resolve */ }
+} catch { /* vars snapshot optional - textStyle assertions simply won't resolve */ }
 
 if (!ASSERTIONS.length) {
-  console.log('⏭  [16] rendered parity skipped — RENDERED_ASSERTIONS empty in structure-contract.mjs');
+  console.log('⏭  [16] rendered parity skipped - RENDERED_ASSERTIONS empty in structure-contract.mjs');
   process.exit(0);
 }
 
 // Color scheme is emulated per assertion so mode-dependent color checks are
 // deterministic regardless of host OS appearance (headless Chrome otherwise
-// follows the machine's prefers-color-scheme — light on CI runners, often dark
+// follows the machine's prefers-color-scheme - light on CI runners, often dark
 // on a developer's Mac, which silently flips any assertion on a mode-varying token).
 // Default from ds-config (`rendered.colorScheme`), else 'light' (the :root base and
 // the headless default). An assertion overrides it with its own `colorScheme` field.
@@ -173,11 +173,11 @@ function findChrome() {
 
 const CHROME = findChrome();
 if (!CHROME) {
-  console.log('⏭  [16] rendered parity skipped — Chrome not found (set CHROME_PATH to enable)');
+  console.log('⏭  [16] rendered parity skipped - Chrome not found (set CHROME_PATH to enable)');
   process.exit(0);
 }
 if (typeof WebSocket === 'undefined') {
-  console.log('⏭  [16] rendered parity skipped — Node >= 22 required (built-in WebSocket)');
+  console.log('⏭  [16] rendered parity skipped - Node >= 22 required (built-in WebSocket)');
   process.exit(0);
 }
 
@@ -269,7 +269,7 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
       const asserts = ${JSON.stringify(group.map(x => ({ selector: x.a.selector, probe: x.a.probe, prop: x.a.prop })))};
       // Probes render inside an absolutely-positioned host so the app shell's own
       // flex/grid layout (e.g. body { display:flex; height:100vh }) cannot stretch
-      // or shrink them — computed values must reflect the component's own rules.
+      // or shrink them - computed values must reflect the component's own rules.
       const probeHost = document.createElement('div');
       probeHost.style.cssText = 'position:absolute;left:0;top:0;width:600px;visibility:hidden;display:block;';
       document.body.appendChild(probeHost);
@@ -297,7 +297,7 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
   });
 
   // forcePseudo assertions: geometry of :hover/:focus/:active rules cannot be read
-  // from JS alone — CSS.forcePseudoState applies the pseudo-class rules to the node,
+  // from JS alone - CSS.forcePseudoState applies the pseudo-class rules to the node,
   // then getComputedStyle reflects them. Probes injected above are reused.
   const pseudoAsserts = asserts.filter(a => a.forcePseudo);
   if (pseudoAsserts.length) {
@@ -317,7 +317,7 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     await send('Runtime.evaluate', { expression: injectExpr, returnByValue: true }, sessionId);
     // Kill transitions before measuring. getComputedStyle reports the CURRENT
     // animated value, so a property with a transition (e.g. `border-color 0.15s`)
-    // still reads as the RESTING colour the instant a pseudo-state is forced —
+    // still reads as the RESTING colour the instant a pseudo-state is forced -
     // the assertion then fails against a value the user never sees at rest. This
     // is timing, not cascade, so waiting would only trade one flake for another.
     await send('Runtime.evaluate', {
@@ -334,7 +334,7 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     for (const a of pseudoAsserts) {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: a.colorScheme ?? DEFAULT_SCHEME }] }, sessionId);
       // forcePseudoOn lets the pseudo-class land on a DIFFERENT element than the one
-      // measured — e.g. hovering a row and asserting a button inside it keeps its own
+      // measured - e.g. hovering a row and asserting a button inside it keeps its own
       // colour. Without it a parent-hover rule can silently outrank a child rule and
       // no assertion can see it. Defaults to the measured selector.
       const forceSel = a.forcePseudoOn || a.selector;
@@ -418,13 +418,13 @@ ws.close();
 cleanup();
 
 // ── Report ────────────────────────────────────────────────────────────────────
-console.log('\n─── Gate [16] — Rendered parity (headless Chrome computed styles) ───\n');
+console.log('\n─── Gate [16] - Rendered parity (headless Chrome computed styles) ───\n');
 console.log(`✅ PASS  ${PASS.length}/${PASS.length + FAIL.length} rendered assertions`);
 console.log(`❌ FAIL  ${FAIL.length}`);
 if (FAIL.length) {
   console.log();
   for (const f of FAIL) console.log(`  ❌ ${f}`);
-  console.log('\n   Fix: the CSS cascade renders something different from the DS contract —');
+  console.log('\n   Fix: the CSS cascade renders something different from the DS contract -');
   console.log('   check for later rules overriding the base, wrong var() resolution, or a stale build.');
 }
 
@@ -432,9 +432,9 @@ if (XP_PASS.length || XP_FAIL.length) {
   console.log(`\n✅ PASS  ${XP_PASS.length}/${XP_PASS.length + XP_FAIL.length} cross-plugin consistency checks`);
   console.log(`❌ FAIL  ${XP_FAIL.length}`);
   if (XP_FAIL.length) {
-    console.log('\n─── #5 — shared component renders differently across plugins ───────');
+    console.log('\n─── #5 - shared component renders differently across plugins ───────');
     for (const f of XP_FAIL) console.log(`  ❌ ${f}`);
-    console.log('   Fix: a plugin-local rule is overriding a shared base component — move it to the base');
+    console.log('   Fix: a plugin-local rule is overriding a shared base component - move it to the base');
     console.log('   or scope it so the shared component stays identical everywhere.');
   }
 }

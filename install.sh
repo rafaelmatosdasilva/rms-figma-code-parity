@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — install (or update) the rms-figma-code-parity Claude Code skill.
+# install.sh - install (or update) the rms-figma-code-parity Claude Code skill.
 # One canonical clone + a symlinked command + a named terminal command, so updates
 # are a `git pull` (or `rms-figma-code-parity --update`) with NO re-download. Run:
 #   curl -fsSL https://raw.githubusercontent.com/rafaelmatosdasilva/rms-figma-code-parity/main/install.sh | bash
@@ -14,7 +14,7 @@ SKILL_FILE="rms-figma-code-parity.md"
 
 command -v git >/dev/null || { echo "❌  git is required."; exit 1; }
 
-# 1. Canonical clone (or fast-forward it if already there) — the single source of truth.
+# 1. Canonical clone (or fast-forward it if already there) - the single source of truth.
 if [ -d "$CLONE_DIR/.git" ]; then
   echo "↻  Updating existing install at $CLONE_DIR"
   git -C "$CLONE_DIR" pull --ff-only

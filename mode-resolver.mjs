@@ -1,12 +1,12 @@
-// mode-resolver.mjs — shared, N-mode CSS variable resolution for the mode-aware gates
+// mode-resolver.mjs - shared, N-mode CSS variable resolution for the mode-aware gates
 // (Gate [5] mode-completeness, Gate [6] exemption validity, and any future consumer).
 //
 // A DS is NOT necessarily light/dark, and NOT necessarily one global mode axis. Two things vary:
 //   1. `ds-config.json → figma.modes` may list any number of COLOR modes (light/dark, plus
 //      high-contrast, …), each with a `cssSelector` saying where that mode's overrides live.
-//   2. `ds-config.json → figma.collections` (optional) may declare OTHER typed collections — a
+//   2. `ds-config.json → figma.collections` (optional) may declare OTHER typed collections - a
 //      sizing collection whose values change per breakpoint, a string collection that changes per
-//      locale — each with ITS OWN mode set and cssSelectors, independent of the color axis.
+//      locale - each with ITS OWN mode set and cssSelectors, independent of the color axis.
 //
 // `cssSelector` values (mobile-first / base-first: the first mode is usually `root`, the rest override):
 //   'root'                 → :root { }                              (base, no override layer)
@@ -16,7 +16,7 @@
 //   'class:<name>'         → .<name> :root { }   (or :root.<name> { })
 //   'data:<attr>=<val>'    → [data-<attr>="<val>"] :root { }
 //
-// The 2-mode light/dark case is a strict subset — resolution is byte-identical there. This
+// The 2-mode light/dark case is a strict subset - resolution is byte-identical there. This
 // module is the ONE place that hardcodes nothing about a specific DS's modes or collections.
 
 export function loadModes(cfg) {
@@ -30,7 +30,7 @@ export function loadModes(cfg) {
 
 // loadCollections(cfg) → the OTHER typed collections a DS wants mode-checked, beyond the color axis.
 // Each: { name, kind: 'color'|'scalar'|'string', modes: [{ name, snapshotKey, cssSelector }] }.
-// Absent (or empty) → [] — the legacy single-axis behaviour, so a DS that never declares this is
+// Absent (or empty) → [] - the legacy single-axis behaviour, so a DS that never declares this is
 // unaffected. `kind` decides how a resolved value is compared: hex for color, literal otherwise.
 export function loadCollections(cfg) {
   const cols = cfg?.figma?.collections;

@@ -1,8 +1,8 @@
-// html-structure-check.mjs — Gate [15]: HTML structure snapshot
+// html-structure-check.mjs - Gate [15]: HTML structure snapshot
 // Run from project root: node ../rms-figma-code-parity/html-structure-check.mjs
 //                    or: node ../rms-figma-code-parity/html-structure-check.mjs --accept
 //
-// Parses each plugin's ui.src.html (static part only — strips <script> blocks),
+// Parses each plugin's ui.src.html (static part only - strips <script> blocks),
 // extracts a structural fingerprint (all element IDs, DS component classes on
 // interactive elements, all <use href="#icon-X"> with nearest-ancestor context),
 // and diffs against a stored snapshot.
@@ -98,7 +98,7 @@ function fingerprint(html) {
     icons.push({ context: ctx, icon: um[1] });
   }
 
-  // Button inner structure — catches spurious text labels, extra spans, or missing icons.
+  // Button inner structure - catches spurious text labels, extra spans, or missing icons.
   // For each <button id="X"> with a static (non-template) ID, record:
   //   svg   : whether the button directly contains <svg>
   //   spans : class names on any <span> children (sorted)
@@ -144,7 +144,7 @@ for (let i = 0; i < plugins.length; i++) {
 if (ACCEPT) {
   const snap = { _updated: new Date().toISOString().slice(0, 10), ...current };
   writeFileSync(absSnap, JSON.stringify(snap, null, 2) + '\n');
-  console.log(`✅ [15] html-structure.snapshot.json accepted — baseline updated`);
+  console.log(`✅ [15] html-structure.snapshot.json accepted - baseline updated`);
   process.exit(0);
 }
 
@@ -152,7 +152,7 @@ if (ACCEPT) {
 if (!existsSync(absSnap) || !Object.keys(stored).length) {
   const snap = { _updated: new Date().toISOString().slice(0, 10), ...current };
   writeFileSync(absSnap, JSON.stringify(snap, null, 2) + '\n');
-  console.log(`✅ [15] No snapshot found — baseline written (${plugins.length} plugin(s))`);
+  console.log(`✅ [15] No snapshot found - baseline written (${plugins.length} plugin(s))`);
   process.exit(0);
 }
 
@@ -172,7 +172,7 @@ for (const plugin of plugins) {
   const curr = current[plugin];
   if (!curr) continue;
   if (!prev) {
-    console.log(`✅ [15] ${plugin}: new plugin — no snapshot yet`);
+    console.log(`✅ [15] ${plugin}: new plugin - no snapshot yet`);
     continue;
   }
 

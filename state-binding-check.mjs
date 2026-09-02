@@ -1,11 +1,11 @@
-// state-binding-check.mjs — Gate [16]: state selector coverage.
+// state-binding-check.mjs - Gate [16]: state selector coverage.
 // For every selector declared in CONTRACT.propertyMap, verify a matching CSS rule exists.
-// This catches missing hover/selected/disabled/etc. rules — Gate [3] only verifies
+// This catches missing hover/selected/disabled/etc. rules - Gate [3] only verifies
 // State=Default structure, so state-variant selectors are invisible to it.
 //
 // Requires at project root:
-//   ds-config.json          — themeCSS + pluginCSS paths
-//   structure-contract.mjs  — CONTRACT (propertyMap per component)
+//   ds-config.json          - themeCSS + pluginCSS paths
+//   structure-contract.mjs  - CONTRACT (propertyMap per component)
 //
 // Exit 0 = all propertyMap selectors found in CSS.  Exit 1 = missing selectors.
 
@@ -27,17 +27,17 @@ try {
   const mod = await import(join(ROOT, 'structure-contract.mjs'));
   CONTRACT = mod.CONTRACT ?? {};
 } catch {
-  console.log('⏭ structure-contract.mjs not found — skipped');
+  console.log('⏭ structure-contract.mjs not found - skipped');
   process.exit(0);
 }
 
 if (!Object.keys(CONTRACT).length) {
-  console.log('⏭ CONTRACT is empty — skipped');
+  console.log('⏭ CONTRACT is empty - skipped');
   process.exit(0);
 }
 
 // ── Read and parse CSS ────────────────────────────────────────────────────────
-// Plugin CSS paths include .html files (embedded <style> blocks) — read as plain text;
+// Plugin CSS paths include .html files (embedded <style> blocks) - read as plain text;
 // the flat-rule regex below extracts CSS blocks from the HTML naturally.
 const allCSS = [...THEME_PATHS, ...PLUGIN_CSS]
   .filter(p => existsSync(join(ROOT, p)))
@@ -58,11 +58,11 @@ for (const m of allCSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
 
 function isCovered(sel) {
   if (!sel || typeof sel !== 'string') return true;
-  if (sel.startsWith('@')) return true; // container queries, media — can't easily match
+  if (sel.startsWith('@')) return true; // container queries, media - can't easily match
   const norm = sel.replace(/\s+/g, ' ').trim();
   if (cssSelectors.has(norm)) return true;
   for (const cssEl of cssSelectors) {
-    // Multi-selector rule: ".a, .b { }" — check comma-split parts
+    // Multi-selector rule: ".a, .b { }" - check comma-split parts
     if (cssEl.split(',').map(s => s.trim()).includes(norm)) return true;
     // Compound/child selector: propertyMap selector is a PREFIX of a CSS rule's selector.
     // e.g. ".depth-option.done" is covered by ".depth-option.done .depth-circle"
@@ -78,7 +78,7 @@ const covered = [];
 for (const [compName, def] of Object.entries(CONTRACT)) {
   if (!def.propertyMap) continue;
   for (const [propKey, propVal] of Object.entries(def.propertyMap)) {
-    if (propVal === null) continue; // TEXT / INSTANCE_SWAP — skip
+    if (propVal === null) continue; // TEXT / INSTANCE_SWAP - skip
 
     if (typeof propVal === 'string') {
       const key = `${compName}.${propKey}`;

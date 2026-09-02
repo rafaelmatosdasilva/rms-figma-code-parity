@@ -1,6 +1,6 @@
-// parity-map.mjs — Copy to your PROJECT ROOT and fill in your DS token mappings.
+// parity-map.mjs - Copy to your PROJECT ROOT and fill in your DS token mappings.
 // Consumed by parity-check.mjs and bound-check.mjs.
-// Do not commit to the public scripts repo — project-specific, lives at project root.
+// Do not commit to the public scripts repo - project-specific, lives at project root.
 
 // ─── Primitive scale (for resolving alias chains in color tokens) ──────────────
 // Two-mode setup (default): export NEUTRAL_LIGHT + NEUTRAL_DARK.
@@ -8,11 +8,11 @@
 //
 // Keys match the capture group in NEUTRAL_VAR_RE (default: --neutral-NNN).
 //
-// Example — numeric scale:
+// Example - numeric scale:
 //   export const NEUTRAL_LIGHT = { 100: '#0a0a0a', 200: '#2b2b2b', 900: '#f7f7f7' };
 //   export const NEUTRAL_DARK  = { 100: '#ededed', 200: '#d4d4d4', 900: '#212121' };
 //
-// Example — named scale with custom var pattern:
+// Example - named scale with custom var pattern:
 //   export const NEUTRAL_LIGHT  = { primary: '#000000', muted: '#595959' };
 //   export const NEUTRAL_DARK   = { primary: '#ffffff', muted: '#808080' };
 //   export const NEUTRAL_VAR_RE = /^--color-([a-z]+)$/;
@@ -71,9 +71,9 @@ export const EXPLICIT_SIZING = {
   // Example: 'radii/button': '--radius-full'
 };
 
-// ─── Sizing tokens with no CSS consumer — Map<token, reason> ──────────────────
+// ─── Sizing tokens with no CSS consumer - Map<token, reason> ──────────────────
 export const SIZING_SKIP = new Map([
-  // ['general/window-radii', 'Figma window-chrome — not controlled by HTML/CSS'],
+  // ['general/window-radii', 'Figma window-chrome - not controlled by HTML/CSS'],
 ]);
 
 // ─── TYPOGRAPHY: CSS var → [scale, prop] snapshot path ────────────────────────
@@ -92,7 +92,7 @@ export const TYPO = {
 // ─── BOOLEAN TOKENS: document how display/feature vars are implemented ────────
 // Figma BOOLEAN vars from any collection (breakpoints, theme, feature flags) that
 // control element visibility or theme behaviour. These aren't CSS custom properties
-// — implement via @media display rules, data-* attributes, or JS class toggles,
+// - implement via @media display rules, data-* attributes, or JS class toggles,
 // then list the token path here to suppress the ℹ️ advisory in Gate [2].
 export const BOOLEAN_SKIP = new Set([
   // 'components/main-menu/button-donate/display',   // @media hidden below 768px
@@ -144,7 +144,7 @@ export const COVERED = new Set([
 ]);
 
 // ─── STATE WALK COVERAGE: Additional tokens deferred for the state walk ───────
-// Superset of COVERED — adds tokens that appear in COMPONENT_SET variant states
+// Superset of COVERED - adds tokens that appear in COMPONENT_SET variant states
 // but have no HTML/CSS equivalent (e.g. internal Figma preview layers).
 // Used by state-check.mjs (Gate [10]). Falls back to COVERED if absent.
 export const COVERED_STATE = new Set([
