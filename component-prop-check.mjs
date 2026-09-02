@@ -193,10 +193,23 @@ function resolveFile(figmaName) {
 // leftover code props are EXTRA (advisory). Renames are then offered as SUGGESTIONS
 // only - pairing names automatically is unreliable (a boolean "showLabel" is not the
 // text prop "label"), so it never decides pass/fail; document a real rename as an alias.
+// A Figma "State" variant (hover/focus/active/...) is not a code prop - it maps to CSS
+// pseudo-classes, which Gate 11 (All states are built) verifies. Skip it here so a
+// component that implements states in CSS isn't wrongly flagged as missing a `state` prop.
+// Skips: a property named state/states, or a VARIANT whose options are all interaction states.
+const STATE_WORDS = new Set(['default', 'hover', 'focus', 'focused', 'active', 'pressed',
+  'selected', 'checked', 'indeterminate', 'visited', 'disabled', 'loading', 'error', 'on', 'off']);
+const STATE_PROP_NAMES = new Set((cfg.knownStateProps ?? ['State', 'state', 'States']).map(norm));
+const isStateAxis = (name, def) => STATE_PROP_NAMES.has(norm(name)) ||
+  (def?.type === 'VARIANT' && Array.isArray(def.variantOptions) && def.variantOptions.length >= 2 &&
+   def.variantOptions.every(o => STATE_WORDS.has(norm(o))));
+
 const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [], VALUE_FAIL = [], VALUE_INFO = [];
 for (const [figmaName, entry] of Object.entries(SNAP)) {
   if (figmaName === '_updated' || !entry?.properties) continue;
-  const figDefs = new Map(Object.entries(entry.properties).map(([k, v]) => [cleanFigmaProp(k), v]));   // name -> {type, defaultValue, variantOptions}
+  const figDefs = new Map(Object.entries(entry.properties)
+    .filter(([k, v]) => !isStateAxis(cleanFigmaProp(k), v))   // states are Gate 11's job, not props
+    .map(([k, v]) => [cleanFigmaProp(k), v]));   // name -> {type, defaultValue, variantOptions}
   const figNames = [...figDefs.keys()].filter(Boolean);
   if (!figNames.length) continue;
   if (KNOWN_UNIMPLEMENTED.has(figmaName)) continue;
