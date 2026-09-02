@@ -123,7 +123,7 @@ function checkForUpdate({ quiet } = {}) {
   const behind = remote !== local;
   if (!quiet) {
     console.log(behind
-      ? `⚠️  A newer version is available.\n   you: ${local.slice(0, 7)}  ·  latest: ${remote.slice(0, 7)}\n   Update: node scripts/audit.mjs --update`
+      ? `⚠️  A newer version is available.\n   you: ${local.slice(0, 7)}  ·  latest: ${remote.slice(0, 7)}\n   Update: rms-figma-code-parity --update`
       : `✅ You are on the latest version (${local.slice(0, 7)}).`);
   }
   return { behind, local, remote };
@@ -2515,7 +2515,7 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
       const res = checkForUpdate({ quiet: true });
       try { mkdirSync(dirname(stamp), { recursive: true }); writeFileSync(stamp, String(now)); } catch { /* cache is optional */ }
       if (res?.behind) {
-        console.log(C.yellow('\n⚠️  A newer version of the parity skill is available — run: node scripts/audit.mjs --update'));
+        console.log(C.yellow('\n⚠️  A newer version of the parity skill is available — run: rms-figma-code-parity --update'));
       }
     }
   } catch { /* a version nudge must never break the audit */ }

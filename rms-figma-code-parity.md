@@ -15,7 +15,7 @@ the design; it only answers "does the code agree with Figma?". The gates cover:
 console; relay those results to the user directly in the conversation, in plain language —
 which gates passed, which failed, and what each failure means. Do **not** generate any file,
 document, or HTML report unless the user explicitly asks for one. Only when they do, run
-`node scripts/audit.mjs --report-html <path>` (a per-dimension Color / Sizing / Typography
+`rms-figma-code-parity --report-html <path>` (a per-dimension Color / Sizing / Typography
 table). Either way, fix anything red before declaring parity.
 
 ## How to run this skill (read first)
@@ -34,12 +34,12 @@ Route by intent:
 - **One or a few components** (the common case — "audit ButtonPrimary", "check the button"):
   run the scoped script directly and report its banner in the chat.
   ```bash
-  node scripts/audit.mjs --component ButtonPrimary        # or A,B  / repeat --component
+  rms-figma-code-parity --component ButtonPrimary        # or A,B  / repeat --component
   ```
   This is lean and deterministic. Do **not** run the full Phase 1/Phase 2 workflow for a
   single-component check — that is exactly the heavy path that produces noisy, confusing
   output. The scope auto-expands to nested sub-components.
-- **The whole design system:** run `node scripts/audit.mjs` (or `/rms-figma-code-parity`),
+- **The whole design system:** run `rms-figma-code-parity` in the terminal (or `/rms-figma-code-parity` in Claude Code),
   then follow the phases below.
 
 **Phase 1 (live Figma refresh) is best-effort, not mandatory.** Run it when you actually
@@ -91,9 +91,9 @@ Full parity workflow in one command: Phase 1 (live Figma refresh) runs before Ph
 components — the common case when you are working on, or checking, a single component:
 
 ```bash
-node scripts/audit.mjs --component ButtonPrimary                # one component
-node scripts/audit.mjs --component ButtonPrimary,Toast          # several (comma-separated)
-node scripts/audit.mjs --component ButtonPrimary --component Toast   # or repeated
+rms-figma-code-parity --component ButtonPrimary                # one component
+rms-figma-code-parity --component ButtonPrimary,Toast          # several (comma-separated)
+rms-figma-code-parity --component ButtonPrimary --component Toast   # or repeated
 ```
 
 In a scoped run the gates report **only** findings that belong to the chosen components;
@@ -106,14 +106,14 @@ parent is never passed while a child it depends on is broken); the banner lists 
 pulled in. Set a default in `ds-config.json → scopeComponents: ["ButtonPrimary"]` if a repo
 should always run scoped. Omit the flag to audit the whole DS.
 
-**Utility flags (no full audit — just run the script directly):**
+**Utility flags (no full audit — run the terminal command directly):**
 ```bash
-node scripts/audit.mjs --init                         # first-time setup only: scaffold config files, then exit
-node scripts/audit.mjs --version                      # am I on the latest? compares local vs remote (a normal run also nudges once/day)
-node scripts/audit.mjs --update                       # git pull the shared clone + relink the command — update with no re-download
-node scripts/audit.mjs --link-command                 # (re)point the global /rms-figma-code-parity command at this folder via symlink
-node scripts/audit.mjs --trend                        # show last 20 audit runs + pass/fail trend
-node scripts/audit.mjs --report-html parity.html      # generate HTML report only (no Phase 1)
+rms-figma-code-parity --init                          # first-time setup only: scaffold config files, then exit
+rms-figma-code-parity --version                       # am I on the latest? compares local vs remote (a normal run also nudges once/day)
+rms-figma-code-parity --update                        # update to the latest — no re-download
+rms-figma-code-parity --link-command                  # (re)point the /rms-figma-code-parity command at the install via symlink
+rms-figma-code-parity --trend                         # show last 20 audit runs + pass/fail trend
+rms-figma-code-parity --report-html parity.html       # generate HTML report only (no Phase 1)
 node scripts/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
 node scripts/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
 ```
@@ -231,7 +231,7 @@ you run the Plugin API capture. Treating an expired credential as a plan limitat
 the dangerous confusion: every REST-backed refresh quietly stops while the audit reports
 a condition you cannot fix.
 
-**Audit history** is appended to `parity-history.json` at project root after every run. View trend: `node scripts/audit.mjs --trend`.
+**Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
 
 ---
 
@@ -240,7 +240,7 @@ a condition you cannot fix.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`node scripts/audit.mjs`** | **All 19 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 19 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -1001,7 +1001,7 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. The
 ## Phase 2 — Step 2: Run all 19 audit gates
 
 ```bash
-node scripts/audit.mjs
+rms-figma-code-parity
 ```
 
 All 19 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead — that is expected, not a failure.
@@ -1085,7 +1085,7 @@ every token aliasing it while pointing at the tokens rather than the stale map. 
 trailing number of the primitive name (`primitives/Neutral 800` → `800`); override the
 extraction with `figma.primitiveKeyRe` in `ds-config.json`.
 
-**History:** every run appends to `parity-history.json`. View trend: `node scripts/audit.mjs --trend`.
+**History:** every run appends to `parity-history.json`. View trend: `rms-figma-code-parity --trend`.
 
 ---
 

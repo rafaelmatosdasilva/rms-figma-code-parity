@@ -16,15 +16,14 @@ This makes **one canonical clone** at `~/.claude/skills/rms-figma-code-parity` a
 
 **2 — Add to a project (once per repo)**
 
-Point a `scripts` symlink at the shared clone — do **not** vendor a submodule or a second copy:
+The install above gives you the `rms-figma-code-parity` command, so there's nothing to vendor — just run it inside the project:
 
 ```bash
-ln -s ~/.claude/skills/rms-figma-code-parity scripts
-echo scripts >> .gitignore
-node scripts/audit.mjs --init
+cd my-project
+rms-figma-code-parity --init
 ```
 
-`--init` asks a few questions, auto-detects everything else, and prints a checklist of what to fill in next. Because `scripts` is a symlink to the one clone, every project is always on the same version.
+`--init` asks a few questions, auto-detects everything else, and prints a checklist of what to fill in next. The command always runs the one shared install, so every project is on the same version.
 
 **3 — Run**
 
@@ -52,13 +51,13 @@ runs scoped automatically (`--component`), so you get a clean, focused report wi
 **Am I on the latest?** Check any time — it compares your local version against the remote and tells you:
 
 ```bash
-node scripts/audit.mjs --version
+rms-figma-code-parity --version
 ```
 
 Every normal run also nudges you (at most once a day, silently skipped when offline) if a newer version is out. When it says you're behind, one command pulls the latest and re-links; every project that symlinks the shared clone gets it at once:
 
 ```bash
-node scripts/audit.mjs --update
+rms-figma-code-parity --update
 ```
 
 That's `git pull` in the canonical clone plus a refresh of the command symlink. Never re-run a download to update — if you find yourself curling the `.md` again or replacing a copied file, the install is wrong (a stale copy instead of the symlink); re-run the installer once to fix it.
@@ -78,7 +77,7 @@ node audit.mjs --link-command          # make the global command a symlink to th
 rm -rf scripts && ln -s /path/to/rms-figma-code-parity scripts
 ```
 
-Either way, after the one-time fix you update with `node scripts/audit.mjs --update` — no more downloads.
+Either way, after the one-time fix you update with `rms-figma-code-parity --update` — no more downloads.
 
 ---
 
