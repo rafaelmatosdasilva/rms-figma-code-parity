@@ -30,7 +30,8 @@
 import readline                                                  from 'readline';
 import { spawn, spawnSync }                                      from 'child_process';
 import { existsSync, readdirSync, readFileSync, statSync,
-         writeFileSync, copyFileSync, mkdirSync }                from 'fs';
+         writeFileSync, copyFileSync, mkdirSync,
+         symlinkSync, unlinkSync }                               from 'fs';
 import { join, dirname, resolve, relative }                     from 'path';
 import { fileURLToPath }                                        from 'url';
 import { buildReport }                                          from './report-html.mjs';
@@ -67,6 +68,43 @@ function _argValues(flag) {
 }
 const SCOPE_COMPONENTS = [..._argValues('--component'), ..._argValues('--components')]
   .flatMap(v => v.split(',')).map(s => s.trim()).filter(Boolean);
+
+// ── Easy updates: link the command to this folder, and pull latest ────────────
+// So people never have to re-download. `--link-command` points the global
+// /rms-figma-code-parity command at THIS local skill folder via a symlink, so a
+// plain `git pull` here updates the command too. `--update` does the pull for them
+// and refreshes the link. Works whether the folder is a sibling clone or a submodule.
+const HOME = process.env.HOME || process.env.USERPROFILE || '';
+function linkCommand() {
+  const src = join(SCRIPT_DIR, 'rms-figma-code-parity.md');
+  const cmdDir = join(HOME, '.claude', 'commands');
+  const link = join(cmdDir, 'rms-figma-code-parity.md');
+  try {
+    mkdirSync(cmdDir, { recursive: true });
+    try { unlinkSync(link); } catch { /* nothing to replace */ }
+    symlinkSync(src, link);
+    console.log(`✅ Command linked: ${link}`);
+    console.log(`   → ${src}`);
+    console.log('   From now on a `git pull` in this folder updates /rms-figma-code-parity — no re-download.');
+    return true;
+  } catch (e) {
+    console.log(`⚠️  Could not link the command (${e.message}).`);
+    console.log(`   Manual alternative: ln -sf "${src}" "${link}"`);
+    return false;
+  }
+}
+function updateSkill() {
+  console.log(`Updating the skill in ${SCRIPT_DIR} …`);
+  const r = spawnSync('git', ['-C', SCRIPT_DIR, 'pull', '--ff-only'], { stdio: 'inherit' });
+  if (r.status !== 0) {
+    console.log('⚠️  `git pull` did not succeed here. If this folder is a git checkout, run:');
+    console.log(`      git -C "${SCRIPT_DIR}" pull`);
+  }
+  linkCommand();
+  console.log('\n✅ Done. Just run /rms-figma-code-parity — you are on the latest.');
+}
+if (process.argv.includes('--update'))       { updateSkill(); process.exit(0); }
+if (process.argv.includes('--link-command')) { process.exit(linkCommand() ? 0 : 1); }
 
 // Set to true when variables/local returns 403 (Figma Enterprise plan required).
 // Gates that depend on live variable refresh use planLimited state instead of

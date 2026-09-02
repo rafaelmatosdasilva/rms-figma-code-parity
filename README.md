@@ -9,17 +9,22 @@ Checks that your CSS code matches your Figma design system. Run it whenever the 
 **1 — Install (once per machine)**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rafaelmatosds/rms-figma-code-parity/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rafaelmatosdasilva/rms-figma-code-parity/main/install.sh | bash
 ```
+
+This makes **one canonical clone** at `~/.claude/skills/rms-figma-code-parity` and **symlinks** the `/rms-figma-code-parity` command to it — so updates are a `git pull`, never a re-download. (Don't hand-copy the `.md` into `~/.claude/commands` or drop the folder ad-hoc next to a repo — a copy goes stale and is what causes confusing runs.)
 
 **2 — Add to a project (once per repo)**
 
+Point a `scripts` symlink at the shared clone — do **not** vendor a submodule or a second copy:
+
 ```bash
-git submodule add https://github.com/rafaelmatosds/rms-figma-code-parity scripts
+ln -s ~/.claude/skills/rms-figma-code-parity scripts
+echo scripts >> .gitignore
 node scripts/audit.mjs --init
 ```
 
-`--init` asks 4 questions, auto-detects everything else, and prints a checklist of what to fill in next.
+`--init` asks a few questions, auto-detects everything else, and prints a checklist of what to fill in next. Because `scripts` is a symlink to the one clone, every project is always on the same version.
 
 **3 — Run**
 
@@ -41,6 +46,25 @@ already owns setup, scoping, running and reporting — a prompt that repeats tho
 fights the skill instead of helping it, and is what produces noisy, confusing runs. Just
 name the component(s), or say "the whole DS", and let it drive. For a single component it
 runs scoped automatically (`--component`), so you get a clean, focused report without asking.
+
+## Updating — no re-download
+
+One command pulls the latest and re-links; every project that symlinks the shared clone gets it at once:
+
+```bash
+node scripts/audit.mjs --update
+```
+
+That's `git pull` in the canonical clone plus a refresh of the command symlink. Never re-run a download to update — if you find yourself curling the `.md` again or replacing a copied file, the install is wrong (a stale copy instead of the symlink); re-run the installer once to fix it.
+
+**Already installed the old way?** (a hand-copied command, or the folder dropped next to your repo.) Fix it once, then you're on the clean path:
+
+```bash
+# from inside your local skill folder:
+node audit.mjs --link-command          # make the global command a symlink to this folder
+# in each project: replace the copy/submodule with a symlink to the same folder
+rm -rf scripts && ln -s /path/to/rms-figma-code-parity scripts
+```
 
 ---
 
