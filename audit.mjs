@@ -865,14 +865,18 @@ async function bootstrapConfig() {
     themeCSS = parts.length === 1 ? (parts[0] || 'src/theme.css') : parts;
   }
 
-  // Q3 - FIGMA_TOKEN (needed for collection auto-detect + Gate 9)
+  // Q3 - FIGMA_TOKEN. This is how the snapshots (the backbone of parity) are refreshed
+  // automatically. Parity NEEDS snapshots; the token is one of two ways to produce them.
   const existingToken = process.env.FIGMA_TOKEN ?? '';
   let figmaToken = existingToken;
   if (!existingToken) {
-    const tok = (await ask('Figma personal access token (leave blank to skip): ')).trim();
+    console.log(C.dim('  Snapshots (the Figma values parity checks against) are refreshed automatically with a token.'));
+    console.log(C.dim('  No token? Fine - run /rms-figma-code-parity once and it captures the snapshots via the'));
+    console.log(C.dim('  Figma plugin (no token), then commit them. After that everyone runs parity with no token.'));
+    const tok = (await ask('Figma personal access token (optional, leave blank to capture via the plugin instead): ')).trim();
     figmaToken = tok;
   } else {
-    console.log(C.dim('  FIGMA_TOKEN already set in .env - using it for collection detection'));
+    console.log(C.dim('  FIGMA_TOKEN already set in .env - using it to refresh the snapshots'));
   }
 
   // Q3b - Consumer file?
@@ -967,8 +971,11 @@ async function bootstrapConfig() {
   console.log(`  1. ${C.bold('ds-config.json')} - add frame node IDs (from the Figma frame URL)`);
   console.log(`       "frames": [{ "name": "My Screen", "nodeId": "123-456" }]`);
   if (!figmaToken) {
-    console.log(`  2. ${C.bold('.env')} - add your Figma token for Gate [9] visual regression:`);
-    console.log(`       FIGMA_TOKEN=your_token_here`);
+    console.log(`  2. ${C.bold('Snapshots')} - run /rms-figma-code-parity once; it captures them via the`);
+    console.log(`       Figma plugin (no token) - then commit the *.snapshot.json files.`);
+    console.log(`       Optional: add a token to ${C.bold('.env')} (FIGMA_TOKEN=...) to refresh them`);
+    console.log(`       automatically each run and enable the screenshot gate. Not required -`);
+    console.log(`       once the snapshots are committed, everyone runs parity with no token.`);
   }
   console.log(`  3. ${C.bold('parity-map.mjs')} - fill in primitive scale (NEUTRAL_LIGHT/DARK)`);
   console.log(`       and any token→var exceptions (EXPLICIT, SKIP_TOKENS)`);
