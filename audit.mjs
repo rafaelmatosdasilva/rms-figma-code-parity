@@ -732,6 +732,36 @@ function collectRawValues(node, nums, colors) {
   for (const child of node.children ?? []) collectRawValues(child, nums, colors);
 }
 
+// Icon inventory (Gate 15): list the icon names the DS defines in Figma so the check can
+// confirm each has a code symbol. The icon set often lives in a SEPARATE library file
+// (cfg.iconLibraryFileKey), which can have any structure - so this just lists the library's
+// component names, with optional filters: cfg.icons.page (only that page), cfg.icons.namePrefix
+// (only names starting with it), cfg.icons.nameFrom = 'last' (use the last "/"-segment).
+async function refreshIcons(libraryKey, token, outPath, opts = {}) {
+  try {
+    const res = await fetch(`https://api.figma.com/v1/files/${libraryKey}/components`, { headers: { 'X-Figma-Token': token } });
+    if (!res.ok) { console.log(C.yellow(`  ⚠️  icons /components → ${res.status} (icon inventory not refreshed)`)); return false; }
+    const comps = (await res.json())?.meta?.components ?? {};
+    const names = new Set();
+    for (const c of Object.values(comps)) {
+      const page = c.containing_frame?.pageName ?? '';
+      if (opts.page && page !== opts.page) continue;
+      let name = c.name ?? '';
+      if (opts.namePrefix) { if (!name.startsWith(opts.namePrefix)) continue; name = name.slice(opts.namePrefix.length); }
+      if (opts.nameFrom === 'last' && name.includes('/')) name = name.split('/').pop();
+      name = name.trim();
+      if (name) names.add(name);
+    }
+    if (!names.size) { console.log(C.yellow('  ⚠️  icon inventory: 0 icons matched the filters - not written')); return false; }
+    writeFileSync(outPath, JSON.stringify({ _updated: new Date().toISOString(), icons: [...names].sort() }, null, 2) + '\n');
+    console.log(C.dim(`  ✅ Icon inventory: ${names.size} icon(s) from the library file`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Icon inventory refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
 async function refreshComponentValues(fileKey, token, outPath) {
   try {
     const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
@@ -2077,6 +2107,9 @@ function reportFull(label, items, shown) {
       refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
       refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json')),
       refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
+      (cfg.iconLibraryFileKey || cfg.icons?.libraryFileKey)
+        ? refreshIcons(cfg.iconLibraryFileKey ?? cfg.icons.libraryFileKey, figmaToken, join(ROOT, 'figma-icons.snapshot.json'), cfg.icons ?? {})
+        : Promise.resolve(),
       SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
     ]);
   }
@@ -2193,7 +2226,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2221,6 +2254,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('component-prop-check.mjs'),
     runScriptAsync('component-composition-check.mjs'),
     runScriptAsync('state-opacity-check.mjs'),
+    runScriptAsync('icon-inventory-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2262,8 +2296,8 @@ function reportFull(label, items, shown) {
     parseGeneric(rHtmlStructure, /✅|❌/));
   addGate('Required pieces are in place  (icon slots · component slots · form controls)',
     combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
-  addGate('Icons  (symbol markup · path data · live Figma check)',
-    combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/)));
+  addGate('Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)',
+    combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/), parseGeneric(rIconInv, /IN CODE|MISSING/)));
 
   // ── Animation ─────────────────────────────────────────────────────────────────
   addGate('Transitions  (duration · easing · property per DS selector)',

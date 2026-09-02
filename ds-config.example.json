@@ -59,5 +59,14 @@
   "_knownStateProps_note": "VARIANT properties that are state axes (map to CSS pseudo-classes, verified by Gate 11), not code props. Skipped by the component-props gate.",
   "knownStateProps": ["State"],
   "_composition_note": "Gate: Sub-components match Figma. knownCompositionExceptions exempts a parent/child pair (e.g. a sub-component intentionally not used yet).",
-  "knownCompositionExceptions": []
+  "knownCompositionExceptions": [],
+
+  "_icons_note": "Gate 14 inventory: every Figma icon has a code symbol. The icon set often lives in a SEPARATE library file with its own structure.",
+  "_iconLibraryFileKey_note": "File key of the Figma icon library (from its URL). With a token, the audit lists its /components on any plan.",
+  "iconLibraryFileKey": "",
+  "_icons_filters_note": "Match the library file's structure: page limits to one page; namePrefix strips a prefix; nameFrom 'last' keeps the last '/'-segment.",
+  "icons": { "page": "", "namePrefix": "", "nameFrom": "" },
+  "_iconSpritePrefix_note": "Prefix your code sprite ids use, e.g. '#icon-arrow-left' -> 'icon-'.",
+  "iconSpritePrefix": "icon-",
+  "knownUnimplementedIcons": []
 }
