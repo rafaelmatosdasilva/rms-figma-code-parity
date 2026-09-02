@@ -194,14 +194,14 @@ rms-figma-code-parity --report-html report.html  # save a report as a web page
 
 ## First-time setup (what `--init` asks)
 
-In the terminal, inside your project, run `rms-figma-code-parity --init` once. It asks a few things and sets up the rest:
+In the terminal, inside your project, run `rms-figma-code-parity --init` once. It asks just two things:
 
 1. **Figma file link**: paste the link to your design system file.
 2. **CSS file**: the file with your `--variable` colors and sizes (found automatically if there's only one).
-3. **Figma access token** *(optional)*: with it, the tool pulls the latest values from Figma automatically every run (and enables the screenshot check). Without it, run `/rms-figma-code-parity` once and it captures those values through the Figma plugin instead; commit the saved files and the whole team (and CI) runs with no token. So a token is a convenience for keeping data fresh, not a requirement. Saved privately.
-4. **Shared design system link** *(optional)* - if your project is a branded copy of a shared DS, paste the original's link; things that still match the original are marked "pending sync" instead of failing.
 
-That's it - you're ready to run `/rms-figma-code-parity`.
+That's it. Run `/rms-figma-code-parity` and it captures the Figma data for you (no token, any plan) and audits the code. Commit the saved files and the whole team, and CI, runs with nothing installed.
+
+*(Optional, for branded forks: if your project is a copy of a shared design system, you can point it at the original so things that still match the original are marked "pending sync" instead of failing.)*
 
 ---
 

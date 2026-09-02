@@ -865,19 +865,11 @@ async function bootstrapConfig() {
     themeCSS = parts.length === 1 ? (parts[0] || 'src/theme.css') : parts;
   }
 
-  // Q3 - FIGMA_TOKEN. This is how the snapshots (the backbone of parity) are refreshed
-  // automatically. Parity NEEDS snapshots; the token is one of two ways to produce them.
-  const existingToken = process.env.FIGMA_TOKEN ?? '';
-  let figmaToken = existingToken;
-  if (!existingToken) {
-    console.log(C.dim('  Snapshots (the Figma values parity checks against) are refreshed automatically with a token.'));
-    console.log(C.dim('  No token? Fine - run /rms-figma-code-parity once and it captures the snapshots via the'));
-    console.log(C.dim('  Figma plugin (no token), then commit them. After that everyone runs parity with no token.'));
-    const tok = (await ask('Figma personal access token (optional, leave blank to capture via the plugin instead): ')).trim();
-    figmaToken = tok;
-  } else {
-    console.log(C.dim('  FIGMA_TOKEN already set in .env - using it to refresh the snapshots'));
-  }
+  // No token prompt. Parity is token-free and plan-agnostic: running the skill captures
+  // the Figma data via the plugin and commits it, and everyone runs against that. A
+  // FIGMA_TOKEN is a purely optional power-user optimisation (auto-refresh the data each
+  // run + the screenshot gate); if one is already in the environment we quietly use it.
+  const figmaToken = process.env.FIGMA_TOKEN ?? '';
 
   // Q3b - Consumer file?
   let figmaSourceKey = '';
@@ -968,20 +960,14 @@ async function bootstrapConfig() {
 
   // ── Next-steps checklist ──────────────────────────────────────────────────────
   console.log('\n' + C.bold('─── Next steps ─────────────────────────────────────────────'));
-  console.log(`  1. ${C.bold('ds-config.json')} - add frame node IDs (from the Figma frame URL)`);
-  console.log(`       "frames": [{ "name": "My Screen", "nodeId": "123-456" }]`);
-  if (!figmaToken) {
-    console.log(`  2. ${C.bold('Snapshots')} - run /rms-figma-code-parity once; it captures them via the`);
-    console.log(`       Figma plugin (no token) - then commit the *.snapshot.json files.`);
-    console.log(`       Optional: add a token to ${C.bold('.env')} (FIGMA_TOKEN=...) to refresh them`);
-    console.log(`       automatically each run and enable the screenshot gate. Not required -`);
-    console.log(`       once the snapshots are committed, everyone runs parity with no token.`);
-  }
-  console.log(`  3. ${C.bold('parity-map.mjs')} - fill in primitive scale (NEUTRAL_LIGHT/DARK)`);
+  console.log(`  1. Run ${C.bold('/rms-figma-code-parity')} - it captures the Figma data for you`);
+  console.log(`     (no token needed) and audits the code. Commit the *.snapshot.json files.`);
+  console.log(`  2. ${C.bold('parity-map.mjs')} - fill in primitive scale (NEUTRAL_LIGHT/DARK)`);
   console.log(`       and any token→var exceptions (EXPLICIT, SKIP_TOKENS)`);
-  console.log(`  4. ${C.bold('structure-contract.mjs')} - add component height/padding contracts`);
+  console.log(`  3. ${C.bold('structure-contract.mjs')} - add component height/padding contracts`);
   console.log(`       (only needed for Gates [3] and [8])`);
-  console.log(`  5. Run ${C.bold('/rms-parity')} Phase 1 to capture the live Figma snapshot`);
+  console.log(C.dim('  Advanced (optional): a FIGMA_TOKEN in .env auto-refreshes the data each run'));
+  console.log(C.dim('  and enables the screenshot gate. Never required - parity runs without it.'));
   console.log('─'.repeat(WIDTH) + '\n');
 
   return generated;
