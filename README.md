@@ -57,14 +57,22 @@ node scripts/audit.mjs --update
 
 That's `git pull` in the canonical clone plus a refresh of the command symlink. Never re-run a download to update — if you find yourself curling the `.md` again or replacing a copied file, the install is wrong (a stale copy instead of the symlink); re-run the installer once to fix it.
 
-**Already installed the old way?** (a hand-copied command, or the folder dropped next to your repo.) Fix it once, then you're on the clean path:
+**Installed the old way (via the terminal / curl)?** Your `~/.claude/commands/rms-figma-code-parity.md` is a *copy* that won't update. Just **re-run the installer once** — it clones to the canonical path and replaces that copy with a symlink; that's your last download:
 
 ```bash
-# from inside your local skill folder:
+curl -fsSL https://raw.githubusercontent.com/rafaelmatosdasilva/rms-figma-code-parity/main/install.sh | bash
+```
+
+**Prefer to point at a folder you already have?** (e.g. a clone sitting next to your repo.) Link it once instead:
+
+```bash
+# from inside that skill folder:
 node audit.mjs --link-command          # make the global command a symlink to this folder
 # in each project: replace the copy/submodule with a symlink to the same folder
 rm -rf scripts && ln -s /path/to/rms-figma-code-parity scripts
 ```
+
+Either way, after the one-time fix you update with `node scripts/audit.mjs --update` — no more downloads.
 
 ---
 
