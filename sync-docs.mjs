@@ -6,7 +6,7 @@
 //
 // What it does:
 //   1. Parses audit.mjs to extract the authoritative gate list (labels + scripts).
-//   2. Checks README.md and rms-parity.md for stale gate counts.
+//   2. Checks README.md and rms-figma-code-parity.md for stale gate counts.
 //   3. Auto-patches all "N automated gates" / "Run all N audit gates" / trend bar
 //      references to match the real count.
 //   4. Checks that each gate label (or a keyword form of it) appears in the doc.
