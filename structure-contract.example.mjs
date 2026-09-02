@@ -95,6 +95,12 @@ export const CSS_HEIGHT_RULES = {
 export const CSS_BASE_RULE_VARS = [
   // Example:
   // { key: 'node/label', selector: '.node', prop: 'color', expectedVar: '--node-label-unselected' },
+  //
+  // Min/max sizes bound to variables: `prop` accepts ANY CSS property, so a component
+  // whose min/max width or height is bound to a Figma variable is verified here - the
+  // rule must use that token's var, not a hardcoded px:
+  // { key: 'card/min-width', selector: '.card', prop: 'min-width', expectedVar: '--card-min-width' },
+  // { key: 'card/max-width', selector: '.card', prop: 'max-width', expectedVar: '--card-max-width' },
 ];
 
 // ─── Figma layout token → CSS var mapping ────────────────────────────────────
