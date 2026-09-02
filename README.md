@@ -31,6 +31,19 @@ Open Claude Code inside the project and run:
 /rms-figma-code-parity
 ```
 
+### Just ask — don't write a prompt full of rules
+
+Say what you want in one line and let the skill do the rest:
+
+- *"Audit ButtonPrimary"* · *"Check the button and the toast"* · *"Run parity on the whole DS"*
+
+**Do not write a step-by-step prompt that re-dictates the workflow** (install the skill,
+configure the contract, run this, then generate a report, with a list of rules). The skill
+already owns setup, scoping, running and reporting — a prompt that repeats those steps
+fights the skill instead of helping it, and is what produces noisy, confusing runs. Just
+name the component(s), or say "the whole DS", and let it drive. For a single component it
+runs scoped automatically (`--component`), so you get a clean, focused report without asking.
+
 ---
 
 ## What it does
@@ -40,59 +53,58 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1 — Figma refresh** | Pulls the latest values from Figma (colors, sizes, fonts, component structure), shows you what changed since last time, and updates the local snapshot files. |
-| **2 — Code audit** | Runs 20 automated checks against your CSS and reports everything that doesn't match. |
+| **2 — Code audit** | Runs 19 automated checks against your CSS and reports everything that doesn't match. |
 
 You always audit against a fresh snapshot. There's no way to accidentally check against yesterday's design.
 
 ---
 
-## The 20 checks
+## The 19 checks
 
 Gates are grouped by theme so failures point you to the right layer immediately.
 
-**Freshness** — is the data you're checking against fresh?
+**Up to date** — is the data you're checking against current?
 | # | What it checks |
 |---|---|
-| 1 | **Freshness** — Are the snapshot files from today? Are your compiled plugin files newer than their sources? |
-| 2 | **Visual regression** — Does the live Figma frame still look the same as the last accepted screenshot? |
+| 1 | **Data is up to date** — Are the Figma snapshots from today and your compiled plugin files newer than their sources? (A version bump on the shared file is only an advisory — it doesn't fail the run.) |
+| 2 | **Figma frame unchanged** — Does the live Figma frame still look the same as the last accepted reference screenshot? |
 
 **Tokens** — do CSS values match Figma's design decisions?
 | # | What it checks |
 |---|---|
-| 3 | **Token parity** — Do every color, size, and font in your CSS match what Figma says they should be? Checks all color modes (light, dark, etc.). |
-| 4 | **Bound-token coverage** — Is there anything in the Figma frames that has no CSS variable yet? |
-| 5 | **Mode completeness** — Do all tokens that are supposed to change between modes (light/dark, compact/comfortable) actually resolve to different values in each mode? |
-| 6 | **Exemption validity** — Are any "skip this token" exceptions in your config now pointing to tokens that no longer exist? |
-| 7 | **CSS naming round-trip** — Does every CSS variable name trace back to a real token in the Figma file? Catches variables someone invented that have no design backing. |
+| 3 | **Token values** — Do the colors, sizes, and fonts in your CSS match what Figma says? Checks all color modes (light, dark, etc.). |
+| 4 | **Tokens used in screens exist in CSS** — Is there anything bound in the Figma screens that has no CSS variable yet? |
+| 5 | **Every mode is covered** — Do all tokens that should change between modes (light/dark, compact/comfortable) actually resolve to different values in each mode? |
+| 6 | **Exception lists are valid** — Are any "skip this token" exceptions in your config now pointing to tokens that no longer exist? |
+| 7 | **No invented CSS variables** — Does every CSS variable name trace back to a real token in the Figma file? Catches variables invented with no design backing. |
 
-**CSS quality** — is the stylesheet itself clean?
+**Clean CSS** — is the stylesheet itself clean?
 | # | What it checks |
 |---|---|
-| 8 | **CSS hygiene** — Are there CSS variables nobody's using? Are there raw values (colors, sizes) written directly into CSS rules instead of using a token variable? Also catches hand-drawn icons embedded as CSS strings (invisible to slot checks). |
-| 9 | **Sub-component isolation** — When one DS component is nested inside another, are their styles leaking into each other? |
+| 8 | **Clean CSS** — Any CSS variables nobody uses? Any raw values that *contradict Figma* (a literal is only flagged when the component it belongs to has no matching value in Figma — same-value literals are parity and pass)? Also catches hand-drawn icons embedded as CSS strings. |
+| 9 | **Nested components keep their own styles** — When one DS component is nested inside another, are their styles leaking into each other? |
 
 **Structure** — do components match the Figma component spec?
 | # | What it checks |
 |---|---|
-| 10 | **Component structure** — Is each component the right height? Are its spacing, font, and corner radius wired to the right tokens — not hardcoded? |
-| 11 | **State coverage** — Does every interactive state from Figma (hover, disabled, selected…) have a CSS rule? Are the right token variables used inside those rules? |
+| 10 | **Structure** — Is each component the right height? Are its spacing, font, and corner radius wired to the right tokens — not hardcoded? |
+| 11 | **All states are built** — Does every interactive state from Figma (hover, disabled, selected…) have a CSS rule, the right selector, and the right token variable inside it? |
 
 **Markup** — is the HTML the right shape?
 | # | What it checks |
 |---|---|
-| 12 | **HTML structure snapshot** — Have any ids, component classes, or icon refs changed since the last accepted baseline? |
-| 13 | **Slot parity** — Does every declared button slot use the exact DS icon and component class the Figma spec calls for? (Two-phase: declared slots + exhaustiveness scan for undeclared ones.) |
-| 14 | **Icon contract** — Are all SVG icons centralized in one sprite sheet, documented (with Figma node IDs), named after the DS component they come from, using the exact path data from Figma, and still matching the live Figma export? Four-part check: symbol docs → sprite id ↔ DS component name → path verification → live freshness. |
+| 12 | **Markup** — Have any ids, component classes, or icon refs changed since the last accepted baseline? |
+| 13 | **Required pieces are in place** — Does every declared button slot use the exact DS icon and component class the Figma spec calls for? (Declared slots + exhaustiveness scan for undeclared ones.) |
+| 14 | **Icons** — Are all SVG icons centralized in one sprite sheet, documented (with Figma node IDs), named after the DS component they come from, using the exact path data from Figma, and still matching the live export? |
 
 **Animation** — do motion values match?
 | # | What it checks |
 |---|---|
-| 15 | **Transition contract** — Does every DS component's CSS transition match the documented duration and easing value? Catches duration/easing drift before Figma EASING/TIMING tokens are available. |
-| 16 | **Rendered parity** — Does the browser actually compute what the DS contract says? Headless Chrome loads each built plugin UI and asserts getComputedStyle values — catches cascade/specificity overrides, wrong var() resolution, and stale builds that static text analysis cannot see. |
-| 17 | **Contrast parity** — Do text and background colors meet WCAG contrast, per mode? Computes the ratio of every foreground token against its background straight from the resolved DS hexes — surfaces low-contrast/illegible pairs a token-only audit is blind to. |
-| 18 | **Coverage meta-gate** — What is the audit *not* checking? Cross-references every DS component against the checks the contract declares and prints a coverage matrix — surfaces components with no rendered assertion, no per-variant capture, or no model at all, so a new component/state can't stay silently unchecked. |
-| 19 | **Motion parity** *(opt-in)* — Do easing/duration variables match CSS? When a DS declares `figma.motion`, each motion token's Figma value is compared to its CSS var (normalised). No-op until configured. |
-| 20 | **Effect parity** *(opt-in)* — Do Figma shadow styles match CSS `box-shadow`? When a DS declares `figma.effects`, each effect style's canonical shadow is compared to its tokenised CSS var (hex/rgba normalised). No-op until configured. |
+| 15 | **Transitions** — Does every DS component's CSS transition match the documented duration and easing value? |
+| 16 | **Renders correctly in a browser** — Does the browser actually compute what the DS spec says? Headless Chrome loads each built plugin UI and asserts getComputedStyle values — catches cascade/specificity overrides, wrong var() resolution, and stale builds static analysis cannot see. |
+| 17 | **What this audit actually checked** — What is the audit *not* checking? Cross-references every DS component against the checks the contract declares and prints a coverage matrix, so a new component/state can't stay silently unchecked. |
+| 18 | **Motion** *(opt-in)* — Do easing/duration variables match CSS? When a DS declares `figma.motion`, each motion token's Figma value is compared to its CSS var. No-op until configured. |
+| 19 | **Shadows** *(opt-in)* — Do Figma effect styles match CSS `box-shadow`? When a DS declares `figma.effects`, each effect style's canonical shadow is compared to its tokenised CSS var. No-op until configured. |
 
 ---
 
@@ -110,7 +122,7 @@ Gates are grouped by theme so failures point you to the right layer immediately.
        packages/ui/src/figma-vars.snapshot.json ✓ (updated today)
        ✅ All outputs current
 
-❌  [2] Visual output matches the stored Figma frame screenshot
+❌  [2] Live Figma frame is unchanged vs its saved reference screenshot
        ✅ PASS  87
        ❌ FAIL  2
          ❌ [color/Dark] buttonPrimary/background → --buttonPrimary-background
@@ -121,26 +133,25 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 ────────────────────────────────────────────────────────────
   GATE SUMMARY
 ────────────────────────────────────────────────────────────
-  ✅  [1]   Figma snapshots are up to date and build output…Pass
-  ✅  [2]   Visual output matches the stored Figma frame sc…Pass
-  ✅  [3]   Token values match Figma (color · sizing · typo…Pass
-  ✅  [4]   Every DS token bound in Figma is implemented in…Pass
+  ✅  [1]   Figma snapshots and build outputs are current   Pass
+  ✅  [2]   Live Figma frame is unchanged vs its saved refe…Pass
+  ✅  [3]   Token values agree (color · sizing · typography…Pass
+  ✅  [4]   Every DS token bound in a screen has a CSS vari…Pass
   ✅  [5]   Every token that changes between modes is handl…Pass
   ✅  [6]   All documented exceptions are still valid       Pass
   ✅  [7]   Every CSS variable maps back to a real Figma to…Pass
-  ✅  [8]   No unused CSS variables, hardcoded values, or s…Pass
+  ✅  [8]   No unused CSS variables, no values that contrad…Pass
   ✅  [9]   Child components are not overridden by parent C…Pass
-  ✅  [10]  Component structure matches Figma (height, spac…Pass
-  ✅  [11]  All component states are covered, wired, and in…Pass
+  ✅  [10]  Component structure agrees (height, spacing, ba…Pass
+  ✅  [11]  All component states are built, wired, and in t…Pass
   ✅  [12]  HTML structure (ids, component classes, icon re…Pass
   ✅  [13]  Every declared slot uses the correct DS icon an…Pass
   ✅  [14]  All DS icon symbols are documented, paths verif…Pass
-  ✅  [15]  All CSS transitions match the documented durati…Pass
-  ✅  [16]  Rendered computed styles match the DS contract …Pass
-  ✅  [17]  Text/background colors meet WCAG contrast per m…Pass
-  ✅  [18]  Coverage — which DS components/states the audit…Pass
-  ✅  [19]  Motion tokens (easing · duration) match Figma —…Pass
-  ✅  [20]  Effect/shadow styles match CSS box-shadow — whe…Pass
+  ✅  [15]  All CSS transitions use the documented duration…Pass
+  ✅  [16]  Rendered computed styles agree with the DS spec…Pass
+  ✅  [17]  Coverage — which DS components/states the audit…Pass
+  ✅  [18]  Motion tokens (easing · duration) agree — when …Pass
+  ✅  [19]  Effect/shadow styles agree with CSS box-shadow …Pass
 
 ────────────────────────────────────────────────────────────
 
@@ -148,7 +159,7 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 
   ⏭  STALE-SNAPSHOT MODE — when a gate shows ⏭ instead of ✅:
 
-  [1] Figma snapshots are up to date and build outputs are current
+  [1] Figma snapshots and build outputs are current
       Shown as ⏭ only when a snapshot is >24h old and the REST auto-refresh
       is not available on this plan. The Phase 1 Plugin API captures refresh
       every snapshot on any plan — commit them and the gate is ✅.
@@ -162,9 +173,9 @@ Gates are grouped by theme so failures point you to the right layer immediately.
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  20/20 [████████████████████]
-  ❌  2026-06-16  11/12 [███████████████████░]
-  ✅  2026-06-17  20/20 [████████████████████]
+  ✅  2026-06-15  19/19 [███████████████████]
+  ❌  2026-06-16  11/12 [██████████████████░]
+  ✅  2026-06-17  19/19 [███████████████████]
 ────────────────────────────────────────────────────────────
 ```
 

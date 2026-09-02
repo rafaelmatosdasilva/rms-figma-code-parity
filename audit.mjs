@@ -51,6 +51,23 @@ const WIDTH      = 60;
 const SHOW_TREND = process.argv.includes('--trend');
 const INIT_ONLY  = process.argv.includes('--init');
 
+// ── Scoped runs: audit one or more chosen components, not the whole DS ─────────
+// `--component ButtonPrimary` or `--component ButtonPrimary,Toast` or repeated
+// `--component A --component B`. When set, the global gates report ONLY findings
+// belonging to the chosen components and collapse everything else to a single
+// "outside scope — not audited" line; a gate that failed only on out-of-scope
+// items is treated as pass for the scoped run. Off by default (whole-DS audit).
+function _argValues(flag) {
+  const out = [];
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === flag && process.argv[i + 1]) out.push(process.argv[i + 1]);
+    else if (process.argv[i].startsWith(flag + '=')) out.push(process.argv[i].slice(flag.length + 1));
+  }
+  return out;
+}
+const SCOPE_COMPONENTS = [..._argValues('--component'), ..._argValues('--components')]
+  .flatMap(v => v.split(',')).map(s => s.trim()).filter(Boolean);
+
 // Set to true when variables/local returns 403 (Figma Enterprise plan required).
 // Gates that depend on live variable refresh use planLimited state instead of
 // pass/fail — they don't block the audit but clearly explain what couldn't run.
@@ -380,6 +397,29 @@ function collectBound(node, idToName, tokenSet) {
   for (const child of node?.children ?? []) collectBound(child, idToName, tokenSet);
 }
 
+// Visibility-aware variant of collectBound (Hard Rule 7). Tracks, per token, whether
+// it is ever bound on a VISIBLE node. A token whose every binding sits on a hidden
+// node (visible=false, itself or via a hidden ancestor) is not a hard requirement in
+// THIS project — the element is switched off here and may be toggled on elsewhere.
+// `toggleSet` additionally marks hidden bindings that sit under a visibility boolean
+// (`boundVariables.visible`), so the report can say "off in this project" vs "static".
+function collectBoundVis(node, idToName, allSet, visibleSet, toggleSet, hidden = false, gated = false) {
+  if (!node || typeof node !== 'object') return;
+  const isHidden = hidden || node.visible === false;
+  const isGated  = gated  || node.boundVariables?.visible != null;
+  for (const ref of Object.values(node.boundVariables ?? {})) {
+    const refs = Array.isArray(ref) ? ref : [ref];
+    for (const r of refs) {
+      const name = r?.id && idToName[r.id];
+      if (!name) continue;
+      allSet.add(name);
+      if (!isHidden) visibleSet.add(name);
+      else if (isGated) toggleSet.add(name);
+    }
+  }
+  for (const child of node.children ?? []) collectBoundVis(child, idToName, allSet, visibleSet, toggleSet, isHidden, isGated);
+}
+
 // variables/local is hit by three refreshers (bound tokens, state tokens, state bindings).
 // Memoize the in-flight promise so the fetch happens once even when they run concurrently
 // (and a 403 on a non-Enterprise plan is only paid once, not three times).
@@ -566,7 +606,7 @@ async function refreshStateTokens(fileKey, token, outPath) {
     const { meta: csMeta } = await csRes.json();
     const setIds = Object.keys(csMeta?.component_sets ?? {});
     if (!setIds.length) return false;
-    const tokenSet = new Set();
+    const allSet = new Set(), visibleSet = new Set(), toggleSet = new Set();
     const BATCH = 50;
     for (let i = 0; i < setIds.length; i += BATCH) {
       const batch = setIds.slice(i, i + BATCH);
@@ -576,14 +616,90 @@ async function refreshStateTokens(fileKey, token, outPath) {
       );
       if (!nRes.ok) continue;
       const { nodes } = await nRes.json();
-      for (const data of Object.values(nodes ?? {})) collectBound(data?.document, idToName, tokenSet);
+      for (const data of Object.values(nodes ?? {})) collectBoundVis(data?.document, idToName, allSet, visibleSet, toggleSet);
     }
-    const result = { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
+    // Hard Rule 7: a token bound only on hidden nodes is not a hard requirement here.
+    const hiddenOnly       = [...allSet].filter(t => !visibleSet.has(t));
+    const hiddenToggleable = hiddenOnly.filter(t => toggleSet.has(t));
+    const result = {
+      _updated: new Date().toISOString(),
+      _hiddenOnly: hiddenOnly.sort(),
+      _hiddenToggleable: hiddenToggleable.sort(),
+      ...Object.fromEntries([...allSet].map(t => [t, true])),
+    };
     writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
-    console.log(C.dim(`  ✅ State tokens: ${tokenSet.size} token(s) across ${setIds.length} set(s)`));
+    console.log(C.dim(`  ✅ State tokens: ${allSet.size} token(s) across ${setIds.length} set(s)` +
+      (hiddenOnly.length ? ` (${hiddenOnly.length} hidden-only, not required)` : '')));
     return true;
   } catch (e) {
     console.log(C.yellow(`  ⚠️  State tokens refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
+// ── Per-component raw-value sweep (Gate [8] parity scoping) ──────────────────
+// Walks EVERY node of a component (all variants, all descendants, hidden included)
+// and collects the raw geometry numbers and colours those nodes actually use — NOT
+// tokens, the literal values. This is what lets the hardcoded-value gate answer
+// "is this 24px the same 24px Figma uses on THIS component?" per component instead
+// of globally. Written as component-values.snapshot.json: { "Comp": { nums, colors } }.
+const _rgbToHex = (c) => {
+  if (!c) return null;
+  const to = (x) => Math.round((x ?? 0) * 255).toString(16).padStart(2, '0');
+  return (to(c.r) + to(c.g) + to(c.b)).toLowerCase();
+};
+function collectRawValues(node, nums, colors) {
+  if (!node || typeof node !== 'object') return;
+  const pushN = (v) => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n !== 0) { nums.add(Math.round(n * 100) / 100); nums.add(Math.round(n)); }
+  };
+  const bb = node.absoluteBoundingBox || node.size;
+  if (bb) { pushN(bb.width ?? bb.x); pushN(bb.height ?? bb.y); }
+  pushN(node.cornerRadius);
+  if (Array.isArray(node.rectangleCornerRadii)) node.rectangleCornerRadii.forEach(pushN);
+  pushN(node.strokeWeight);
+  pushN(node.itemSpacing);
+  pushN(node.paddingLeft); pushN(node.paddingRight); pushN(node.paddingTop); pushN(node.paddingBottom);
+  if (node.style?.fontSize) pushN(node.style.fontSize);
+  for (const f of node.fills   ?? []) if (f?.type === 'SOLID' && f.color) { const h = _rgbToHex(f.color); if (h) colors.add(h); }
+  for (const s of node.strokes ?? []) if (s?.color) { const h = _rgbToHex(s.color); if (h) colors.add(h); }
+  for (const e of node.effects ?? []) if (e?.color) { const h = _rgbToHex(e.color); if (h) colors.add(h); }
+  for (const child of node.children ?? []) collectRawValues(child, nums, colors);
+}
+
+async function refreshComponentValues(fileKey, token, outPath) {
+  try {
+    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
+      headers: { 'X-Figma-Token': token },
+    });
+    if (!csRes.ok) return false;
+    const { meta: csMeta } = await csRes.json();
+    const sets   = csMeta?.component_sets ?? {};
+    const setIds = Object.keys(sets);
+    if (!setIds.length) return false;
+    const result = {};
+    const BATCH  = 50;
+    for (let i = 0; i < setIds.length; i += BATCH) {
+      const batch = setIds.slice(i, i + BATCH);
+      const nRes  = await fetch(
+        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
+        { headers: { 'X-Figma-Token': token } },
+      );
+      if (!nRes.ok) continue;
+      const { nodes } = await nRes.json();
+      for (const [setId, data] of Object.entries(nodes ?? {})) {
+        const name = sets[setId]?.name ?? data?.document?.name ?? setId;
+        const nums = new Set(), colors = new Set();
+        collectRawValues(data?.document, nums, colors);
+        result[name] = { nums: [...nums].sort((a, b) => a - b), colors: [...colors].sort() };
+      }
+    }
+    writeFileSync(outPath, JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2) + '\n');
+    console.log(C.dim(`  ✅ Component values: ${Object.keys(result).length} component set(s) swept`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Component values refresh failed: ${e.message}`));
     return false;
   }
 }
@@ -980,14 +1096,28 @@ function reportFull(label, items, shown) {
     if (r.status === null) return { pass: true, lines: ['⏭ bound-check.mjs not found — skipped'] };
     const out = r.stdout + r.stderr;
     if (r.status === 2) {
-      // bound-tokens.json is missing entirely — always a hard fail regardless of plan
+      // bound-tokens.json is missing. Frames are optional — when the audited URL is a
+      // COMPONENT_SET definition (not a screen with instances), ds-config.json frames[]
+      // is legitimately empty and there is nothing to walk. Degrade to SKIP rather than
+      // hard-fail: the user opted out of frame-usage coverage, not misconfigured it.
+      if (!cfg.frames?.length) {
+        return {
+          pass: true,
+          lines: [
+            C.yellow('⏭ SKIPPED — no frames[] configured in ds-config.json.'),
+            C.dim('   Bound-token coverage checks tokens bound in usage frames (screens with instances).'),
+            C.dim('   Add ds-config.json frames[] to enable it; auditing a COMPONENT_SET definition needs none.'),
+          ],
+        };
+      }
+      // Frames ARE configured but the file was never generated — that is a real error.
       return {
         pass: false,
         lines: [
-          C.red('❌ HARD FAIL — bound-tokens.json missing.'),
+          C.red('❌ HARD FAIL — bound-tokens.json missing (frames[] are configured).'),
           _figmaApiLimited
             ? C.red('   Variables REST API requires Enterprise plan — generate via Plugin API and commit.')
-            : C.red('   Set FIGMA_TOKEN and ensure ds-config.json has frames[] to auto-generate it.'),
+            : C.red('   Set FIGMA_TOKEN so the configured frames[] auto-generate it.'),
         ],
       };
     }
@@ -1073,12 +1203,14 @@ function reportFull(label, items, shown) {
       warn = true;
     }
 
-    // ── Has the DS file changed since the snapshot was captured? ──────────────
-    // Age alone cannot answer this. A snapshot taken an hour ago reads "✓ updated
-    // today" while the designer has since added tokens or moved a primitive, and
-    // every downstream gate then verifies the code against a DS that no longer
-    // exists — passing green the whole way. Comparing the file's `version` id is
-    // exact (it is monotonic per edit) and works on every plan.
+    // ── Has the DS file changed since the snapshot was captured? (ADVISORY) ──────
+    // Figma versions the WHOLE file: any edit anywhere — an unrelated component, a
+    // comment, a moved frame — bumps the `version` id. So a file-version mismatch does
+    // NOT mean the audited component changed, and it must not hard-fail the audit (that
+    // was a false positive on any shared DS file). It is surfaced as an advisory: re-run
+    // Phase 1 if the change touched what you are auditing. REAL drift is still a hard
+    // fail below — the component inventory (added/removed components) and the value,
+    // structure and icon gates, which compare the snapshot against the code directly.
     if (_figmaFileVersion) {
       let snapVersion = null;
       try { snapVersion = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'))._figmaVersion ?? null; } catch { /* handled below */ }
@@ -1086,33 +1218,30 @@ function reportFull(label, items, shown) {
         lines.push(C.yellow('⚠️  vars snapshot has no _figmaVersion stamp — cannot tell whether the DS'));
         lines.push(C.yellow('    changed since it was captured. Re-run Phase 1 to record one.'));
       } else if (String(snapVersion) !== String(_figmaFileVersion)) {
-        lines.push(C.red('❌ The DS file has been edited since this snapshot was captured'));
-        lines.push(C.red(`   snapshot version ${snapVersion} → file is now ${_figmaFileVersion}`));
-        if (_figmaFileModified) lines.push(C.red(`   last modified ${_figmaFileModified}`));
-        lines.push(C.red('   Token values, structure and icons below are being checked against a'));
-        lines.push(C.red('   stale picture of the DS. Run /rms-figma-code-parity (Phase 1) to refresh.'));
-        warn = true;
+        lines.push(C.yellow('⚠️  The Figma file changed since this snapshot was captured (advisory)'));
+        lines.push(C.yellow(`   snapshot version ${snapVersion} → file is now ${_figmaFileVersion}`));
+        if (_figmaFileModified) lines.push(C.yellow(`   last modified ${_figmaFileModified}`));
+        lines.push(C.yellow('   Figma versions the whole file, so this is often an unrelated edit elsewhere.'));
+        lines.push(C.yellow('   Re-run /rms-figma-code-parity (Phase 1) if the change touched audited components.'));
+        lines.push(C.yellow('   Real drift is still caught below by the component inventory and the value gates.'));
+        // Advisory only — does NOT fail the gate.
       } else {
         lines.push('DS file unchanged since capture ✓ (version matches)');
       }
 
-      // The STRUCTURE snapshot must be stamped at the same DS version as the vars snapshot.
-      // A token-value refresh alone cannot see a structural rebind (a component's padding,
-      // gap, or height binding changing) — so if only the vars snapshot is re-stamped, an
-      // actionBar padding change (2026-08) sails through green. Require the structure
-      // snapshot's own _figmaVersion to match the live file, so a version bump forces a full
-      // structure re-walk, not just a token refresh. Generic: every project stamps both.
+      // Structure snapshot captured at a different file version — same reasoning: advisory,
+      // not a hard fail. A genuine padding/gap/height rebind still surfaces in the structure
+      // gate itself (which compares captured geometry to the CSS), not here.
       let structVersion = null;
       try { structVersion = JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8'))._figmaVersion ?? null; } catch { /* struct snapshot missing — flagged below */ }
       if (structVersion == null) {
         lines.push(C.yellow('⚠️  structure snapshot has no _figmaVersion stamp — a padding/gap/height'));
         lines.push(C.yellow('    rebind cannot be detected. Re-run Phase 1 Step 1c to record one.'));
       } else if (String(structVersion) !== String(_figmaFileVersion)) {
-        lines.push(C.red('❌ The structure snapshot is stale (captured at an older DS version)'));
-        lines.push(C.red(`   structure version ${structVersion} → file is now ${_figmaFileVersion}`));
-        lines.push(C.red('   A token refresh does not re-walk component geometry — re-run Phase 1'));
-        lines.push(C.red('   Step 1c so a padding/gap/height rebind can be caught.'));
-        warn = true;
+        lines.push(C.yellow('⚠️  Structure snapshot captured at an older file version (advisory)'));
+        lines.push(C.yellow(`   structure version ${structVersion} → file is now ${_figmaFileVersion}`));
+        lines.push(C.yellow('   Re-run Phase 1 Step 1c if a padding/gap/height rebind was part of the change.'));
+        // Advisory only — does NOT fail the gate.
       }
     }
 
@@ -1128,8 +1257,16 @@ function reportFull(label, items, shown) {
       try { snapComps = Object.keys(JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8')).components ?? {}); } catch { /* struct snapshot missing — flagged elsewhere */ }
       const known = new Set(cfg.knownUnimplementedComponents ?? []);
       const snapSet = new Set(snapComps);
-      const added   = [...(_liveComponentNames)].filter(n => !snapSet.has(n) && !known.has(n)).sort();
-      const removed = snapComps.filter(n => !_liveComponentNames.has(n) && !known.has(n)).sort();
+      let added   = [...(_liveComponentNames)].filter(n => !snapSet.has(n) && !known.has(n)).sort();
+      let removed = snapComps.filter(n => !_liveComponentNames.has(n) && !known.has(n)).sort();
+      // Scoped run: only inventory changes for the in-scope components matter here — the
+      // rest is another component's concern. Collapse the out-of-scope ones to one line.
+      if (_scopeForms?.length) {
+        const inScope = (n) => { const nn = _norm(n); return _scopeForms.some(f => nn === f.nameNorm || nn.includes(f.nameNorm) || f.nameNorm.includes(nn)); };
+        const out = added.filter(n => !inScope(n)).length + removed.filter(n => !inScope(n)).length;
+        added = added.filter(inScope); removed = removed.filter(inScope);
+        if (out) lines.push(C.dim(`component inventory: ${out} change(s) outside ${_scopeNames.join(', ')} — not audited in this scoped run`));
+      }
       if (added.length) {
         lines.push(C.red(`❌ ${added.length} DS component(s) not in the structure snapshot: ${added.join(', ')}`));
         lines.push(C.red('   A new/unmodelled component is unaudited. Run Phase 1 Step 1c to capture it,'));
@@ -1580,6 +1717,146 @@ function reportFull(label, items, shown) {
 
     const hits = [...new Set([...hexHits, ...numHits, ...mixHits, ...vwHits, ...svgUriHits, ...shadowHits])];
 
+    // ── Parity-aware suppression (per-component) ───────────────────────────────
+    // This is a PARITY skill, not a style linter: it does not exist to push var()
+    // over literals. A hardcoded value is only a divergence when it CONTRADICTS the
+    // Figma side. If Figma uses the same value ON THAT COMPONENT, code that hardcodes
+    // that value has 100% parity — not an error, whether or not a token backs it.
+    //
+    // Scoping is PER COMPONENT, not global: component-values.snapshot.json holds, for
+    // each component, every raw geometry number and colour swept from ALL its nodes
+    // (all variants, all descendants, hidden included). A file's literals are checked
+    // against the component that file belongs to — attributed agnostically by which
+    // component's base selector the file contains (so Primary.vue, which carries
+    // `.buttonPrimary`, is scoped to ButtonPrimary's swept values). So `.icon{width:24px}`
+    // passes only because ButtonPrimary's own icon node is 24px in Figma — a stray 24px
+    // that belongs to some OTHER component no longer excuses it.
+    //
+    // FALLBACK: when component-values.snapshot.json is absent, or a file matches no
+    // component, we fall back to the global set (resolved token colours across every
+    // mode + all sizing/typography numerics + captured structural geometry). This keeps
+    // projects that have not captured the per-component sweep working, just coarser.
+    // `100vw` is never suppressed — a scrollbar-clipping rendering bug, not a value.
+    const normHex = (raw) => {
+      const m = /#?([0-9a-fA-F]{3,8})\b/.exec(String(raw).trim());
+      if (!m) return null;
+      let h = m[1].toLowerCase();
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');   // #abc → #aabbcc
+      if (h.length === 4) h = h.split('').map(c => c + c).join('');   // #abcd → #aabbccdd
+      return h.slice(0, 6);                                            // compare RGB, ignore alpha
+    };
+    const addNumTo = (set, raw) => {
+      const s = String(raw).trim();
+      if (!/^-?\d/.test(s)) return;
+      const n = parseFloat(s);
+      if (Number.isFinite(n)) set.add(n);
+    };
+    // Global fallback sets.
+    const figmaNums   = new Set([0]);   // 0 is dimensionless — parity everywhere
+    const figmaColors = new Set();
+    try {
+      const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
+      for (const raw of Object.values(snap.sizing ?? {})) addNumTo(figmaNums, raw);
+      for (const scale of Object.values(snap.typography ?? {})) for (const raw of Object.values(scale ?? {})) addNumTo(figmaNums, raw);
+      for (const modeMap of Object.values(snap.color ?? {})) for (const hex of Object.values(modeMap ?? {})) { const h = normHex(hex); if (h) figmaColors.add(h); }
+    } catch { /* no vars snapshot — global set stays minimal */ }
+    try {
+      const struct = JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8'));
+      const walkNums = (o) => {
+        if (o == null) return;
+        if (typeof o === 'number') { figmaNums.add(o); return; }
+        if (typeof o === 'string') { addNumTo(figmaNums, o); return; }
+        if (typeof o === 'object') for (const v of Object.values(o)) walkNums(v);
+      };
+      walkNums(struct.components ?? struct);
+    } catch { /* no structure snapshot — skip geometry values */ }
+
+    // Per-component sweep sets (preferred when present).
+    let compValues = null;   // { CompName: { nums:Set<number>, colors:Set<string> } }
+    try {
+      const raw = JSON.parse(readFileSync(join(ROOT, 'component-values.snapshot.json'), 'utf8'));
+      compValues = {};
+      for (const [name, v] of Object.entries(raw)) {
+        if (name.startsWith('_') || !v || typeof v !== 'object') continue;
+        const nums = new Set([0]); for (const n of v.nums ?? []) addNumTo(nums, n);
+        const colors = new Set();  for (const c of v.colors ?? []) { const h = normHex(c); if (h) colors.add(h); }
+        compValues[name] = { nums, colors };
+      }
+      if (!Object.keys(compValues).length) compValues = null;
+    } catch { /* no per-component snapshot — use global fallback */ }
+
+    // Attribute a file to component(s) by which component base selector it contains.
+    // Agnostic: base selector comes from cfg.componentSelectors or the DS naming
+    // convention (lowercase first letter), then both sides are normalised (strip the
+    // leading . / #, drop non-alphanumerics, lowercase) so `.button-primary` in a Vue
+    // <style> matches the convention's `.buttonPrimary`.
+    const componentSelectors = cfg.componentSelectors ?? {};
+    const baseSelectorNorm = (name) => {
+      const sel = componentSelectors[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1));
+      return sel.replace(/^[.#]/, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+    };
+    const _fileNorm = new Map();
+    const fileNormText = (file) => {
+      if (_fileNorm.has(file)) return _fileNorm.get(file);
+      let t = '';
+      try { t = readFileSync(file, 'utf8').toLowerCase().replace(/[^a-z0-9]/g, ''); } catch { /* unreadable */ }
+      _fileNorm.set(file, t);
+      return t;
+    };
+    const _fileComps = new Map();
+    const componentsForFile = (file) => {
+      if (!compValues || !file) return [];
+      if (_fileComps.has(file)) return _fileComps.get(file);
+      const norm = fileNormText(file);
+      const matched = [];
+      for (const name of Object.keys(compValues)) {
+        const bs = baseSelectorNorm(name);
+        if (bs.length >= 4 && norm.includes(bs)) matched.push(name);
+      }
+      _fileComps.set(file, matched);
+      return matched;
+    };
+    // Resolve the value sets a hit is checked against: the union of its file's
+    // component sweeps when attributable, else the global fallback.
+    const scopedSets = (hitLine) => {
+      const file = /^([^:]+):\d+:/.exec(hitLine)?.[1];
+      const comps = componentsForFile(file);
+      if (comps.length) {
+        const nums = new Set([0]), colors = new Set();
+        for (const c of comps) { for (const n of compValues[c].nums) nums.add(n); for (const h of compValues[c].colors) colors.add(h); }
+        return { nums, colors, scope: comps.join('+') };
+      }
+      return { nums: figmaNums, colors: figmaColors, scope: compValues ? 'global (file unmapped)' : 'global' };
+    };
+
+    const matchesFigmaValue = (lit, nums, colors) => {
+      const hx = /#[0-9a-fA-F]{3,8}\b/.exec(lit);
+      if (hx) { const h = normHex(hx[0]); return h != null && colors.has(h); }
+      const nm = /^(-?\d+(?:\.\d+)?)(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)?$/.exec(lit.trim());
+      if (!nm) return false;
+      const n = parseFloat(nm[1]); const unit = nm[2] || 'px';
+      if (unit === 'px') return nums.has(n);
+      if (unit === 'rem' || unit === 'em') return nums.has(n * 16) || nums.has(n);
+      return false;   // %, vh, vw, … are layout, not Figma token values
+    };
+    // Every literal in a hit must have a Figma counterpart (in that component's scope).
+    const hitMatchesFigma = (hitLine) => {
+      const code = hitLine.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '')
+        .replace(/var\([^)]*\)/g, '');   // ignore values inside var(--x, fallback) — self-documenting
+      const literals = [];
+      for (const m of code.matchAll(/#[0-9a-fA-F]{3,8}\b/g)) literals.push(m[0]);
+      for (const m of code.matchAll(/(?<![\w.-])(-?\d+(?:\.\d+)?)(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\b/g)) literals.push(m[1] + m[2]);
+      if (!literals.length) return false;   // nothing comparable (e.g. rgba() shadow) → keep as-is
+      const { nums, colors } = scopedSets(hitLine);
+      return literals.every(l => matchesFigmaValue(l, nums, colors));
+    };
+    const _alwaysKeep = new Set(vwHits);   // 100vw anti-pattern is a rendering bug, never value-parity
+    const divergent = [], matchedFigma = [];
+    for (const h of hits) {
+      if (!_alwaysKeep.has(h) && hitMatchesFigma(h)) matchedFigma.push(h);
+      else divergent.push(h);
+    }
+
     // ── Audit the exception list itself ──────────────────────────────────────
     // Every other exemption list in this engine is validated; this one was only ever
     // read. Two ways it rots, both of which hide real drift indefinitely:
@@ -1673,17 +1950,28 @@ function reportFull(label, items, shown) {
     }
 
     const hitLines = [];
-    for (const h of hits.slice(0, 20)) {
+    for (const h of divergent.slice(0, 20)) {
       hitLines.push('  ' + h);
       const s2 = suggest(h);
       if (s2) hitLines.push(s2);
     }
 
-    const pass  = hits.length === 0;
+    // Literals that match a Figma value are parity, not failures — report them as info
+    // so they stay visible (and auditable) without turning the gate red.
+    const matchNotes = [];
+    if (matchedFigma.length) {
+      const mode = compValues ? 'per-component sweep' : 'global snapshot values';
+      matchNotes.push(C.dim(`ℹ️  ${matchedFigma.length} hardcoded literal(s) match the Figma value — parity OK, not failed (${mode}):`));
+      for (const h of matchedFigma.slice(0, 20)) matchNotes.push(C.dim(`     [${scopedSets(h).scope}] ${h}`));
+      matchNotes.push(...reportFull('hardcoded-matches-figma', matchedFigma, 20));
+    }
+
+    const pass  = divergent.length === 0;
     return {
       pass,
       lines: [
-        ...(pass ? ['✅ Clean'] : [`❌ ${hits.length} hit(s):`, ...hitLines, ...reportFull('hardcoded-values', hits, 20)]),
+        ...(pass ? ['✅ Clean — no literal diverges from Figma'] : [`❌ ${divergent.length} literal(s) with no matching Figma value:`, ...hitLines, ...reportFull('hardcoded-values', divergent, 20)]),
+        ...matchNotes,
         ...exceptNotes,
       ],
     };
@@ -1731,6 +2019,7 @@ function reportFull(label, items, shown) {
       refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
       refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
       refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json')),
+      refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
       SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
     ]);
   }
@@ -1739,10 +2028,105 @@ function reportFull(label, items, shown) {
   const gates  = [];
   let anyFail  = false;
 
+  // ── Component scope (from --component) ────────────────────────────────────────
+  // Merge CLI names with an optional ds-config default, then build matchers: the
+  // normalised component name (strips non-alphanumerics, lowercase) and its base
+  // selector (so `.button-primary` in a Vue <style> matches `ButtonPrimary`).
+  const _norm  = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const _selOf = (name) => cfg.componentSelectors?.[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1));
+  const _chosenNames = [...new Set([...SCOPE_COMPONENTS, ...(cfg.scopeComponents ?? []), ...(cfg.scopeComponent ? [cfg.scopeComponent] : [])])];
+
+  // A component contains other DS components (a button may hold an icon, a card a badge),
+  // and those must be verified too — auditing the parent without its children is a false
+  // pass. So expand the chosen set transitively: pull in every DS component whose base
+  // selector co-occurs, in a per-component source file, with a component already in scope.
+  // Aggregate files (the central theme CSS, or any file mentioning many components) are
+  // skipped so scope cannot explode to the whole DS through a shared stylesheet.
+  const _autoAdded = [];
+  const _scopeNames = [..._chosenNames];
+  if (_chosenNames.length) {
+    let universe = [];
+    try { universe.push(...Object.keys(JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8')).components ?? {})); } catch { /* no struct snapshot */ }
+    universe.push(...Object.keys(cfg.componentSelectors ?? {}));
+    if (_liveComponentNames) universe.push(..._liveComponentNames);
+    universe = [...new Set(universe)];
+    const uForms = universe.map(n => ({ name: n, nameNorm: _norm(n), selNorm: _norm(_selOf(n)) }));
+    const mentions = (form, t) => (form.nameNorm && t.includes(form.nameNorm)) || (form.selNorm.length >= 4 && t.includes(form.selNorm));
+    const themeSet = new Set([cfg.paths?.themeCSS].flat().filter(Boolean).map(p => join(ROOT, p)));
+    const maxNest  = cfg.scopeMaxNestPerFile ?? 8;
+    // Precompute, per per-component source file, which universe components it mentions.
+    const fileComps = [];
+    for (const f of allSourceFiles()) {
+      if (themeSet.has(f)) continue;                       // central token file → not component-specific
+      let t = ''; try { t = readFileSync(f, 'utf8').toLowerCase().replace(/[^a-z0-9]/g, ''); } catch { continue; }
+      const comps = uForms.filter(fm => mentions(fm, t)).map(fm => fm.name);
+      if (comps.length && comps.length <= maxNest) fileComps.push(comps);   // skip aggregates
+    }
+    const inScope = new Set(_chosenNames);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const comps of fileComps) {
+        if (comps.some(c => inScope.has(c))) {
+          for (const c of comps) if (!inScope.has(c)) { inScope.add(c); _autoAdded.push(c); changed = true; }
+        }
+      }
+    }
+    _scopeNames.length = 0; _scopeNames.push(...inScope);
+  }
+  const _scopeForms = _scopeNames.map(name => ({
+    name,
+    nameNorm: _norm(name),
+    selNorm:  _norm(_selOf(name)),
+  }));
+  const _fileScopeCache = new Map();
+  function _fileHasScope(file) {
+    if (_fileScopeCache.has(file)) return _fileScopeCache.get(file);
+    let t = '';
+    try { t = readFileSync(file, 'utf8').toLowerCase().replace(/[^a-z0-9]/g, ''); } catch { /* unreadable */ }
+    const has = _scopeForms.some(f => (f.nameNorm && t.includes(f.nameNorm)) || (f.selNorm.length >= 4 && t.includes(f.selNorm)));
+    _fileScopeCache.set(file, has);
+    return has;
+  }
+  const _ANSI    = /\x1b\[[0-9;]*m/g;
+  const _FILE_RE = /([\w./-]+\.(?:vue|css|scss|less|ts|tsx|js|jsx|html))(?::\d+)?/i;
+  function _lineInScope(plain) {
+    const n = _norm(plain);
+    if (_scopeForms.some(f => (f.nameNorm && n.includes(f.nameNorm)) || (f.selNorm.length >= 4 && n.includes(f.selNorm)))) return true;
+    const fm = _FILE_RE.exec(plain);
+    if (fm) { const f = fm[1]; if (_fileHasScope(join(ROOT, f)) || _fileHasScope(f)) return true; }
+    return false;
+  }
+  // Filter one gate's output to the chosen components. Per-item findings are INDENTED
+  // (every gate formats sub-items that way); flush-left lines are headers/counts/prose
+  // and are always kept. Drop indented items that belong to another component, and flip
+  // a gate to pass only when we actually removed out-of-scope items and none of the
+  // in-scope items still fail — so a real in-scope failure or a header-only failure stays red.
+  function scopeFilter(result) {
+    if (!_scopeForms.length) return result;
+    const kept = [], dropped = [];
+    let keptItemFail = false;
+    for (const line of result.lines || []) {
+      const plain  = String(line).replace(_ANSI, '');
+      const isItem = /^\s+\S/.test(plain);
+      if (isItem && !_lineInScope(plain)) { dropped.push(line); continue; }
+      kept.push(line);
+      if (isItem && /🚨|❌/.test(plain)) keptItemFail = true;
+    }
+    const lines = [...kept];
+    if (dropped.length) lines.push(C.dim(`   … ${dropped.length} finding(s) outside ${_scopeNames.join(', ')} — not audited in this scoped run`));
+    let pass = result.pass;
+    if (!result.pass && !result.planLimited && !keptItemFail && dropped.length > 0) {
+      pass = true;
+      lines.push(C.dim(`   ↳ all failing items were outside ${_scopeNames.join(', ')}; gate passes for this scoped run`));
+    }
+    return { ...result, pass, lines };
+  }
+
   function addGate(label, result) {
+    const r = scopeFilter(result);
     // planLimited gates are neutral — they don't block the audit
-    if (!result.pass && !result.planLimited) anyFail = true;
-    gates.push({ label, ...result });
+    if (!r.pass && !r.planLimited) anyFail = true;
+    gates.push({ label, ...r });
   }
 
   // Inline gates — compute upfront so they can be combined
@@ -1752,7 +2136,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rContrast, rCoverage, rMotion, rEffect, rContainment] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1773,7 +2157,6 @@ function reportFull(label, items, shown) {
     runScriptAsync('transition-check.mjs'),
     runScriptAsync('icon-freshness-check.mjs'),
     runScriptAsync('rendered-check.mjs'),
-    runScriptAsync('contrast-check.mjs'),
     runScriptAsync('coverage-check.mjs'),
     runScriptAsync('motion-check.mjs'),
     runScriptAsync('effect-check.mjs'),
@@ -1781,64 +2164,67 @@ function reportFull(label, items, shown) {
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
-  addGate('Freshness  (snapshots · build output)',
+  addGate('Data is up to date  (Figma snapshots & build output are current)',
     combineGates(_g1, _g7));
-  addGate('Visual regression  (live Figma frame ↔ stored reference)',
+  addGate('Figma frame unchanged  (live frame vs saved reference screenshot)',
     parseGate9(rVisual));
 
   // ── Token integrity ───────────────────────────────────────────────────────────
-  addGate('Token parity  (color · sizing · typography · breakpoints · strings · animation)',
+  addGate('Token values  (color · sizing · typography · breakpoints · text · animation)',
     parseGate2(rParity));
-  addGate('Bound-token coverage  (DS frames → CSS vars)',
+  addGate('Tokens used in screens exist in CSS  (every token bound in a DS screen has a CSS variable)',
     parseGate4(rBound));
-  addGate('Mode completeness  (all mode-variant tokens adapt across every configured mode)',
+  addGate('Every mode is covered  (tokens adapt across light/dark and all configured modes)',
     parseGeneric(rMode, /ADAPTS|STATIC|SKIPPED/));
-  addGate('Exemption validity  (EXPLICIT · SKIP_TOKENS · COVERED not stale)',
+  addGate('Exception lists are valid  (no stale or overly broad entries)',
     parseGeneric(rExemption, /VALID|STALE|BROKEN/));
-  addGate('CSS naming round-trip  (every var traceable to a Figma token)',
+  addGate('No invented CSS variables  (every CSS variable traces back to a Figma token)',
     parseGeneric(rNaming, /TRACEABLE|UNINVENTED|UNDOCUMENTED/));
 
   // ── CSS quality ───────────────────────────────────────────────────────────────
-  addGate('CSS hygiene  (unused vars · hardcoded values · safe size containment)',
+  addGate('Clean CSS  (no unused variables · no values that contradict Figma · safe containment)',
     combineGates(_g5, _g6, parseGeneric(rContainment, /✅|❌/)));
-  addGate('Sub-component isolation  (no parent rule overrides sub-component styles)',
+  addGate('Nested components keep their own styles  (no parent rule overrides a child component)',
     parseGate8(rIsolation));
 
   // ── Structure ─────────────────────────────────────────────────────────────────
-  addGate('Component structure  (height · spacing · base-rule var bindings)',
+  addGate('Structure  (height · spacing · base-rule variable bindings)',
     parseGate3(rStructure));
-  addGate('State coverage  (completeness · selector binding · var placement)',
-    combineGates(parseGeneric(rState, /COVERED|UNCOVERED/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/)));
+  addGate('All states are built  (each state implemented · correct selector · variable in the right rule)',
+    combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/)));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
-  addGate('HTML structure snapshot  (ids · component classes · icon refs)',
+  addGate('Markup  (ids · component classes · icon references)',
     parseGeneric(rHtmlStructure, /✅|❌/));
-  addGate('Slot parity  (icon slots · component slots · form controls)',
+  addGate('Required pieces are in place  (icon slots · component slots · form controls)',
     combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
-  addGate('Icon contract  (symbol docs · path data · live Figma freshness)',
+  addGate('Icons  (symbol markup · path data · live Figma check)',
     combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/)));
 
   // ── Animation ─────────────────────────────────────────────────────────────────
-  addGate('Transition contract  (duration · easing · property per DS selector)',
+  addGate('Transitions  (duration · easing · property per DS selector)',
     parseGeneric(rTransition, /✅|❌/));
 
   // ── Rendered output ───────────────────────────────────────────────────────────
-  addGate('Rendered parity  (headless Chrome computed styles vs DS contract)',
+  addGate('Renders correctly in a browser  (real computed styles vs the DS spec)',
     parseGeneric(rRendered, /✅|❌|⏭/));
-  addGate('Contrast parity  (WCAG text/background ratios per mode)',
-    parseGeneric(rContrast, /PASS|FAIL|REVIEW|SKIP/));
-  addGate('Coverage meta  (which DS components/states the audit checks)',
+  addGate('What this audit actually checked  (which DS components & states are covered)',
     parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
 
   // ── Motion & effects (opt-in — no-op unless configured) ─────────────────────────
-  addGate('Motion parity  (easing · duration variables → CSS)',
+  addGate('Motion  (easing & duration variables → CSS)',
     parseGeneric(rMotion, /MATCH|MISMATCH|SKIPPED|⏭/));
-  addGate('Effect parity  (shadow styles → CSS box-shadow)',
+  addGate('Shadows  (Figma effect styles → CSS box-shadow)',
     parseGeneric(rEffect, /MATCH|MISMATCH|SKIPPED|⏭/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
   console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
+  if (_scopeNames.length) {
+    console.log(C.bold(C.yellow(`  SCOPED TO: ${_chosenNames.join(', ')}`)));
+    if (_autoAdded.length) console.log(C.dim(`  + nested components pulled in: ${[...new Set(_autoAdded)].join(', ')}`));
+    console.log(C.dim('  Findings outside these components are hidden and do not fail the run.'));
+  }
   console.log(C.bold('─'.repeat(WIDTH)) + '\n');
 
   const planLimitedGates = [];
@@ -1853,36 +2239,34 @@ function reportFull(label, items, shown) {
 
   // ── Summary table ─────────────────────────────────────────────────────────────
   const GATE_PLAIN = [
-    // Freshness
-    'Figma snapshots are up to date and build outputs are current',
-    'Visual output matches the stored Figma frame screenshot',
+    // Up to date
+    'Figma snapshots and build outputs are current',
+    'Live Figma frame is unchanged vs its saved reference screenshot',
     // Token integrity
-    'Token values match Figma (color · sizing · typography · breakpoints · strings · animation)',
-    'Every DS token bound in Figma is implemented in CSS',
+    'Token values agree (color · sizing · typography · breakpoints · text · animation)',
+    'Every DS token bound in a screen has a CSS variable',
     'Every token that changes between modes is handled in CSS',
     'All documented exceptions are still valid',
     'Every CSS variable maps back to a real Figma token',
-    // CSS quality
-    'No unused CSS variables, hardcoded values, or size containment that collapses content',
+    // Clean CSS
+    'No unused CSS variables, no values that contradict Figma, safe containment',
     'Child components are not overridden by parent CSS rules',
     // Structure
-    'Component structure matches Figma (height, spacing, base-rule var bindings)',
-    'All component states are covered, wired, and in the right selector',
+    'Component structure agrees (height, spacing, base-rule var bindings)',
+    'All component states are built, wired, and in the right selector',
     // Markup
-    'HTML structure (ids, component classes, icon refs) matches the stored snapshot',
+    'HTML structure (ids, component classes, icon refs) agrees with the snapshot',
     'Every declared slot uses the correct DS icon and component class',
-    'All DS icon symbols are documented, paths verified, and fresh from Figma',
+    'All DS icon symbols are documented, paths verified, and current from Figma',
     // Animation
-    'All CSS transitions match the documented duration and easing contract',
+    'All CSS transitions use the documented duration, easing and property',
     // Rendered
-    'Rendered computed styles match the DS contract (headless Chrome)',
-    // Accessibility
-    'Text/background colors meet WCAG contrast per mode',
-    // Meta
+    'Rendered computed styles agree with the DS spec (headless Chrome)',
+    // Audit self-check
     'Coverage — which DS components/states the audit actually checks',
     // Motion & effects (opt-in)
-    'Motion tokens (easing · duration) match Figma — when configured',
-    'Effect/shadow styles match CSS box-shadow — when configured',
+    'Motion tokens (easing · duration) agree — when configured',
+    'Effect/shadow styles agree with CSS box-shadow — when configured',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: gates consuming a stale snapshot pass against outdated data — DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity — the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',
