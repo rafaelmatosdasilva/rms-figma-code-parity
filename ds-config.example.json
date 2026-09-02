@@ -43,5 +43,14 @@
   },
 
   "knownUnusedVars": [],
-  "knownHardcodedExceptions": []
+  "knownHardcodedExceptions": [],
+
+  "_componentProps_note": "Gate: Component props match Figma. Reads code props from Vue/React and compares to Figma property names. Usually needs no config (components are auto-resolved by base selector or name).",
+  "_componentFiles_note": "Optional explicit map when auto-resolution can't find the file: Figma component name -> source file path.",
+  "componentFiles": {},
+  "_componentPropAliases_note": "Document intentional renames so they count as matches: Figma property name -> code prop name, per component.",
+  "componentPropAliases": {},
+  "_componentSrcDirs_note": "Optional dirs to scan for .vue/.tsx/.jsx component files (default: src, components, app, lib, packages).",
+  "componentSrcDirs": [],
+  "knownPropExceptions": []
 }

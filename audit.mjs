@@ -2200,7 +2200,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2225,6 +2225,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('motion-check.mjs'),
     runScriptAsync('effect-check.mjs'),
     runScriptAsync('container-containment-check.mjs'),
+    runScriptAsync('component-prop-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2256,6 +2257,8 @@ function reportFull(label, items, shown) {
     parseGate3(rStructure));
   addGate('All states are built  (each state implemented · correct selector · variable in the right rule)',
     combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/)));
+  addGate('Component props match Figma  (Figma component properties vs code props: names & coverage)',
+    parseGeneric(rCompProp, /OK|MISSING|NO FILE|RENAME/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references)',
@@ -2318,6 +2321,7 @@ function reportFull(label, items, shown) {
     // Structure
     'Component structure agrees (height, spacing, base-rule var bindings)',
     'All component states are built, wired, and in the right selector',
+    'Every Figma component property has a matching code prop (name and coverage)',
     // Markup
     'HTML structure (ids, component classes, icon refs) agrees with the snapshot',
     'Every declared slot uses the correct DS icon and component class',

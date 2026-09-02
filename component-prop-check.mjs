@@ -1,0 +1,223 @@
+// component-prop-check.mjs - Gate: Component prop parity (Figma properties <-> code props)
+// Run from project root: node scripts/component-prop-check.mjs
+//
+// Compares each Figma component's PROPERTY NAMES (size, showLabel, labelContent, ...)
+// against the code component's declared props. Reads props straight from the code, so
+// it does NOT depend on Figma Code Connect (not every Figma account has it). Supports
+// Vue (defineProps / props option) and React (Props type / destructured params /
+// propTypes); add more via PROP_EXTRACTORS.
+//
+// Catches exactly what token/CSS gates cannot:
+//   - a Figma property that is MISSING from the code component's props
+//   - a property whose NAME differs (Figma "size" vs code "buttonSize")
+//
+// Reads at project root:
+//   ds-config.json                     - paths, componentSelectors, componentFiles,
+//                                        componentSrcDirs, knownUnimplementedComponents,
+//                                        knownPropExceptions
+//   figma-component-props.snapshot.json - Figma property definitions (written by audit.mjs)
+//
+// Exit 0 = every Figma property maps to a matching code prop (or is exempt).
+// Exit 1 = a property is missing in code, or a name differs, or a component with Figma
+//          properties has no code component (no silent skips).
+// Exit 2 = the component-props snapshot is missing (gate did NOT run, never a pass) -
+//          it should be committed; run the audit with FIGMA_TOKEN to generate it.
+
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { join, extname, basename, relative } from 'path';
+
+const ROOT = process.cwd();
+
+let cfg = {};
+try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
+  console.error('❌ ds-config.json not found at project root.'); process.exit(1);
+}
+
+const SNAP_PATH = cfg.paths?.compPropsSnapshot ??
+  (cfg.paths?.snapshotVars ?? 'figma-vars.snapshot.json').replace(/[^/\\]+$/, 'figma-component-props.snapshot.json');
+
+if (!existsSync(join(ROOT, SNAP_PATH))) {
+  console.log(`\n⚠️  ${SNAP_PATH} not found at project root.`);
+  console.log('   This snapshot lists each Figma component\'s properties and should be committed.');
+  console.log('   Run the audit with FIGMA_TOKEN set to generate it, then commit it.');
+  console.log('   (exit 2 - treated as "not run", never a pass)\n');
+  process.exit(2);
+}
+const SNAP = JSON.parse(readFileSync(join(ROOT, SNAP_PATH), 'utf8'));
+
+const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_PROP_EXCEPTIONS = new Set(cfg.knownPropExceptions ?? []);   // "Component/prop"
+const COMPONENT_FILES = cfg.componentFiles ?? {};                        // Figma name -> file path
+const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
+// Documented intentional renames: Figma property name -> code prop name, per component.
+// e.g. { "buttonPrimary": { "size": "buttonSize", "labelContent": "label" } }
+const PROP_ALIASES = cfg.componentPropAliases ?? {};
+
+const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+// Figma property keys carry a node-id suffix: "Show Label#958:0" -> "Show Label".
+const cleanFigmaProp = (k) => k.replace(/#[\d:]+$/, '').trim();
+const baseSelectorNorm = (name) => norm(COMPONENT_SELECTORS[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1)));
+
+// ── Discover candidate source files ───────────────────────────────────────────
+const SRC_DIRS = (cfg.componentSrcDirs ?? ['src', 'components', 'app', 'lib', 'packages']).map(d => join(ROOT, d));
+const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs']);
+const CODE_EXT = new Set(['.vue', '.tsx', '.jsx', '.ts', '.js', '.svelte']);
+function walk(dir, out) {
+  let entries = [];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (e.name.startsWith('.') && e.name !== '.') continue;
+    const p = join(dir, e.name);
+    if (e.isDirectory()) { if (!SKIP_DIR.has(e.name)) walk(p, out); }
+    else if (CODE_EXT.has(extname(e.name)) && !/\.(test|spec|stories)\./.test(e.name)) out.push(p);
+  }
+}
+const candidateFiles = [];
+for (const d of SRC_DIRS) if (existsSync(d)) walk(d, candidateFiles);
+if (!candidateFiles.length) walk(ROOT, candidateFiles);   // fallback: whole repo (minus SKIP_DIR)
+const fileText = new Map();
+const readText = (f) => { if (!fileText.has(f)) { try { fileText.set(f, readFileSync(f, 'utf8')); } catch { fileText.set(f, ''); } } return fileText.get(f); };
+
+// ── Prop extractors, keyed by extension. Each returns a Set of prop names. ─────
+// Union of everything found; over-collecting a few names is fine (only unmatched
+// Figma properties fail, and extra code props are advisory).
+function idsFromDestructure(block) {
+  const out = [];
+  for (const m of block.matchAll(/(?:^|[,{])\s*([A-Za-z_$][\w$]*)\s*(?::|=|,|\})/g)) {
+    if (m[1] && m[1] !== 'props') out.push(m[1]);
+  }
+  return out;
+}
+function extractVue(text) {
+  const names = new Set();
+  // defineProps<{ ... }>()
+  for (const m of text.matchAll(/defineProps\s*<\s*\{([\s\S]*?)\}\s*>\s*\(/g))
+    for (const p of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*[?:]/g)) names.add(p[1]);
+  // defineProps({ ... })  and options  props: { ... }
+  for (const m of text.matchAll(/(?:defineProps\s*\(|[^.\w]props\s*:)\s*\{([\s\S]*?)\}\s*[),]/g))
+    for (const p of m[1].matchAll(/(?:^|[,{])\s*([A-Za-z_$][\w$]*)\s*:/g)) names.add(p[1]);
+  // defineProps([ 'a', 'b' ])  and options  props: [ 'a', 'b' ]
+  for (const m of text.matchAll(/(?:defineProps\s*\(|[^.\w]props\s*:)\s*\[([\s\S]*?)\]/g))
+    for (const p of m[1].matchAll(/['"`]([A-Za-z_$][\w$]*)['"`]/g)) names.add(p[1]);
+  return names;
+}
+function extractReact(text) {
+  const names = new Set();
+  // interface XProps { ... }  /  type XProps = { ... }
+  for (const m of text.matchAll(/(?:interface|type)\s+\w*Props\b[^{]*\{([\s\S]*?)\}/g))
+    for (const p of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*[?:]/g)) names.add(p[1]);
+  // destructured function params: function C({ a, b }  /  const C = ({ a, b }
+  for (const m of text.matchAll(/(?:function\s+[A-Z][\w$]*|(?:const|let|var)\s+[A-Z][\w$]*\s*=)\s*(?:function\s*)?\(\s*\{([\s\S]*?)\}/g))
+    for (const id of idsFromDestructure(m[1])) names.add(id);
+  // C.propTypes = { a: ..., b: ... }
+  for (const m of text.matchAll(/\.propTypes\s*=\s*\{([\s\S]*?)\}/g))
+    for (const p of m[1].matchAll(/(?:^|[,{])\s*([A-Za-z_$][\w$]*)\s*:/g)) names.add(p[1]);
+  return names;
+}
+function extractSvelte(text) {
+  const names = new Set();
+  for (const m of text.matchAll(/export\s+let\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
+  return names;
+}
+const PROP_EXTRACTORS = {
+  '.vue': extractVue,
+  '.svelte': extractSvelte,
+  '.tsx': extractReact, '.jsx': extractReact, '.ts': extractReact, '.js': extractReact,
+};
+function extractProps(file) {
+  const fn = PROP_EXTRACTORS[extname(file)];
+  return fn ? fn(readText(file)) : new Set();
+}
+
+// ── Resolve a Figma component name to its code file ───────────────────────────
+// 1) explicit componentFiles map  2) base selector present (Vue <style>)
+// 3) a declared component name matches  4) the file basename matches
+function declaredNames(text) {
+  const out = [];
+  for (const m of text.matchAll(/\bname\s*:\s*['"`]([A-Za-z0-9_-]+)['"`]/g)) out.push(m[1]);          // Vue options / defineOptions
+  for (const m of text.matchAll(/(?:function|class)\s+([A-Z][\w$]*)/g)) out.push(m[1]);                // React fn/class
+  for (const m of text.matchAll(/(?:const|let|var)\s+([A-Z][\w$]*)\s*=\s*(?:styled|React|forwardRef|memo|\()/g)) out.push(m[1]);
+  return out;
+}
+function resolveFile(figmaName) {
+  if (COMPONENT_FILES[figmaName]) {
+    const p = join(ROOT, COMPONENT_FILES[figmaName]);
+    return existsSync(p) ? { file: p, how: 'componentFiles' } : { file: null, how: 'componentFiles(missing)' };
+  }
+  const fig = norm(figmaName);
+  const sel = baseSelectorNorm(figmaName);
+  const bySelector = [], byName = [], byBasename = [];
+  for (const f of candidateFiles) {
+    const t = readText(f);
+    const tn = norm(t);
+    if (sel.length >= 4 && tn.includes(sel)) bySelector.push(f);
+    if (declaredNames(t).some(n => norm(n) === fig)) byName.push(f);
+    if (norm(basename(f, extname(f))) === fig) byBasename.push(f);
+  }
+  const pick = bySelector.length ? bySelector : byName.length ? byName : byBasename;
+  if (pick.length === 1) return { file: pick[0], how: bySelector.length ? 'selector' : byName.length ? 'name' : 'basename' };
+  if (pick.length > 1)  return { file: null, how: `ambiguous (${pick.length} files)` };
+  return { file: null, how: 'not found' };
+}
+
+// ── Compare Figma properties to code props, per component ─────────────────────
+// Deterministic: a Figma property matches a code prop only by EXACT name (normalised)
+// or an explicit documented alias. Everything else Figma-side is MISSING (fail), and
+// leftover code props are EXTRA (advisory). Renames are then offered as SUGGESTIONS
+// only - pairing names automatically is unreliable (a boolean "showLabel" is not the
+// text prop "label"), so it never decides pass/fail; document a real rename as an alias.
+const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [];
+for (const [figmaName, entry] of Object.entries(SNAP)) {
+  if (figmaName === '_updated' || !entry?.properties) continue;
+  const figNames = Object.keys(entry.properties).map(cleanFigmaProp).filter(Boolean);
+  if (!figNames.length) continue;
+  if (KNOWN_UNIMPLEMENTED.has(figmaName)) continue;
+
+  const { file, how } = resolveFile(figmaName);
+  if (!file) {
+    NOFILE.push(`${figmaName}: has Figma properties [${figNames.join(', ')}] but no code component found (${how}) - set ds-config.json → componentFiles["${figmaName}"], or exempt via knownUnimplementedComponents`);
+    continue;
+  }
+  const codeNorm = new Map([...extractProps(file)].map(p => [norm(p), p]));   // normName -> original
+  const aliases  = PROP_ALIASES[figmaName] ?? {};
+  const rel = relative(ROOT, file);
+
+  const matchedCode = new Set();
+  const missingHere = [];
+  for (const fp of figNames) {
+    if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) { OK.push(`${figmaName}/${fp} (exempt)`); continue; }
+    const fn = norm(fp);
+    if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp}`); continue; }
+    const aliasTo = aliases[fp] && norm(aliases[fp]);
+    if (aliasTo && codeNorm.has(aliasTo)) { matchedCode.add(aliasTo); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (alias)`); continue; }
+    missingHere.push(fp);
+    MISSING.push(`${figmaName}: Figma property "${fp}" has no code prop  (${rel})`);
+  }
+  const extraHere = [...codeNorm.entries()].filter(([cn]) => !matchedCode.has(cn));
+  for (const [, cp] of extraHere) EXTRA.push(`${figmaName}: code prop "${cp}" has no Figma property  (${rel})`);
+
+  // Suggestions only: pair a missing Figma prop with an unused code prop when one name
+  // clearly contains the other (>=3 chars). Advisory - confirm by adding an alias.
+  for (const fp of missingHere) {
+    const fn = norm(fp);
+    const hit = extraHere.find(([cn]) => cn.length >= 3 && fn.length >= 3 && (cn.includes(fn) || fn.includes(cn)));
+    if (hit) SUGGEST.push(`${figmaName}: Figma "${fp}" might be code "${hit[1]}" - if so add componentPropAliases["${figmaName}"]["${fp}"] = "${hit[1]}"`);
+  }
+}
+
+// ── Report ────────────────────────────────────────────────────────────────────
+console.log(`\n✅ OK        ${OK.length}`);
+console.log(`❌ MISSING   ${MISSING.length}   (Figma property with no matching code prop)`);
+console.log(`❌ NO FILE   ${NOFILE.length}   (Figma component with props, no code component found)`);
+if (EXTRA.length)   console.log(`ℹ️ EXTRA     ${EXTRA.length}   (code prop with no Figma property - advisory)`);
+if (SUGGEST.length) console.log(`ℹ️ RENAME?   ${SUGGEST.length}   (possible renames - advisory)`);
+
+const fail = MISSING.length + NOFILE.length;
+if (MISSING.length) { console.log('\n─── Missing in code (rename the code prop to match, add the prop, or document an alias) ──'); for (const l of MISSING) console.log(`  ❌ ${l}`); }
+if (NOFILE.length)  { console.log('\n─── No code component found ──'); for (const l of NOFILE) console.log(`  ❌ ${l}`); }
+if (SUGGEST.length) { console.log('\n─── Possible renames (advisory) ──'); for (const l of SUGGEST) console.log(`  ℹ️ ${l}`); }
+if (EXTRA.length)   { console.log('\n─── Extra code props (advisory) ──'); for (const l of EXTRA.slice(0, 20)) console.log(`  ℹ️ ${l}`); }
+
+if (fail) { console.log(''); process.exit(1); }
+console.log('\nEvery Figma component property maps to a matching code prop. ✓\n');
+process.exit(0);
