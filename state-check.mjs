@@ -52,6 +52,12 @@ if (!existsSync(join(ROOT, 'component-state-tokens.json'))) {
 const parsed = JSON.parse(readFileSync(join(ROOT, 'component-state-tokens.json'), 'utf8'));
 // _-prefixed keys are metadata (_updated stamp), not tokens
 const stateTokens = Object.keys(parsed).filter(t => !t.startsWith('_'));
+// Hard Rule 7: tokens bound only on hidden nodes are not a hard requirement in this
+// project — the element is switched off here (it may be toggled on elsewhere). They
+// are deferred, not failed. _hiddenToggleable is the subset gated by a visibility
+// boolean ("off in this project"); the rest are statically hidden.
+const hiddenOnly   = new Set(Array.isArray(parsed._hiddenOnly) ? parsed._hiddenOnly : []);
+const hiddenToggle = new Set(Array.isArray(parsed._hiddenToggleable) ? parsed._hiddenToggleable : []);
 
 // ── Collect declared CSS vars ─────────────────────────────────────────────────
 const declared = new Set();
@@ -77,21 +83,46 @@ function isCovered(token) {
   return false;
 }
 
-const UNCOVERED = [], OK = [];
+// Hard Rule 7 — three states, not two:
+//   • visible token          → REQUIRED now; missing var ⇒ ❌ UNCOVERED (fails the gate)
+//   • hidden + boolean        → may be TOGGLED ON later; the code must PERMIT that. If the
+//                               CSS var exists the code already supports activation (OK); if
+//                               it is missing, the element would not render when switched on
+//                               ⇒ ⚠️ advisory (surfaced, but does NOT fail — it is off here)
+//   • hidden, no boolean      → statically off/dead ⇒ ⏭ ignored, never a requirement
+const UNCOVERED = [], OK = [], TOGGLE_WARN = [], HIDDEN_STATIC = [];
 for (const token of stateTokens) {
-  if (isCovered(token)) OK.push(token);
-  else UNCOVERED.push(token);
+  const covered = isCovered(token);
+  if (!hiddenOnly.has(token)) {
+    (covered ? OK : UNCOVERED).push(token);            // visible — required now
+  } else if (hiddenToggle.has(token)) {
+    if (covered) OK.push(token);                       // code already permits activation
+    else TOGGLE_WARN.push(token);                      // activation NOT yet supported — advise
+  } else {
+    HIDDEN_STATIC.push(token);                         // dead here — ignore
+  }
 }
 
 console.log(`\n✅ COVERED   ${OK.length}`);
 console.log(`❌ UNCOVERED ${UNCOVERED.length}`);
+if (TOGGLE_WARN.length)   console.log(`⚠️ UNCOVERED-TOGGLEABLE ${TOGGLE_WARN.length} (hidden+boolean, no CSS var — code cannot render it when toggled on; advisory, not blocking)`);
+if (HIDDEN_STATIC.length) console.log(`⏭ HIDDEN-STATIC ${HIDDEN_STATIC.length} (hidden, no visibility boolean — not a requirement)`);
+
+if (TOGGLE_WARN.length) {
+  console.log('\n─── Advisory: hidden but visibility-toggleable — the element can be switched on later, so verify the code PERMITS it (declare the CSS var so it renders when shown) ──');
+  for (const t of TOGGLE_WARN.slice(0, 12)) console.log(`  ⚠️ ${t}`);
+}
+if (HIDDEN_STATIC.length) {
+  console.log('\n─── Ignored: statically hidden (off, no visibility boolean) ──');
+  for (const t of HIDDEN_STATIC.slice(0, 20)) console.log(`  ⏭ ${t}`);
+}
 
 if (UNCOVERED.length) {
-  console.log('\n─── In COMPONENT_SET variants, no CSS var (implement or add to COVERED_STATE in parity-map.mjs) ──');
+  console.log('\n─── In COMPONENT_SET variants (visible), no CSS var (implement or add to COVERED_STATE in parity-map.mjs) ──');
   for (const t of UNCOVERED) console.log(`  ❌ ${t}`);
   console.log('');
   process.exit(1);
 } else {
-  console.log('\nAll COMPONENT_SET state tokens are implemented or explicitly deferred. ✓\n');
+  console.log('\nAll visible COMPONENT_SET state tokens are implemented. Toggleable-hidden advisories above (if any) do not block. ✓\n');
   process.exit(0);
 }

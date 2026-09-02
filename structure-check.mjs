@@ -380,8 +380,10 @@ function variantToModifier(props) {
 const autoAssertions = [];
 if (Object.keys(stateBindings).length) {
   for (const [compSetName, variants] of Object.entries(stateBindings)) {
+    if (compSetName === '_updated' || !variants || typeof variants !== 'object') continue;
     const baseSelector = componentToBaseSelector(compSetName);
     for (const { props, bindings } of Object.values(variants)) {
+      if (!Array.isArray(bindings)) continue;
       const modifier = variantToModifier(props);
       if (modifier === null) continue;
       const selector = baseSelector + modifier;
