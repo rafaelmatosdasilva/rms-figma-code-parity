@@ -48,6 +48,9 @@
   "knownUnusedVars": [],
   "knownHardcodedExceptions": [],
 
+  "_htmlStructureClasses_note": "Gate: HTML structure. The CSS classes that mark a DS component on an interactive element in your plugin UI HTML (paths.plugins). List your own DS classes here; when omitted a built-in default set is used.",
+  "htmlStructureClasses": [],
+
   "_componentProps_note": "Gate: Component props match Figma. Reads code props from Vue/React and compares to Figma property names. Usually needs no config (components are auto-resolved by base selector or name).",
   "_componentFiles_note": "Optional explicit map when auto-resolution can't find the file: Figma component name -> source file path.",
   "componentFiles": {},

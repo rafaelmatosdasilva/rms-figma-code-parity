@@ -35,7 +35,7 @@
 // Exit 0 = all symbols documented, transforms and sizes verified. Exit 1 = failures found.
 
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname }            from 'path';
+import { join }            from 'path';
 
 const ROOT = process.cwd();
 
@@ -311,7 +311,7 @@ for (const srcPath of HTML_SOURCES) {
       }
     }
 
-    documented.push({ id, desc, file: srcPath });
+    documented.push({ id, desc: desc ?? '', file: srcPath });
   }
 }
 
@@ -362,7 +362,7 @@ const couldBeDynamic = id => dynamicPrefixes.some(p => id.startsWith(p));
 const deadIcons = [], dynamicMaybe = [];
 for (const { id } of documented) {
   if (DEAD_EXEMPT.has(id)) continue;
-  const re = new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])');   // whole id, not a prefix of a longer one
   if (re.test(corpusNoDefs)) continue;              // referenced somewhere → alive
   if (couldBeDynamic(id)) dynamicMaybe.push(id);    // maybe built at runtime → note only
   else deadIcons.push({ id });
@@ -402,8 +402,14 @@ if (ALLOWED_SIZES && ALLOWED_SIZES.length) {
       const w = +(/\bwidth="(\d+)"/.exec(tag)?.[1] ?? NaN);
       const h = +(/\bheight="(\d+)"/.exec(tag)?.[1] ?? NaN);
       if (Number.isNaN(w) && Number.isNaN(h)) continue;   // sized by CSS, not policed here
-      if (!ALLOWED_SIZES.includes(w) || !ALLOWED_SIZES.includes(h))
-        sizeFails.push({ id: m[2], size: w === h ? `${w}` : `${w}×${h}`, form: '<svg><use>' });
+      // Only police the axis actually present in the markup: a `<svg width="16">` whose
+      // height comes from CSS must not read as `16×NaN` (NaN is never in ALLOWED_SIZES).
+      const wBad = !Number.isNaN(w) && !ALLOWED_SIZES.includes(w);
+      const hBad = !Number.isNaN(h) && !ALLOWED_SIZES.includes(h);
+      if (wBad || hBad) {
+        const size = Number.isNaN(h) ? `${w}` : Number.isNaN(w) ? `${h}` : w === h ? `${w}` : `${w}×${h}`;
+        sizeFails.push({ id: m[2], size, form: '<svg><use>' });
+      }
     }
     // (b) href: '#id', size: N   (lookup tables)
     const tblRe = new RegExp(`href:\\s*['"\`]#(${idAlt})['"\`]\\s*,\\s*size:\\s*(\\d+)`, 'g');

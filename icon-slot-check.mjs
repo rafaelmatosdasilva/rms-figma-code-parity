@@ -47,7 +47,7 @@ function findIconInSlot(html, selector) {
     elemRe = new RegExp(`<[a-z]+[^>]*\\bid="${escapeRe(id)}"[^>]*>`, 'i');
   } else if (selector.startsWith('.')) {
     const cls = selector.slice(1);
-    elemRe = new RegExp(`<[a-z]+[^>]*\\bclass="[^"]*\\b${escapeRe(cls)}\\b[^"]*"[^>]*>`, 'i');
+    elemRe = new RegExp(`<[a-z]+[^>]*\\bclass="[^"]*(?<![\\w-])${escapeRe(cls)}(?![\\w-])[^"]*"[^>]*>`, 'i');
   } else {
     return null;
   }
@@ -57,7 +57,7 @@ function findIconInSlot(html, selector) {
 
   // Look in the next 600 chars for <use href="#icon-X">
   const window = html.slice(m.index, m.index + 600);
-  const useM = /<use\s+href="#([^"]+)"/.exec(window);
+  const useM = /<use\b[^>]*?\s(?:xlink:)?href="#([^"]+)"/.exec(window);   // href may be any attribute, incl. xlink:href
   return useM ? useM[1] : null;
 }
 
@@ -120,7 +120,7 @@ for (const [plugin, srcPath] of Object.entries(pluginToSrc)) {
     if (!idM) continue;
     const btnId = idM[1];
     if (/["'+${}]/.test(btnId)) continue; // skip JS-template IDs
-    const useM = /<use\s+href="#(icon-[^"]+)"/.exec(inner);
+    const useM = /<use\b[^>]*?\s(?:xlink:)?href="#(icon-[^"]+)"/.exec(inner);   // href may be any attribute, incl. xlink:href
     if (!useM) continue; // no direct icon child
 
     const sel = `#${btnId}`;

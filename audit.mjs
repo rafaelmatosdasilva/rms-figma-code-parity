@@ -1480,7 +1480,12 @@ function reportFull(label, items, shown) {
     const allSrc = allSourceFiles().map(f => {
       try { return readFileSync(f, 'utf8'); } catch { return ''; }
     }).join('\n');
-    const unused = declared.filter(v => !KNOWN_UNUSED.has(v) && !allSrc.includes(`var(${v})`));
+    // A var is used if it appears in a var() reference, whether bare `var(--x)`, with
+    // surrounding whitespace `var( --x )`, or with a fallback `var(--x, …)`. A plain
+    // substring check for `var(--x)` misses the whitespace and fallback forms and would
+    // report a used token as unused.
+    const usedInVar = (v) => new RegExp(`var\\(\\s*${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[,)]`).test(allSrc);
+    const unused = declared.filter(v => !KNOWN_UNUSED.has(v) && !usedInVar(v));
 
     // Undeclared vars: every fallback-less var(--x) used anywhere must be declared somewhere -
     // theme.css, a plugin <style> block, or JS setProperty. A var() referencing a renamed or

@@ -43,6 +43,7 @@ const COMPONENT_FILES     = cfg.componentFiles ?? {};
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 
 const norm    = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+const esc     = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // safe to interpolate into a RegExp
 const selNorm = (name) => norm(COMPONENT_SELECTORS[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1)));
 
 // ── Universe of DS component names ────────────────────────────────────────────
@@ -99,7 +100,7 @@ function usedComponents(file) {
   const used = new Set();
   for (const u of uni) {
     if (u.selNorm.length >= 4 && tn.includes(u.selNorm)) { used.add(u.name); continue; }
-    if (new RegExp(`<${u.name}\\b|\\b${u.name}\\b\\s*(?:from|,|})`).test(t)) used.add(u.name);   // JSX tag / import
+    if (new RegExp(`<${esc(u.name)}\\b|\\b${esc(u.name)}\\b\\s*(?:from|,|})`).test(t)) used.add(u.name);   // JSX tag / import
   }
   return used;
 }

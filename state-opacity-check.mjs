@@ -11,7 +11,7 @@
 // Exit 0 = every captured state opacity matches the CSS (or there is nothing to check).
 // Exit 1 = a state's CSS opacity differs from Figma.
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = process.cwd();

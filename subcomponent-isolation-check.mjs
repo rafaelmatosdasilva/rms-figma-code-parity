@@ -90,7 +90,7 @@ function extractRules(css) {
 function normalizeSelector(sel) { return sel.replace(/\s+/g, ' ').trim(); }
 
 function broadElementTag(sel) {
-  const m = sel.match(/\s+(svg|span|div|button|input|a|label|select|textarea)(?:[:.][a-zA-Z0-9-:()]+)*$/);
+  const m = sel.match(/[\s>+~]+(svg|span|div|button|input|a|label|select|textarea)(?:[:.][a-zA-Z0-9-:()]+)*$/);
   if (!m || !BARE_ELEMENTS.has(m[1])) return null;
   if (!/\.[a-zA-Z]/.test(sel.slice(0, sel.lastIndexOf(m[0])))) return null;
   return m[1];

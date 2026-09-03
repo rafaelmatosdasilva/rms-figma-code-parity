@@ -17,7 +17,8 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const THEME_PATH = cfg.paths?.themeCSS ?? 'src/theme.css';
+const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();   // themeCSS may be an array of files
+const THEME_PATH  = THEME_PATHS[0];
 const PLUGIN_CSS = Array.isArray(cfg.paths?.pluginCSS) ? cfg.paths.pluginCSS : [];
 
 // ── Load structure-contract.mjs ───────────────────────────────────────────────
@@ -49,7 +50,7 @@ if (!existsSync(themePath)) {
   console.error(`❌ Theme CSS not found: ${THEME_PATH}`);
   process.exit(1);
 }
-const allCss = [THEME_PATH, ...PLUGIN_CSS]
+const allCss = [...THEME_PATHS, ...PLUGIN_CSS]
   .filter(f => existsSync(join(ROOT, f)))
   .map(f => extractCss(join(ROOT, f)).replace(/\/\*[\s\S]*?\*\//g, ''))
   .join('\n');
@@ -73,7 +74,11 @@ function findAllBlocks(css, selector) {
     }
     const block = [];
     for (let j = li + 1; j < lines.length; j++) {
-      if (/^\s*\}/.test(lines[j])) break;
+      // Close on a `}` anywhere on the line, not only a line-leading one, so a rule whose
+      // brace shares its last declaration's line (`color: red; }`) doesn't swallow the
+      // following rules. Keep the part before the brace as the final declaration.
+      const close = lines[j].indexOf('}');
+      if (close !== -1) { block.push(lines[j].slice(0, close)); break; }
       block.push(lines[j]);
     }
     blocks.push(block.join('\n'));

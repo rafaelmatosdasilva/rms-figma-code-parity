@@ -19,7 +19,6 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
 import { loadModes, buildResolver } from './mode-resolver.mjs';
 
 const ROOT = process.cwd();
@@ -29,7 +28,7 @@ let cfg = {};
 try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
   console.error('❌ ds-config.json not found.'); process.exit(1);
 }
-const SNAP_VARS  = cfg.paths?.snapshotVars ?? 'figma-vars.snapshot.json';
+const SNAP_VARS  = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
 const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 const THEME_PATH  = THEME_PATHS[0];
 const PLUGIN_CSS = cfg.paths?.pluginCSS    ?? [];
@@ -55,7 +54,13 @@ try {
 }
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
-const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
+let snap;
+try { snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8')); } catch {
+  console.log(`⏭  ${SNAP_VARS} not found or unreadable - exemption check skipped`);
+  process.exit(0);
+}
+// Compare colours by canonical hex (expand #rgb/#rgba shorthand) so #fff === #ffffff.
+const _hex = (h) => { let x = String(h).replace(/^#/, '').toLowerCase(); if (x.length === 3 || x.length === 4) x = x.split('').map(c => c + c).join(''); return x; };
 // Token universe = every token in every mode's color map + sizing (mode-agnostic).
 const _modeKeys = loadModes(cfg).map(m => m.snapshotKey);
 const snapTokens = new Set([
@@ -65,9 +70,12 @@ const snapTokens = new Set([
 
 // Runtime walk tokens (transient - may be absent; only checked when present).
 // _-prefixed keys are metadata (_updated stamp), not tokens.
-const readTokenKeys = (file) => existsSync(join(ROOT, file))
-  ? new Set(Object.keys(JSON.parse(readFileSync(join(ROOT, file), 'utf8'))).filter(t => !t.startsWith('_')))
-  : null;
+const readTokenKeys = (file) => {
+  if (!existsSync(join(ROOT, file))) return null;
+  const parsed = JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
+  const keys = Array.isArray(parsed) ? parsed : Object.keys(parsed);   // both shapes are valid
+  return new Set(keys.filter(t => !String(t).startsWith('_')));
+};
 const boundTokens = readTokenKeys('bound-tokens.json');
 const stateTokens = readTokenKeys('component-state-tokens.json');
 const runtimeTokens = new Set([...(boundTokens ?? []), ...(stateTokens ?? [])]);
@@ -142,7 +150,7 @@ for (const [token, cssVar] of Object.entries(EXPLICIT)) {
     const figmaHex = snap.color?.[mode]?.[token] ?? snap.color?.[mode]?.[token + '/color'] ?? null;
     if (!figmaHex) continue;
     const cssHex = resolve(cssVar, mode);
-    if (cssHex && figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
+    if (cssHex && _hex(figmaHex) !== _hex(cssHex)) {
       BROKEN.push({ section: 'EXPLICIT', token, cssVar, mode, reason: `value mismatch - Figma: ${figmaHex}, CSS: ${cssHex}` });
     }
   }

@@ -414,11 +414,17 @@ if (CROSS_PLUGIN.length) {
     const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
     await send('Runtime.enable', {}, sessionId);
+    let xpLoaded = false;
     for (let i = 0; i < 60; i++) {
-      const r = await send('Runtime.evaluate', { expression: 'document.readyState === "complete"', returnByValue: true }, sessionId);
-      if (r.result.value === true) break;
+      // Guard on file: protocol too - the target's initial about:blank already reports
+      // readyState "complete", so readyState alone races the navigation and every probe
+      // then reads about:blank ("(selector not found)"), which can falsely agree across
+      // plugins. Mirrors the main render loop's guard.
+      const r = await send('Runtime.evaluate', { expression: 'location.protocol === "file:" && document.readyState === "complete"', returnByValue: true }, sessionId);
+      if (r.result.value === true) { xpLoaded = true; break; }
       await new Promise(res => setTimeout(res, 50));
     }
+    if (!xpLoaded) { results[plugin] = { _missing: true }; await send('Target.closeTarget', { targetId }); continue; }
     const specs = CROSS_PLUGIN.filter(e => e.plugins.includes(plugin))
       .map(e => ({ label: e.label, selector: e.selector, probe: e.probe, props: e.props }));
     const expr = `(() => {

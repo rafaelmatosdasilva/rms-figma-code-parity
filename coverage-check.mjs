@@ -9,8 +9,9 @@
 // coverage (present in the DS snapshot but modelled by nothing, and not in
 // knownUnimplementedComponents) is a hard gap → fails only under ds-config coverageStrict:true.
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join } from 'path';
+import { loadModes } from './mode-resolver.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -87,11 +88,16 @@ try {
 
 const assertKey = a => [a.plugin ?? '', a.selector ?? '', a.prop ?? '',
   (a.forcePseudo ?? []).join('+'), a.forcePseudoOn ?? ''].join(' | ');
+// An assertion's colorScheme may be a mode NAME or snapshotKey, in any case; map it to the
+// snapshot's mode key space so labels that differ only by name/case aren't read as blind spots.
+const _modeAlias = new Map();
+for (const md of loadModes(cfg)) { _modeAlias.set(String(md.snapshotKey).toLowerCase(), md.snapshotKey); _modeAlias.set(String(md.name).toLowerCase(), md.snapshotKey); }
+const _toModeKey = (cs) => _modeAlias.get(String(cs).toLowerCase()) ?? String(cs).toLowerCase();
 const modesByAssert = new Map();
 for (const a of RENDERED) {
   if (!a.colorScheme) continue; // mode-agnostic assertion - nothing to pair
   if (!modesByAssert.has(assertKey(a))) modesByAssert.set(assertKey(a), new Set());
-  modesByAssert.get(assertKey(a)).add(a.colorScheme);
+  modesByAssert.get(assertKey(a)).add(_toModeKey(a.colorScheme));
 }
 const modeBlind = SNAP_MODES.length > 1
   ? [...modesByAssert.entries()]

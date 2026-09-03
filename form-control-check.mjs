@@ -79,7 +79,7 @@ function isSubject(selector, handle) {
 /** Declarations of `prop` (or its shorthand) inside a rule body, in source order. */
 function declarationsOf(body, prop) {
   const out = [];
-  const names = [prop, SHORTHAND_FOR[prop]].filter(Boolean);
+  const names = [...new Set([prop, SHORTHAND_FOR[prop]].filter(Boolean))];   // dedupe self-referential shorthands (background→background)
   for (const name of names) {
     // (?<![\w-]) stops `border-color` matching inside `border-top-color`, and
     // `background` matching inside `background-image`.

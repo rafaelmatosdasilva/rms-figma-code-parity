@@ -24,7 +24,7 @@ let cfg = {};
 try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
   console.error('❌ ds-config.json not found.'); process.exit(1);
 }
-const SNAP_VARS   = cfg.paths?.snapshotVars ?? 'figma-vars.snapshot.json';
+const SNAP_VARS   = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
 const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 
 const snap    = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
@@ -63,7 +63,13 @@ function canon(shadow) {
     .replace(/#[0-9a-f]{3,8}\b/g, m => hexToRgba(m))
     .replace(/\s*,\s*/g, ', ')
     .replace(/\s+/g, ' ')
-    .replace(/rgba?\(([^)]*)\)/g, (_, inner) => 'rgba(' + inner.replace(/\s+/g, '') + ')'); // strip spaces INSIDE color fns
+    .replace(/rgba?\(([^)]*)\)/g, (_, inner) => {
+      // Strip spaces inside colour fns AND quantize alpha to 8-bit, so a hex8 (#00000026 →
+      // 0.149) and a decimal rgba (0.15) that denote the same 8-bit alpha compare equal.
+      const parts = inner.split(',').map(s => s.trim());
+      if (parts.length === 4) { const a = parseFloat(parts[3]); if (Number.isFinite(a)) parts[3] = String(+(Math.round(a * 255) / 255).toFixed(3)); }
+      return 'rgba(' + parts.join(',') + ')';
+    });
 }
 
 const OK = [], BAD = [], SKIPPED = [];

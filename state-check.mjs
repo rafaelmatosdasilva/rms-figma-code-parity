@@ -18,7 +18,6 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { execSync } from 'child_process';
 
 const ROOT = process.cwd();
 
@@ -27,7 +26,8 @@ let cfg = {};
 try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
-const THEME_PATH = cfg.paths?.themeCSS  ?? 'src/theme.css';
+const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();   // themeCSS may be an array of files
+const THEME_PATH  = THEME_PATHS[0];
 const PLUGIN_CSS = cfg.paths?.pluginCSS ?? [];
 
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ const hiddenToggle = new Set(Array.isArray(parsed._hiddenToggleable) ? parsed._h
 
 // ── Collect declared CSS vars ─────────────────────────────────────────────────
 const declared = new Set();
-const sources = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
+const sources = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
 for (const f of sources) {
   const txt = readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   for (const m of txt.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);

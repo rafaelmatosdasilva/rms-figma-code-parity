@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { loadModes } from './mode-resolver.mjs';
 
 const ROOT = process.cwd();
 
@@ -23,7 +24,7 @@ let cfg = {};
 try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
   console.error('❌ ds-config.json not found.'); process.exit(1);
 }
-const SNAP_VARS  = cfg.paths?.snapshotVars ?? 'figma-vars.snapshot.json';
+const SNAP_VARS  = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
 const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 const THEME_PATH  = THEME_PATHS[0];
 const PLUGIN_CSS = cfg.paths?.pluginCSS    ?? [];
@@ -43,9 +44,9 @@ try {
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
 const snap = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
+const MODE_KEYS = loadModes(cfg).map(m => m.snapshotKey);
 const figmaTokens = new Set([
-  ...Object.keys(snap.color?.light ?? {}).map(t => t.replace(/\/color$/, '')),
-  ...Object.keys(snap.color?.dark  ?? {}).map(t => t.replace(/\/color$/, '')),
+  ...MODE_KEYS.flatMap(k => Object.keys(snap.color?.[k] ?? {}).map(t => t.replace(/\/color$/, ''))),
   ...Object.keys(snap.sizing ?? {}),
   ...Object.keys(snap.strings ?? {}),
   ...Object.keys(snap.animation ?? {}),

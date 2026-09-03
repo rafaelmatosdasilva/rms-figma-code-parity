@@ -20,12 +20,21 @@
 // module is the ONE place that hardcodes nothing about a specific DS's modes or collections.
 
 export function loadModes(cfg) {
-  if (cfg?.figma?.modes && cfg.figma.modes.length) return cfg.figma.modes;
-  // Legacy two-mode fallback (honours figma.lightMode / figma.darkMode overrides).
-  return [
-    { name: cfg?.figma?.lightMode ?? 'Light', snapshotKey: 'light', cssSelector: 'root' },
-    { name: cfg?.figma?.darkMode  ?? 'Dark',  snapshotKey: 'dark',  cssSelector: 'dark-media' },
-  ];
+  const modes = (cfg?.figma?.modes && cfg.figma.modes.length)
+    ? cfg.figma.modes
+    // Legacy two-mode fallback (honours figma.lightMode / figma.darkMode overrides).
+    : [
+        { name: cfg?.figma?.lightMode ?? 'Light', snapshotKey: 'light', cssSelector: 'root' },
+        { name: cfg?.figma?.darkMode  ?? 'Dark',  snapshotKey: 'dark',  cssSelector: 'dark-media' },
+      ];
+  // Derive snapshotKey / cssSelector exactly as parity-check.mjs does, so a config that
+  // omits snapshotKey (which parity-check tolerates) doesn't silently turn the mode gates
+  // into a no-op: every mode.snapshotKey would be undefined and dedupe to one empty mode.
+  return modes.map(m => ({
+    ...m,
+    snapshotKey: (m.snapshotKey ?? m.name).toLowerCase().replace(/\s+/g, '-'),
+    cssSelector: m.cssSelector ?? 'root',
+  }));
 }
 
 // loadCollections(cfg) → the OTHER typed collections a DS wants mode-checked, beyond the color axis.
@@ -60,6 +69,14 @@ export function parseVarBlock(block) {
   return vars;
 }
 
+// Base :root must come from a TOP-LEVEL :root, not the first :root in file order - an
+// @media/@supports block physically preceding it would otherwise poison every base value.
+function stripAtRules(s) {
+  let out = s, prev;
+  do { prev = out; out = out.replace(/@[a-zA-Z-]+[^{};]*\{(?:[^{}]|\{[^{}]*\})*\}/g, ' '); } while (out !== prev);
+  return out;
+}
+
 function overrideBlockFor(rawCss, cssSelector) {
   if (!cssSelector || cssSelector === 'root') return {};
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -80,8 +97,11 @@ function overrideBlockFor(rawCss, cssSelector) {
          ?? rawCss.match(new RegExp(`:root\\.${c}\\s*\\{([\\s\\S]*?)\\}`))?.[1] ?? '';
   } else if (cssSelector.startsWith('data:')) {
     const [attr, val] = cssSelector.slice(5).split('=');
-    inner = rawCss.match(new RegExp(`\\[data-${esc(attr)}="?${esc(val ?? '')}"?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}`))?.[1]
-         ?? rawCss.match(new RegExp(`:root\\[data-${esc(attr)}="?${esc(val ?? '')}"?\\]\\s*\\{([\\s\\S]*?)\\}`))?.[1] ?? '';
+    // Accept the attribute with or without a `data-` prefix (so `data:theme=dark` matches
+    // `[data-theme="dark"]` or `[theme="dark"]`), consistent with parity-check.mjs's parser.
+    const A = `(?:data-)?${esc(attr)}`;
+    inner = rawCss.match(new RegExp(`\\[${A}="?${esc(val ?? '')}"?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}`))?.[1]
+         ?? rawCss.match(new RegExp(`:root\\[${A}="?${esc(val ?? '')}"?\\]\\s*\\{([\\s\\S]*?)\\}`))?.[1] ?? '';
   }
   return parseVarBlock(inner);
 }
@@ -94,9 +114,19 @@ function overrideBlockFor(rawCss, cssSelector) {
 // Neutral primitives resolve through NEUTRAL_MAPS[modeKey] (N-mode) or the legacy NL/ND (2-mode).
 export function buildResolver(rawCss, MODES, prims = {}) {
   const { NL = {}, ND = {}, NEUTRAL_MAPS = null, NEUTRAL_VAR_RE = /^--neutral-(\d+)$/ } = prims;
-  const rootVars = parseVarBlock(rawCss.match(/:root\s*{([\s\S]*?)}/)?.[1] ?? '');
+  const rootVars = parseVarBlock(stripAtRules(rawCss).match(/:root\s*{([\s\S]*?)}/)?.[1] ?? '');
   const modeBlocks = Object.fromEntries(MODES.map(m => [m.snapshotKey, overrideBlockFor(rawCss, m.cssSelector)]));
-  const neutralFor = (key) => (NEUTRAL_MAPS && NEUTRAL_MAPS[key]) || (key === 'light' ? NL : ND);
+  // NEUTRAL_MAPS may be an array (by mode index) or an object keyed by mode NAME (as
+  // parity-map.mjs writes it) or by snapshotKey. Resolve it to snapshotKey → map so the
+  // lookup below (which only knows the snapshotKey) works for every form; fall back to the
+  // legacy NL/ND for the 2-mode light/dark case.
+  const neutralByKey = {};
+  if (Array.isArray(NEUTRAL_MAPS)) {
+    MODES.forEach((m, i) => { if (NEUTRAL_MAPS[i]) neutralByKey[m.snapshotKey] = NEUTRAL_MAPS[i]; });
+  } else if (NEUTRAL_MAPS) {
+    for (const m of MODES) { const nm = NEUTRAL_MAPS[m.snapshotKey] ?? NEUTRAL_MAPS[m.name]; if (nm) neutralByKey[m.snapshotKey] = nm; }
+  }
+  const neutralFor = (key) => neutralByKey[key] || (key === 'light' ? NL : ND);
 
   // resolveRaw follows var() chains + the mode's override block and returns the LITERAL it lands on
   // (a hex, a '8px', an 'Inter', …). Neutral primitives short-circuit to their mapped hex.

@@ -31,9 +31,10 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const THEME_PATH = cfg.paths?.themeCSS  ?? 'src/theme.css';
+const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();   // themeCSS may be an array of files
+const THEME_PATH  = THEME_PATHS[0];
 const PLUGIN_CSS = cfg.paths?.pluginCSS ?? [];
-const SOURCES = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
+const SOURCES = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
 
 // ── Load PSEUDO_ELEMENTS from structure-contract.mjs ─────────────────────────
 let ALLOWED = {};
@@ -68,8 +69,16 @@ function normalizeSelector(sel) { return sel.replace(/\s+/g, ' ').trim(); }
 
 // Matches ::before or ::after anywhere in the selector
 const PSEUDO_RE = /::(?:before|after)/;
-// Matches `content:` with a value that is NOT `none` or empty string (i.e. sets visible content)
-const CONTENT_RE = /\bcontent\s*:\s*(?!''\s*[;}]|none\s*[;}])/;
+// A pseudo-element sets VISIBLE content when it declares `content:` with a value other than
+// the empty string, `none`, or `normal` (all of which render nothing). Parsing the value
+// (rather than a lookahead) avoids the `\s*` backtracking that let `content: none` through.
+function setsVisibleContent(body) {
+  for (const m of body.matchAll(/\bcontent\s*:\s*([^;}]+)/g)) {
+    const v = m[1].replace(/!important/i, '').trim();
+    if (!/^(?:''|""|none|normal)$/.test(v)) return true;
+  }
+  return false;
+}
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
 const undocumented = [], documented = [];
@@ -78,7 +87,7 @@ for (const srcPath of SOURCES) {
   const text = readFileSync(join(ROOT, srcPath), 'utf8');
   for (const { selector, body } of extractRules(text)) {
     if (!PSEUDO_RE.test(selector)) continue;
-    if (!CONTENT_RE.test(body))    continue;
+    if (!setsVisibleContent(body)) continue;
     const key = normalizeSelector(selector);
     if (ALLOWED[key]) documented.push({ key, reason: ALLOWED[key], file: srcPath });
     else              undocumented.push({ key, body: body.slice(0, 120), file: srcPath });

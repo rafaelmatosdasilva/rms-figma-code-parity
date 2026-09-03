@@ -49,7 +49,7 @@ function findClassInSlot(html, selector) {
     elemRe = new RegExp(`<[a-z]+[^>]*\\bid="${escapeRe(id)}"[^>]*>`, 'i');
   } else if (selector.startsWith('.')) {
     const cls = selector.slice(1);
-    elemRe = new RegExp(`<[a-z]+[^>]*\\bclass="[^"]*\\b${escapeRe(cls)}\\b[^"]*"[^>]*>`, 'i');
+    elemRe = new RegExp(`<[a-z]+[^>]*\\bclass="[^"]*(?<![\\w-])${escapeRe(cls)}(?![\\w-])[^"]*"[^>]*>`, 'i');
   } else {
     return null;
   }

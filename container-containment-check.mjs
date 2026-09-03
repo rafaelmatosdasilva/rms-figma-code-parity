@@ -30,7 +30,7 @@
 //
 // Exemptions: cfg.knownContainerTypeExceptions = ["<selector>", …] (rare - prefer fixing).
 import { readFileSync, existsSync } from 'fs';
-import { join, relative } from 'path';
+import { join } from 'path';
 
 const ROOT = process.cwd();
 
@@ -96,10 +96,18 @@ function hasDefiniteInlineSize(selector) {
     // flex shorthand: definite when a basis component is a length/percentage/0.
     const flex = declVal(r.body, 'flex');
     if (flex) {
-      const parts = flex.split(/\s+/);
-      if (parts.some(p => /^0$/.test(p) || /^[\d.]+(px|rem|em|%|vw|vh|ch|pt)$/i.test(p))) return true;
-      // `flex: 1`  → grow 1, basis 0%  → definite;  `flex: none|auto|initial` → not.
-      if (/^\d+$/.test(flex.trim())) return true;
+      // Definiteness is decided by the BASIS component only. A 0 in the grow/shrink slot
+      // (e.g. `flex: 0 0 auto`) must NOT count as a definite basis - that basis is `auto`.
+      const v = flex.trim().toLowerCase();
+      const isLen = (p) => p === '0' || /^[\d.]+(px|rem|em|%|vw|vh|ch|pt|vmin|vmax|ex)$/.test(p);
+      if (!/^(none|auto|initial)$/.test(v)) {
+        const parts = v.split(/\s+/);
+        const num   = (p) => /^[\d.]+$/.test(p);   // a bare number is grow/shrink, not a basis
+        const basis = parts.length >= 3 ? parts[2]
+                    : parts.length === 2 ? (num(parts[1]) ? '0' : parts[1])   // grow shrink(→basis 0%) | grow basis
+                    : num(parts[0]) ? '0' : parts[0];                          // single number → basis 0%
+        if (isLen(basis)) return true;
+      }
     }
 
     // A block-level display fills its container's inline size → containment is safe.

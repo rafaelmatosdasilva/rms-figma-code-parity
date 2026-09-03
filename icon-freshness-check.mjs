@@ -185,7 +185,9 @@ for (const batch of batches) {
 
   // Fetch each SVG and compare paths
   for (const [iconId, entry] of batch) {
-    const svgUrl = imageUrls[entry.nodeId];
+    const svgUrl = imageUrls[entry.nodeId]
+      ?? imageUrls[entry.nodeId.replace(/-/g, ':')]
+      ?? imageUrls[entry.nodeId.replace(/:/g, '-')];   // Figma may key the response by ':' or '-'
     if (!svgUrl) {
       console.log(`   ⚠️  No SVG URL returned for ${iconId} (${entry.nodeId}) - skipped`);
       continue;

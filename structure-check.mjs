@@ -25,7 +25,8 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const THEME_PATH    = cfg.paths?.themeCSS          ?? 'src/theme.css';
+const THEME_PATHS   = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();   // themeCSS may be an array of files
+const THEME_PATH    = THEME_PATHS[0];
 const SNAPSHOT_PATH = cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json';
 const PLUGIN_CSS    = cfg.paths?.pluginCSS          ?? [];
 
@@ -84,9 +85,9 @@ if (!Object.keys(CONTRACT).length && !STATE_SELECTORS.length) {
 // allCss    - theme + all plugin files, used for state selector checks
 //             (state rules often live in plugin/component files)
 let themeCSS = null;
-try { themeCSS = readFileSync(join(ROOT, THEME_PATH), 'utf8'); } catch {}
+try { themeCSS = readFileSync(join(ROOT, THEME_PATH), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''); } catch {}
 
-const cssFiles  = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
+const cssFiles  = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
 const allCss    = cssFiles.map(f => readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')).join('\n');
 
 // Build block indexes once - findBlock() uses these for O(1) lookups
@@ -615,16 +616,18 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).lengt
       // Skip known exceptions.
       if (PHANTOM_SKIP.has(sel)) { PHANTOM_PASS.push(`${comp}: "${sel}" (exempted)`); continue; }
 
-      const propMatch = block.match(BORDER_PROP_RE);
-      if (!propMatch) continue;
+      // Inspect EVERY border/outline declaration in the rule, not just the first: a rule
+      // may null one border (`border-color: transparent`) yet still set a visible one on a
+      // side (`border-left: 3px solid …`). Flag the first non-transparent border found.
+      const borderReAll = new RegExp(BORDER_PROP_RE.source + '\\s*([^;]+)', 'gi');
+      let phantom = null;
+      for (const bm of block.matchAll(borderReAll)) {
+        const val = (bm[2] ?? '').trim();
+        if (!TRANSPARENT_VAL_RE.test(val)) { phantom = { prop: bm[1], val }; break; }
+      }
+      if (!phantom) continue;
 
-      // Extract the value and skip transparent/none/0 declarations.
-      const prop = propMatch[1];
-      const valMatch = block.match(new RegExp('\\b' + prop.replace(/-/g, '\\-') + '\\s*:\\s*([^;]+)'));
-      const val = valMatch?.[1] ?? '';
-      if (TRANSPARENT_VAL_RE.test(val)) continue;
-
-      PHANTOM_FAIL.push(`${comp}: "${sel}" has \`${prop}: ${val.trim().slice(0, 60)}\` - Figma has no stroke on any variant (strokeOnAnyState=false)`);
+      PHANTOM_FAIL.push(`${comp}: "${sel}" has \`${phantom.prop}: ${phantom.val.slice(0, 60)}\` - Figma has no stroke on any variant (strokeOnAnyState=false)`);
     }
 
     if (!PHANTOM_FAIL.some(f => f.startsWith(`${comp}:`))) PHANTOM_PASS.push(`${comp} (no phantom borders)`);

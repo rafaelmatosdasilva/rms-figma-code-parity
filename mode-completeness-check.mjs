@@ -34,7 +34,7 @@ let cfg = {};
 try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
   console.error('❌ ds-config.json not found.'); process.exit(1);
 }
-const SNAP_VARS  = cfg.paths?.snapshotVars ?? 'figma-vars.snapshot.json';
+const SNAP_VARS  = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
 const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────

@@ -86,6 +86,8 @@ console.log(`\nRegistering ${EVENTS.length} webhook(s) for file ${FILE_KEY}...\n
 for (const event of EVENTS) {
   const body = {
     event_type:  event,
+    context:     'file',        // Figma webhooks v2 require a scope; file-scope this hook to FILE_KEY
+    context_id:  FILE_KEY,
     endpoint:    hookUrl,
     passcode:    SECRET,
     status:      'ACTIVE',

@@ -64,6 +64,10 @@ const KNOWN_COMPONENTS = new Set([
   'buttonPrimary', 'emptyState', 'listItem', 'statusbar', 'tableRow',
   'radioButton', 'overflowList', 'dividerSection',
 ]);
+// Normalised lookup too, so a figmaName like "Radio Button" (spaces/caps) still matches a
+// var-derived candidate like "radio-button" / "radioButton".
+const _normComp = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+const KNOWN_COMPONENTS_NORM = new Set([...KNOWN_COMPONENTS].map(_normComp));
 
 // ── Build state indicator sets ────────────────────────────────────────────────
 // Uses substring match (no dot/colon required) so ".node-selected", ".inputWrap--disabled",
@@ -138,7 +142,7 @@ for (const { sel, body } of rules) {
   // Skip @media/@keyframes inside rules (shouldn't happen with flat regex, but guard anyway).
   if (sel.startsWith('@')) continue;
 
-  for (const match of body.matchAll(/var\((--[a-zA-Z0-9-]+)/g)) {
+  for (const match of body.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)/g)) {
     const varName = match[1];
     if (SYSTEM_VARS.has(varName)) continue; // system/semantic vars are exempt
 
@@ -153,7 +157,7 @@ for (const { sel, body } of rules) {
     let compName = null;
     for (let i = parts.length - 1; i >= 1; i--) {
       const candidate = parts.slice(0, i).join('-');
-      if (KNOWN_COMPONENTS.has(candidate)) { compName = candidate; break; }
+      if (KNOWN_COMPONENTS.has(candidate) || KNOWN_COMPONENTS_NORM.has(_normComp(candidate))) { compName = candidate; break; }
     }
     if (!compName) continue;
 

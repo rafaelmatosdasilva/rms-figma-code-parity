@@ -10,7 +10,7 @@
 // First run with a missing snapshot writes the baseline (✅ pass).
 // --accept: accept the current structure as the new baseline (overwrites snapshot).
 //
-// Stored at: packages/ui/src/html-structure.snapshot.json (next to theme CSS)
+// Stored next to the theme CSS (e.g. src/html-structure.snapshot.json).
 
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join }                                     from 'path';
@@ -24,7 +24,7 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 }
 
 // Derive snapshot path next to theme CSS
-const themeCSS   = [cfg.paths?.themeCSS ?? 'packages/ui/src/theme.css'].flat()[0];
+const themeCSS   = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat()[0];
 const snapPath   = themeCSS.replace(/[^/\\]+$/, 'html-structure.snapshot.json');
 const absSnap    = join(ROOT, snapPath);
 
@@ -32,12 +32,20 @@ const pluginCSS = cfg.paths?.pluginCSS ?? [];
 const plugins   = cfg.paths?.plugins   ?? [];
 
 // ── DS component class set ────────────────────────────────────────────────────
-// Only interactive elements with a recognised DS class are fingerprinted.
-const DS_CLASSES = new Set([
-  'buttonPrimary', 'buttonSecondary', 'buttonTertiary', 'buttonQuaternary',
-  'buttonList', 'overflowList', 'segmented-control', 'inputWrap', 'swatch',
-  'badge', 'dividerSection', 'panel',
-]);
+// Only interactive elements with a recognised DS class are fingerprinted. Which
+// classes count is design-system specific, so set it per project in ds-config.json:
+//   "htmlStructureClasses": ["btn-primary", "badge", "swatch", ...]
+// When the key is absent the built-in list below is used, so existing setups are
+// unchanged; any other DS just lists its own component classes to make the gate work.
+const DS_CLASSES = new Set(
+  Array.isArray(cfg.htmlStructureClasses) && cfg.htmlStructureClasses.length
+    ? cfg.htmlStructureClasses
+    : [
+        'buttonPrimary', 'buttonSecondary', 'buttonTertiary', 'buttonQuaternary',
+        'buttonList', 'overflowList', 'segmented-control', 'inputWrap', 'swatch',
+        'badge', 'dividerSection', 'panel',
+      ]
+);
 
 // ── HTML parser ───────────────────────────────────────────────────────────────
 

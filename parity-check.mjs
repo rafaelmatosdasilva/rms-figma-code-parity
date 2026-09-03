@@ -125,10 +125,17 @@ function parseVarBlock(block) {
   return vars;
 }
 
+// Base :root must come from a TOP-LEVEL :root, not the first :root in file order - an
+// @media/@supports block physically preceding it would otherwise poison every base value.
+function stripAtRules(s) {
+  let out = s, prev;
+  do { prev = out; out = out.replace(/@[a-zA-Z-]+[^{};]*\{(?:[^{}]|\{[^{}]*\})*\}/g, ' '); } while (out !== prev);
+  return out;
+}
 function parseSelectorVars(css, selector) {
   let m;
   if (selector === 'root') {
-    m = css.match(/:root\s*\{([\s\S]*?)\}/);
+    m = stripAtRules(css).match(/:root\s*\{([\s\S]*?)\}/);
   } else if (selector === 'dark-media') {
     m = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
   } else if (selector === 'high-contrast-media') {
@@ -138,8 +145,14 @@ function parseSelectorVars(css, selector) {
     m = css.match(new RegExp(`\\.${cls}\\s+:root\\s*\\{([\\s\\S]*?)\\}|:root\\.${cls}\\s*\\{([\\s\\S]*?)\\}`));
   } else if (selector.startsWith('data:')) {
     const parts = selector.slice(5).split('=');
-    const attr = parts[0], val = parts.slice(1).join('=').replace(/^['"]|['"]$/g, '');
-    m = css.match(new RegExp(`\\[${attr}=['"]?${val}['"]?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}|:root\\[${attr}=['"]?${val}['"]?\\]\\s*\\{([\\s\\S]*?)\\}`));
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const attr = esc(parts[0]);
+    const val  = esc(parts.slice(1).join('=').replace(/^['"]|['"]$/g, ''));
+    // Accept the attribute with or without a `data-` prefix, so `data:theme=dark` matches
+    // whether the CSS writes `[data-theme="dark"]` or `[theme="dark"]` - and stays consistent
+    // with mode-resolver.mjs, which the mode gates use.
+    const A = `(?:data-)?${attr}`;
+    m = css.match(new RegExp(`\\[${A}=['"]?${val}['"]?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}|:root\\[${A}=['"]?${val}['"]?\\]\\s*\\{([\\s\\S]*?)\\}`));
   } else {
     try { m = css.match(new RegExp(selector)); } catch { return {}; }
   }
@@ -211,7 +224,7 @@ function resolveScalar(varName, depth = 0) {
 function resolveCSSAlias(varName, modeIdx) {
   const raw = (modeIdx > 0 ? modeVars[modeIdx]?.[varName] : undefined) ?? modeVars[0][varName];
   if (!raw) return null;
-  const vm = raw.trim().match(/^var\((--.+?)\)$/);
+  const vm = raw.trim().match(/^var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*(?:,[^)]*)?\)$/);   // accept a fallback: var(--x, …)
   return vm ? vm[1] : null;
 }
 
@@ -711,7 +724,12 @@ if (SCOPE_RULES.length) {
 }
 
 // ── Auto-fix: apply sizing/typography fixes to theme.css ─────────────────────
-if (FIX_MODE && autoFixes.length > 0) {
+if (FIX_MODE && autoFixes.length > 0 && THEME_PATHS.length > 1) {
+  // rawCss is every theme file concatenated; writing it back would merge them all into the
+  // first file. Auto-fix only supports a single theme file - skip rather than corrupt.
+  console.log(`\n⚠️  --fix supports a single theme file, but ${THEME_PATHS.length} are configured (${THEME_PATHS.join(', ')}).`);
+  console.log('   Skipping auto-fix to avoid merging the files; apply the fix hints below by hand.');
+} else if (FIX_MODE && autoFixes.length > 0) {
   let lines = rawCss.split('\n');
   let fixedCount = 0;
   for (const fix of autoFixes) {

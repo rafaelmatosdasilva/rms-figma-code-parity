@@ -23,7 +23,7 @@
 // Exit 2 = the component-props snapshot is missing (gate did NOT run, never a pass) -
 //          it should be committed; run the audit with FIGMA_TOKEN to generate it.
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, extname, basename, relative } from 'path';
 
 const ROOT = process.cwd();
@@ -34,7 +34,7 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 }
 
 const SNAP_PATH = cfg.paths?.compPropsSnapshot ??
-  (cfg.paths?.snapshotVars ?? 'figma-vars.snapshot.json').replace(/[^/\\]+$/, 'figma-component-props.snapshot.json');
+  (cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json').replace(/[^/\\]+$/, 'figma-component-props.snapshot.json');
 
 if (!existsSync(join(ROOT, SNAP_PATH))) {
   console.log(`\n⚠️  ${SNAP_PATH} not found at project root.`);
