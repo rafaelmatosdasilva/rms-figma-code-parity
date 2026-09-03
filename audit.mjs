@@ -93,6 +93,13 @@ function linkCommand() {
     return false;
   }
 }
+// Date + time of the commit HEAD points at: "2026-09-03 10:10". So "you are on the
+// latest" says WHEN, instead of a bare "Already up to date" that leaves people unsure
+// how fresh what they just landed on actually is.
+function describeHead() {
+  const r = spawnSync('git', ['-C', SCRIPT_DIR, 'log', '-1', '--date=format:%Y-%m-%d %H:%M', '--format=%cd'], { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
 function updateSkill() {
   console.log(`Updating the skill in ${SCRIPT_DIR} …`);
   const r = spawnSync('git', ['-C', SCRIPT_DIR, 'pull', '--ff-only'], { stdio: 'inherit' });
@@ -101,7 +108,9 @@ function updateSkill() {
     console.log(`      git -C "${SCRIPT_DIR}" pull`);
   }
   linkCommand();
-  console.log('\n✅ Done. Just run /rms-figma-code-parity - you are on the latest.');
+  const head = describeHead();
+  console.log(`\n✅ Done. You are on the latest${head ? `:\n   ${head}` : '.'}`);
+  console.log('   Run /rms-figma-code-parity to use it.');
 }
 // "Am I on the latest?" - compare local HEAD to the remote main tip with a single
 // lightweight `git ls-remote` (no fetch/merge, short timeout). Returns null when it
@@ -122,9 +131,10 @@ function checkForUpdate({ quiet } = {}) {
   const remote = ls.stdout.split(/\s+/)[0];
   const behind = remote !== local;
   if (!quiet) {
+    const head = describeHead();
     console.log(behind
-      ? `⚠️  A newer version is available.\n   you: ${local.slice(0, 7)}  ·  latest: ${remote.slice(0, 7)}\n   Update: rms-figma-code-parity --update`
-      : `✅ You are on the latest version (${local.slice(0, 7)}).`);
+      ? `⚠️  A newer version is available.\n   you: ${head || local.slice(0, 7)}\n   latest: ${remote.slice(0, 7)}\n   Update: rms-figma-code-parity --update`
+      : `✅ You are on the latest version${head ? `:\n   ${head}` : ` (${local.slice(0, 7)}).`}`);
   }
   return { behind, local, remote };
 }
@@ -1124,6 +1134,20 @@ function reportFull(label, items, shown) {
     return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
   }
 
+  // grep with a chunked file list + forced -H. A single grep over every source file can
+  // exceed the OS argv limit on a large repo, which makes the call fail and the scan
+  // silently find nothing; chunking avoids that, and -H keeps the `file:line:` prefix the
+  // hit parsers rely on even when a chunk (e.g. the last one) holds a single file.
+  function grepFiles(args, files) {
+    const CHUNK = 400;
+    let stdout = '';
+    for (let i = 0; i < files.length; i += CHUNK) {
+      const r = sh('grep', ['-H', ...args, ...files.slice(i, i + CHUNK)]);
+      if (r.stdout) stdout += r.stdout;
+    }
+    return { stdout };
+  }
+
   function runScriptAsync(scriptPath, args = []) {
     return new Promise(res => {
       const abs = resolve(SCRIPT_DIR, scriptPath);
@@ -1715,7 +1739,7 @@ function reportFull(label, items, shown) {
     }
 
     // Pass 1 - hex colors (any property, any file)
-    const hexR    = sh('grep', [...scanArgs, '#[0-9a-fA-F]{3,8}\\b', ...scanTargets]);
+    const hexR    = grepFiles([...scanArgs, '#[0-9a-fA-F]{3,8}\\b'], scanTargets);
     const hexHits = (hexR.stdout || '').split('\n').filter(l => {
       if (!l.trim() || isLegitimate(l)) return false;
       const code = l.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '');
@@ -1723,10 +1747,9 @@ function reportFull(label, items, shown) {
     });
 
     // Pass 2 - numeric literals with units (all properties: padding, radius, height, gap, etc.)
-    const numR    = sh('grep', [...scanArgs,
+    const numR    = grepFiles([...scanArgs,
       ':\\s*-?[0-9]+(\\.[0-9]+)?(px|rem|em|%|vh|vw|vmin|vmax|ch|ex)\\b',
-      ...scanTargets,
-    ]);
+    ], scanTargets);
     const numHits = (numR.stdout || '').split('\n').filter(l => {
       if (!l.trim() || isLegitimate(l)) return false;
       const code = l.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '');
@@ -1739,10 +1762,9 @@ function reportFull(label, items, shown) {
     // shorthand that mixes DS tokens with a raw literal is almost always a bug: the
     // literal should be a token too. Length units only (px/rem/em) - a `var(--x, 9px)`
     // fallback stays inside the parens and is not matched.
-    const mixR    = sh('grep', [...scanArgs,
+    const mixR    = grepFiles([...scanArgs,
       ':[[:space:]]*[^;]*var\\([^;]*\\)[^;]*[0-9]+(\\.[0-9]+)?(px|rem|em)\\b',
-      ...scanTargets,
-    ]);
+    ], scanTargets);
     const mixHits = (mixR.stdout || '').split('\n').filter(l => {
       if (!l.trim() || isLegitimate(l)) return false;
       const code = l.replace(/^[^:]+:\d+:\s*/, '').replace(/\/\*[^*]*\*\//g, '');
@@ -1752,7 +1774,7 @@ function reportFull(label, items, shown) {
     // Pass 3 - layout anti-patterns across ALL files (gate6ExcludeDirs does NOT apply here).
     // These viewport-unit rules cause scrollbar clipping and must never appear in any file.
     const allFiles = allSourceFiles();
-    const vwR = sh('grep', ['-n', '-E', ':\\s*100vw\\b|calc\\([^)]*100vw', ...allFiles]);
+    const vwR = grepFiles(['-n', '-E', ':\\s*100vw\\b|calc\\([^)]*100vw'], allFiles);
     const vwHits = (vwR.stdout || '').split('\n').filter(l => {
       if (!l.trim()) return false;
       const code = l.replace(/^[^:]+:\d+:\s*/, '');
@@ -1775,7 +1797,7 @@ function reportFull(label, items, shown) {
     // binding entirely - invisible to gates [13]/[15] since it's not markup, just a CSS string.
     // Legitimate uses (e.g. native <select> arrows, which cannot host inline <svg><use> markup)
     // must be documented in ds-config.json → knownHardcodedExceptions.
-    const svgUriR = sh('grep', ['-n', '-E', 'data:image/svg\\+xml', ...allFiles]);
+    const svgUriR = grepFiles(['-n', '-E', 'data:image/svg\\+xml'], allFiles);
     const svgUriHits = (svgUriR.stdout || '').split('\n').filter(l => {
       if (!l.trim()) return false;
       const code = l.replace(/^[^:]+:\d+:\s*/, '');
@@ -1791,7 +1813,7 @@ function reportFull(label, items, shown) {
     // Pass 5 - hardcoded box-shadow colors via rgba() (gate6ExcludeDirs does NOT apply).
     // A box-shadow with a literal rgba() bypasses DS effect styles / color tokens.
     // Document intentional shadows in ds-config.json → knownHardcodedExceptions.
-    const shadowR    = sh('grep', ['-n', '-E', 'box-shadow\\s*:.*rgba\\s*\\(', ...allFiles]);
+    const shadowR    = grepFiles(['-n', '-E', 'box-shadow\\s*:.*rgba\\s*\\('], allFiles);
     const shadowHits = (shadowR.stdout || '').split('\n').filter(l => {
       if (!l.trim() || insideBlockComment(l)) return false;
       const code    = l.replace(/^[^:]+:\d+:\s*/, '');
@@ -2081,9 +2103,12 @@ function reportFull(label, items, shown) {
     const themeMtime = THEMES.filter(p => existsSync(join(ROOT, p)))
       .map(p => statSync(join(ROOT, p)).mtime)
       .sort((a, b) => b - a)[0] ?? null;
-    for (const p of PLUGINS) {
-      const src = join(ROOT, `apps/${p}/ui.src.html`);
-      const out = join(ROOT, `apps/${p}/ui.html`);
+    for (let i = 0; i < PLUGINS.length; i++) {
+      const p = PLUGINS[i];
+      // Source is the configured pluginCSS (e.g. …/ui.src.html); the build drops `.src`.
+      // Fall back to the apps/<name>/ layout only when pluginCSS isn't configured.
+      const src = join(ROOT, PLUGIN_CSS[i] ?? `apps/${p}/ui.src.html`);
+      const out = src.replace(/\.src\.html$/, '.html');
       if (!existsSync(src) || !existsSync(out)) continue;
       if (statSync(src).mtime > statSync(out).mtime) stale.push(p);
       else if (themeMtime && themeMtime > statSync(out).mtime && !stale.includes(p))

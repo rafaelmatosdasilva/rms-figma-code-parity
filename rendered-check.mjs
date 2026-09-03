@@ -44,6 +44,16 @@ try {
   if (Array.isArray(m.CROSS_PLUGIN_CONSISTENCY)) CROSS_PLUGIN       = m.CROSS_PLUGIN_CONSISTENCY;
 } catch { /* structure-contract.mjs optional */ }
 
+// Map a plugin NAME to its BUILT UI file. Prefer the configured source (paths.pluginCSS,
+// e.g. …/ui.src.html) with `.src.html` → `.html`; fall back to the apps/<name>/ layout.
+const _pluginNames = cfg.paths?.plugins ?? [];
+const _pluginSrc   = cfg.paths?.pluginCSS ?? [];
+function builtUiPath(plugin) {
+  const i = _pluginNames.indexOf(plugin);
+  const src = i >= 0 ? _pluginSrc[i] : null;
+  return join(ROOT, src ? src.replace(/\.src\.html$/, '.html') : `apps/${plugin}/ui.html`);
+}
+
 // #2 element-geometry auto-expand: a FRAME_GEOMETRY_MAP entry maps a CSS selector to a
 // DS frame node ONCE and expands into one frameGeom assertion per listed prop (default:
 // the four padding sides). Expected values then flow from the live frame-geometry snapshot
@@ -271,9 +281,9 @@ for (const a of ASSERTIONS) (byPlugin[a.plugin] ??= []).push(a);
 const PASS = [], FAIL = [];
 
 for (const [plugin, asserts] of Object.entries(byPlugin)) {
-  const uiPath = join(ROOT, `apps/${plugin}/ui.html`);
+  const uiPath = builtUiPath(plugin);
   if (!existsSync(uiPath)) {
-    for (const a of asserts) FAIL.push(`${plugin}: apps/${plugin}/ui.html not found (run the build first)`);
+    for (const a of asserts) FAIL.push(`${plugin}: built UI not found at ${uiPath} (run the build first)`);
     continue;
   }
   const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
@@ -409,7 +419,7 @@ if (CROSS_PLUGIN.length) {
   const xpPlugins = [...new Set(CROSS_PLUGIN.flatMap(e => e.plugins))];
   const results = {}; // plugin -> { entryLabel -> {prop: val} }  (or { _missing: true })
   for (const plugin of xpPlugins) {
-    const uiPath = join(ROOT, `apps/${plugin}/ui.html`);
+    const uiPath = builtUiPath(plugin);
     if (!existsSync(uiPath)) { results[plugin] = { _missing: true }; continue; }
     const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
