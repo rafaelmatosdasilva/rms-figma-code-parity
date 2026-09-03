@@ -4,28 +4,19 @@
 // --trend: print the last 20 audit runs and exit (no new run)
 // --init:  run first-time setup (scaffold config files) and exit without auditing
 //
-// First run: if ds-config.json is missing, asks 3 questions (Figma URL, CSS path,
-// token) then auto-detects collection structure via Figma API, scaffolds
+// First run: if ds-config.json is missing, asks a few questions (Figma URL, token CSS
+// path, and whether it is a consumer file) then auto-detects collection structure via the
+// Figma API when a token is present, scaffolds
 // parity-map.mjs + structure-contract.mjs, and writes ds-config.json.
 // Commit all three - they contain no secrets and are required for CI.
 // Subsequent runs: config exists, audit starts immediately.
 //
-// Gates:
-//   [1]  Freshness             - snapshot files updated today; compiled outputs match source
-//   [2]  Parity check          - token values: color + sizing + typography
-//   [3]  Structure check       - heights + CSS base-rule var bindings
-//   [4]  Bound-token coverage  - every bound Figma token has a CSS var
-//   [5]  CSS hygiene           - no orphaned CSS vars; no raw literals in rules
-//   [6]  Sub-component isolation - no broad element selector overrides sub-component styles
-//   [7]  Visual regression     - Figma frame screenshots match stored references
-//   [8]  State coverage        - state completeness + selector binding + var placement
-//   [9]  Exemption validity    - EXPLICIT/SKIP_TOKENS/COVERED entries not stale in snapshot
-//   [10] Mode completeness     - all mode-variant tokens adapt across every configured mode
-//   [11] CSS naming round-trip - every theme.css var traces back to a Figma token
-//   [12] Contract coverage     - ::before/::after + <symbol> elements declared in contract
+// Gates: the authoritative list of gates (labels and count) is the GATE SUMMARY printed at
+// the end of a run - it is generated from the addGate(...) calls below, and sync-docs.mjs
+// keeps README.md and the skill doc in step with them.
 //
-// Performance: gates 2–4, 6–12 (subprocess-based) run in parallel via Promise.all.
-//              Gates 1 and 5 are computed inline (file stats + CSS scan).
+// Performance: the subprocess-based gates all run in parallel via Promise.all; the inline
+//              gates (freshness, CSS hygiene) are computed on the main thread.
 
 import readline                                                  from 'readline';
 import { spawn, spawnSync }                                      from 'child_process';
@@ -2329,21 +2320,19 @@ function reportFull(label, items, shown) {
   addGate('Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)',
     combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/), parseGeneric(rIconInv, /IN CODE|MISSING/)));
 
-  // ── Animation ─────────────────────────────────────────────────────────────────
+  // ── Animation & motion (Motion / Shadows are opt-in - no-op unless configured) ──
   addGate('Transitions  (duration · easing · property per DS selector)',
     parseGeneric(rTransition, /✅|❌/));
-
-  // ── Rendered output ───────────────────────────────────────────────────────────
-  addGate('Renders correctly in a browser  (real computed styles vs the DS spec)',
-    parseGeneric(rRendered, /✅|❌|⏭/));
-  addGate('What this audit actually checked  (which DS components & states are covered)',
-    parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
-
-  // ── Motion & effects (opt-in - no-op unless configured) ─────────────────────────
   addGate('Motion  (easing & duration variables → CSS)',
     parseGeneric(rMotion, /MATCH|MISMATCH|SKIPPED|⏭/));
   addGate('Shadows  (Figma effect styles → CSS box-shadow)',
     parseGeneric(rEffect, /MATCH|MISMATCH|SKIPPED|⏭/));
+
+  // ── Rendered output & self-check ────────────────────────────────────────────────
+  addGate('Renders correctly in a browser  (real computed styles vs the DS spec)',
+    parseGeneric(rRendered, /✅|❌|⏭/));
+  addGate('What this audit actually checked  (which DS components & states are covered)',
+    parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
@@ -2364,6 +2353,57 @@ function reportFull(label, items, shown) {
     for (const line of g.lines || []) console.log(`       ${line}`);
     console.log();
   });
+
+  // ── PARITY (Figma ↔ code): the two true-parity tables (variables + props) ──────
+  // Rendered DIRECTLY from the gates' structured result JSON, not from their `lines`
+  // (the per-gate line pipeline trims/filters and would mangle column alignment).
+  (function printParity() {
+    const read = (f) => { try { return JSON.parse(readFileSync(join(ROOT, f), 'utf8')); } catch { return null; } };
+    const ANSI = /\x1b\[[0-9;]*m/g;
+    const w = (s) => String(s ?? '').replace(ANSI, '').length;
+    const table = (headers, rows, cap = 60) => {   // rows: { cells: string[], ok: boolean }
+      const shown = rows.slice(0, cap);
+      const cols = headers.map((h, i) => Math.max(w(h), ...shown.map(r => w(r.cells[i]))));
+      const out = ['  ' + C.dim(headers.map((h, i) => h.padEnd(cols[i])).join('  '))];
+      for (const r of shown)
+        out.push('  ' + r.cells.map((c, i) => String(c ?? '').padEnd(cols[i])).join('  ') + '  ' + (r.ok ? C.green('✓') : C.red('✗')));
+      if (rows.length > cap) out.push(C.dim(`  … ${rows.length - cap} more`));
+      return out;
+    };
+
+    const props  = read('component-prop-result.json');
+    const parity = read('parity-check-result.json');
+    if (!props?.rows?.length && !(parity?.fail?.length || parity?.aliasFail?.length || parity?.passList?.length)) return;
+
+    console.log(C.bold('─'.repeat(WIDTH)));
+    console.log(C.bold('  PARITY  ·  Figma ↔ code'));
+    console.log(C.bold('─'.repeat(WIDTH)));
+
+    if (props?.rows?.length) {
+      console.log('\n  ' + C.bold('PROPS') + C.dim('  (component properties)'));
+      const rows = props.rows.map(r => ({
+        cells: [(r.component ? r.component + '/' : '') + r.figmaProp, r.figmaValue, r.codeProp, r.codeValue],
+        ok: r.status === 'match',
+      }));
+      for (const l of table(['FIGMA PROP', 'FIGMA VALUE', 'CODE PROP', 'CODE VALUE'], rows)) console.log(l);
+      console.log(C.dim(`  ✓ ${props.summary?.match ?? 0} match   ✗ ${props.summary?.diverged ?? 0} diverge`));
+    }
+
+    if (parity) {
+      const vRows = [];
+      for (const f of parity.fail ?? [])
+        vRows.push({ cells: [f.token ?? '', f.mode ?? '-', f.figma ?? '(bound)', f.css ?? 'not in code'], ok: false });
+      for (const a of parity.aliasFail ?? [])
+        vRows.push({ cells: [a.token ?? '', a.mode ?? '-', (a.figmaChain ?? []).join(' → '), (a.cssChain ?? []).join(' → ') || 'hardcoded'], ok: false });
+      const matchCount = (parity.passList ?? []).length;
+      if (vRows.length || matchCount) {
+        console.log('\n  ' + C.bold('VARIABLES') + C.dim('  (design tokens)'));
+        if (vRows.length) for (const l of table(['VARIABLE', 'MODE', 'FIGMA', 'CODE'], vRows)) console.log(l);
+        console.log(C.dim(`  ✓ ${matchCount} match   ✗ ${vRows.length} diverge`));
+      }
+    }
+    console.log();
+  })();
 
   // ── Summary table ─────────────────────────────────────────────────────────────
   const GATE_PLAIN = [
@@ -2388,15 +2428,13 @@ function reportFull(label, items, shown) {
     'HTML structure (ids, component classes, icon refs) agrees with the snapshot',
     'Every declared slot uses the correct DS icon and component class',
     'All DS icon symbols are documented, paths verified, and current from Figma',
-    // Animation
+    // Animation & motion (Motion / Shadows opt-in)
     'All CSS transitions use the documented duration, easing and property',
-    // Rendered
-    'Rendered computed styles agree with the DS spec (headless Chrome)',
-    // Audit self-check
-    'Coverage - which DS components/states the audit actually checks',
-    // Motion & effects (opt-in)
     'Motion tokens (easing · duration) agree - when configured',
     'Effect/shadow styles agree with CSS box-shadow - when configured',
+    // Rendered output & self-check
+    'Rendered computed styles agree with the DS spec (headless Chrome)',
+    'Coverage - which DS components/states the audit actually checks',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: gates consuming a stale snapshot pass against outdated data - DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity - the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',

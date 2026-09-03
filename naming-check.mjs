@@ -67,7 +67,7 @@ function conventionVar(token) {
 }
 for (const token of figmaTokens) {
   if (SKIP_TOKENS.has(token)) continue;
-  if (token in EXPLICIT || token in EXPLICIT_SIZING) continue;
+  if (Object.prototype.hasOwnProperty.call(EXPLICIT, token) || Object.prototype.hasOwnProperty.call(EXPLICIT_SIZING, token)) continue;
   if (SIZING_SKIP.has(token)) continue;
   knownCSSVars.add(conventionVar(token));
   knownCSSVars.add(conventionVar(token.replace(/\/color$/, '')));

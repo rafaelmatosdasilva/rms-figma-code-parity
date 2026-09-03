@@ -23,7 +23,7 @@
 // Exit 2 = the component-props snapshot is missing (gate did NOT run, never a pass) -
 //          it should be committed; run the audit with FIGMA_TOKEN to generate it.
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
 import { join, extname, basename, relative } from 'path';
 
 const ROOT = process.cwd();
@@ -218,6 +218,18 @@ const isStateAxis = (name, def) => STATE_PROP_NAMES.has(norm(name)) ||
    def.variantOptions.every(o => STATE_WORDS.has(norm(o))));
 
 const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [], VALUE_FAIL = [], VALUE_INFO = [], SLOT_FAIL = [];
+const rows = [];   // structured parity rows: { component, figmaProp, figmaValue, codeProp, codeValue, status }
+
+// How a Figma property definition reads in the report: 's · m · l', 'boolean', 'text', 'icon (instance)'.
+const figmaValueOf = (def) => {
+  if (!def) return '(unknown)';
+  if (def.type === 'VARIANT' && Array.isArray(def.variantOptions)) return def.variantOptions.join(' · ');
+  if (def.type === 'BOOLEAN') return 'boolean';
+  if (def.type === 'TEXT') return 'text';
+  if (def.type === 'INSTANCE_SWAP') return def.defaultValue ? `icon (${def.defaultValue})` : 'icon (instance)';
+  return String(def.type || '(value)').toLowerCase();
+};
+
 for (const [figmaName, entry] of Object.entries(SNAP)) {
   if (figmaName === '_updated' || !entry?.properties) continue;
   const figDefs = new Map(Object.entries(entry.properties)
@@ -230,6 +242,7 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
   const { file, how } = resolveFile(figmaName);
   if (!file) {
     NOFILE.push(`${figmaName}: has Figma properties [${figNames.join(', ')}] but no code component found (${how}) - set ds-config.json → componentFiles["${figmaName}"], or exempt via knownUnimplementedComponents`);
+    for (const fp of figNames) rows.push({ component: figmaName, figmaProp: fp, figmaValue: figmaValueOf(figDefs.get(fp)), codeProp: 'not in code', codeValue: `(no code file: ${how})`, status: 'missing' });
     continue;
   }
   const text = readText(file);
@@ -240,61 +253,91 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
   const rel = relative(ROOT, file);
 
   // #1/#3: for a matched prop, compare Figma's default value, variant options and type
-  // against the code. Only fails on values we can actually read from the code (a default
-  // or a string-literal union); when the code side isn't extractable we stay quiet, so
-  // there are no false positives from parsing gaps.
+  // against the code. Pushes to VALUE_FAIL/VALUE_INFO (text output + exit code) AND returns
+  // the report row's { status, codeValue }. Only fails on values actually readable from the
+  // code (a default or a string-literal union); a parsing gap stays a non-failing 'match'.
   const checkValues = (fp, def, codeName) => {
-    if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) return;
+    if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) return { status: 'match', codeValue: '(exempt)' };
     const cn = norm(codeName);
-    // default value
     const figDefault = def?.defaultValue;
     const codeDefault = codeDefaults.get(cn);
-    if (figDefault != null && figDefault !== '' && codeDefault != null && norm(figDefault) !== norm(codeDefault))
+    if (figDefault != null && figDefault !== '' && codeDefault != null && norm(figDefault) !== norm(codeDefault)) {
       VALUE_FAIL.push(`${figmaName}/${fp}: default differs - Figma "${figDefault}" vs code "${codeName}=${codeDefault}"  (${rel})`);
-    // variant options (does the code accept every Figma variant value?)
+      return { status: 'value', codeValue: `default ${codeDefault}` };
+    }
     if (def?.type === 'VARIANT' && Array.isArray(def.variantOptions) && def.variantOptions.length) {
       const opts = codeOptions.get(cn);
       if (opts) {
         const miss = def.variantOptions.filter(o => !opts.has(norm(o)));
-        if (miss.length) VALUE_FAIL.push(`${figmaName}/${fp}: code prop "${codeName}" is missing Figma variant option(s) ${miss.map(o => `"${o}"`).join(', ')}  (${rel})`);
-      } else {
-        VALUE_INFO.push(`${figmaName}/${fp}: Figma variants [${def.variantOptions.join(', ')}] - could not read the code prop's allowed values to verify  (${rel})`);
+        if (miss.length) {
+          VALUE_FAIL.push(`${figmaName}/${fp}: code prop "${codeName}" is missing Figma variant option(s) ${miss.map(o => `"${o}"`).join(', ')}  (${rel})`);
+          return { status: 'value', codeValue: [...opts].join(' · ') };
+        }
+        return { status: 'match', codeValue: [...opts].join(' · ') };
       }
+      VALUE_INFO.push(`${figmaName}/${fp}: Figma variants [${def.variantOptions.join(', ')}] - could not read the code prop's allowed values to verify  (${rel})`);
+      return { status: 'match', codeValue: '(present)' };
     }
-    // type sanity (light): a Figma BOOLEAN whose code default is a non-boolean literal
-    if (def?.type === 'BOOLEAN' && codeDefault != null && codeDefault !== 'true' && codeDefault !== 'false')
-      VALUE_INFO.push(`${figmaName}/${fp}: Figma BOOLEAN but code default "${codeDefault}" is not boolean - check the prop type  (${rel})`);
+    if (def?.type === 'BOOLEAN') {
+      if (codeDefault != null && codeDefault !== 'true' && codeDefault !== 'false')
+        VALUE_INFO.push(`${figmaName}/${fp}: Figma BOOLEAN but code default "${codeDefault}" is not boolean - check the prop type  (${rel})`);
+      return { status: 'match', codeValue: 'boolean' };
+    }
+    return { status: 'match', codeValue: codeDefault != null ? `default ${codeDefault}` : '(present)' };
   };
 
   const codeSlots = extractSlots(text);
   const matchedCode = new Set();
   const missingHere = [];
   for (const fp of figNames) {
-    if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) { OK.push(`${figmaName}/${fp} (exempt)`); continue; }
     const def = figDefs.get(fp);
-    // #4: an INSTANCE_SWAP property is a SLOT, not a value prop - check the code has a
-    // matching slot (a named slot, or a default slot / children), not a prop of that name.
+    const figmaValue = figmaValueOf(def);
+    const pushRow = (codeProp, codeValue, status) => rows.push({ component: figmaName, figmaProp: fp, figmaValue, codeProp, codeValue, status });
+
+    if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) { OK.push(`${figmaName}/${fp} (exempt)`); pushRow(fp, '(exempt)', 'match'); continue; }
+
+    // An INSTANCE_SWAP (e.g. an icon) is NOT assumed to be a slot: the code may expose it as
+    // a prop OR a slot. Match either, and report the actual representation.
     if (def?.type === 'INSTANCE_SWAP') {
-      if (codeSlots.named.has(norm(fp)) || codeSlots.hasDefault) OK.push(`${figmaName}/${fp} (slot)`);
-      else SLOT_FAIL.push(`${figmaName}: Figma slot "${fp}" (instance swap) has no code slot (Vue <slot>/React children)  (${rel})`);
-      continue;
+      const fn = norm(fp);
+      if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp} (prop)`); pushRow(codeNorm.get(fn), 'prop', 'match'); continue; }
+      const aliasTo0 = aliases[fp] && norm(aliases[fp]);
+      if (aliasTo0 && codeNorm.has(aliasTo0)) { matchedCode.add(aliasTo0); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (prop, alias)`); pushRow(aliases[fp], 'prop', 'match'); continue; }
+      if (codeSlots.named.has(fn)) { OK.push(`${figmaName}/${fp} (slot)`); pushRow(fp, 'slot', 'match'); continue; }
+      if (codeSlots.hasDefault)   { OK.push(`${figmaName}/${fp} (default slot)`); pushRow('(default slot)', 'slot', 'match'); continue; }
+      SLOT_FAIL.push(`${figmaName}: Figma instance-swap "${fp}" has no code prop or slot  (${rel})`);
+      pushRow('not in code', '-', 'missing'); continue;
     }
+
     const fn = norm(fp);
-    if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp}`); checkValues(fp, figDefs.get(fp), codeNorm.get(fn)); continue; }
+    if (codeNorm.has(fn)) { matchedCode.add(fn); OK.push(`${figmaName}/${fp}`); const v = checkValues(fp, def, codeNorm.get(fn)); pushRow(codeNorm.get(fn), v.codeValue, v.status); continue; }
     const aliasTo = aliases[fp] && norm(aliases[fp]);
-    if (aliasTo && codeNorm.has(aliasTo)) { matchedCode.add(aliasTo); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (alias)`); checkValues(fp, figDefs.get(fp), codeNorm.get(aliasTo)); continue; }
-    missingHere.push(fp);
+    if (aliasTo && codeNorm.has(aliasTo)) { matchedCode.add(aliasTo); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (alias)`); const v = checkValues(fp, def, codeNorm.get(aliasTo)); pushRow(aliases[fp], v.codeValue, v.status); continue; }
+    missingHere.push(fp);   // row added after rename-pairing below
     MISSING.push(`${figmaName}: Figma property "${fp}" has no code prop  (${rel})`);
   }
   const extraHere = [...codeNorm.entries()].filter(([cn]) => !matchedCode.has(cn));
-  for (const [, cp] of extraHere) EXTRA.push(`${figmaName}: code prop "${cp}" has no Figma property  (${rel})`);
 
-  // Suggestions only: pair a missing Figma prop with an unused code prop when one name
-  // clearly contains the other (>=3 chars). Advisory - confirm by adding an alias.
+  // Pair an unmatched Figma prop with an unused code prop when one name clearly contains the
+  // other (>=3 chars) → a RENAME row (and consume that code prop so it isn't also 'extra').
+  const pairedCode = new Set();
   for (const fp of missingHere) {
     const fn = norm(fp);
-    const hit = extraHere.find(([cn]) => cn.length >= 3 && fn.length >= 3 && (cn.includes(fn) || fn.includes(cn)));
-    if (hit) SUGGEST.push(`${figmaName}: Figma "${fp}" might be code "${hit[1]}" - if so add componentPropAliases["${figmaName}"]["${fp}"] = "${hit[1]}"`);
+    const def = figDefs.get(fp);
+    const hit = extraHere.find(([cn]) => !pairedCode.has(cn) && cn.length >= 3 && fn.length >= 3 && (cn.includes(fn) || fn.includes(cn)));
+    if (hit) {
+      pairedCode.add(hit[0]);
+      SUGGEST.push(`${figmaName}: Figma "${fp}" might be code "${hit[1]}" - if so add componentPropAliases["${figmaName}"]["${fp}"] = "${hit[1]}"`);
+      rows.push({ component: figmaName, figmaProp: fp, figmaValue: figmaValueOf(def), codeProp: hit[1], codeValue: '(rename?)', status: 'rename' });
+    } else {
+      rows.push({ component: figmaName, figmaProp: fp, figmaValue: figmaValueOf(def), codeProp: 'not in code', codeValue: '-', status: 'missing' });
+    }
+  }
+
+  for (const [cn, cp] of extraHere) {
+    if (pairedCode.has(cn)) continue;   // already shown as a rename row
+    EXTRA.push(`${figmaName}: code prop "${cp}" has no Figma property  (${rel})`);
+    rows.push({ component: figmaName, figmaProp: 'not in Figma', figmaValue: '-', codeProp: cp, codeValue: '(present)', status: 'extra' });
   }
 }
 
@@ -309,6 +352,15 @@ if (SUGGEST.length)    console.log(`ℹ️ RENAME?   ${SUGGEST.length}   (possib
 if (VALUE_INFO.length) console.log(`ℹ️ VALUE?    ${VALUE_INFO.length}   (could not read a code value to verify - advisory)`);
 
 const fail = MISSING.length + NOFILE.length + VALUE_FAIL.length + SLOT_FAIL.length;
+
+// Structured result for the parity report table (best-effort; never affects the gate result).
+try {
+  writeFileSync(join(ROOT, 'component-prop-result.json'), JSON.stringify({
+    pass: fail === 0,
+    rows,
+    summary: { total: rows.length, match: rows.filter(r => r.status === 'match').length, diverged: rows.filter(r => r.status !== 'match').length },
+  }, null, 2) + '\n');
+} catch { /* result file is optional */ }
 if (MISSING.length)    { console.log('\n─── Missing in code (rename the code prop to match, add the prop, or document an alias) ──'); for (const l of MISSING) console.log(`  ❌ ${l}`); }
 if (VALUE_FAIL.length) { console.log('\n─── Wrong value (default or variant options do not match Figma) ──'); for (const l of VALUE_FAIL) console.log(`  ❌ ${l}`); }
 if (SLOT_FAIL.length)  { console.log('\n─── Missing slot (Figma instance swap with no code slot) ──'); for (const l of SLOT_FAIL) console.log(`  ❌ ${l}`); }

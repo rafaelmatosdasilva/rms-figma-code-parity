@@ -143,10 +143,10 @@ Each run checks 21 things and tells you which are off. In plain terms:
   ✅  [15]  Every declared slot uses the correct DS icon and co…Pass
   ✅  [16]  All DS icon symbols are documented, paths verified,…Pass
   ✅  [17]  All CSS transitions use the documented duration, ea…Pass
-  ✅  [18]  Rendered computed styles agree with the DS spec (he…Pass
-  ✅  [19]  Coverage - which DS components/states the audit act…Pass
-  ✅  [20]  Motion tokens (easing · duration) agree - when conf…Pass
-  ✅  [21]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
+  ✅  [18]  Motion tokens (easing · duration) agree - when conf…Pass
+  ✅  [19]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
+  ✅  [20]  Rendered computed styles agree with the DS spec (he…Pass
+  ✅  [21]  Coverage - which DS components/states the audit act…Pass
 
 ────────────────────────────────────────────────────────────
 

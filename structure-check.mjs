@@ -326,7 +326,7 @@ if (themeCSS) {
 // Convert a Figma token name → expected CSS var name via EXPLICIT map + convention.
 // Returns null if the token should be skipped (EXPLICIT null, SKIP_TOKENS, or rgba-only).
 function tokenToExpectedVar(token) {
-  if (token in EXPLICIT) return EXPLICIT[token]; // null means skip
+  if (Object.prototype.hasOwnProperty.call(EXPLICIT, token)) return EXPLICIT[token]; // null means skip
   if (SKIP_TOKENS.has(token)) return null;
   return '--' + token
     .replace(/\/iconText\//g, '/text/')
@@ -371,7 +371,7 @@ function componentToBaseSelector(name) {
 function variantToModifier(props) {
   const mods = [];
   for (const [, val] of Object.entries(props)) {
-    if (!(val in STANDARD_STATE_MODIFIER)) return null; // unknown → skip variant
+    if (!Object.prototype.hasOwnProperty.call(STANDARD_STATE_MODIFIER, val)) return null; // unknown → skip variant
     const m = STANDARD_STATE_MODIFIER[val];
     if (m && !mods.includes(m)) mods.push(m);
   }

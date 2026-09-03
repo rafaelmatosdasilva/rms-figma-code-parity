@@ -228,15 +228,9 @@ function resolveCSSAlias(varName, modeIdx) {
   return vm ? vm[1] : null;
 }
 
-// 'primitives/Neutral 300' → '--neutral-300'
-function figmaAliasToCSSVar(alias) {
-  const bare = alias.startsWith(PRIMITIVE_PREFIX) ? alias.slice(PRIMITIVE_PREFIX.length) : alias;
-  return '--' + bare.toLowerCase().replace(/\s+/g, '-').replace(/\//g, '-');
-}
-
-// Converts a Figma alias hop name to CSS var, applying the project's naming conventions.
-// Unlike figmaAliasToCSSVar: preserves case for semantic tokens and drops DROP_SEGMENTS suffixes.
-// Used for full intermediate chain comparisons.
+// Converts a Figma alias hop name to CSS var, applying the project's naming conventions:
+// preserves case for semantic tokens and drops DROP_SEGMENTS suffixes. Used for full
+// intermediate chain comparisons.
 function aliasHopToVar(hop) {
   if (hop.startsWith(PRIMITIVE_PREFIX)) {
     const bare = hop.slice(PRIMITIVE_PREFIX.length);
