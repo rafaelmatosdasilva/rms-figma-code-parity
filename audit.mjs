@@ -29,6 +29,7 @@ import { buildReport }                                          from './report-h
 import { makeFigmaFetch }                                       from './figma-fetch.mjs';
 import { collectRawValues, COLLECT_NODE_BUDGET }                from './collect-raw-values.mjs';
 import { extractDynamicClassPrefixes }                          from './dynamic-class-prefixes.mjs';
+import { frameworkGateSkipReason }                              from './component-framework-gate.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT       = process.cwd();
@@ -2379,10 +2380,22 @@ function reportFull(label, items, shown) {
     parseGate3(rStructure));
   addGate('All states are built  (each state implemented · correct selector · variable in the right rule)',
     combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/), parseGeneric(rStateOpacity, /CORRECT|MISMATCH/)));
+  // The component-prop and composition gates only make sense for a component FRAMEWORK codebase
+  // (Vue/React with declared props and instance nesting). A DS *consumer* that implements the
+  // components as CSS classes + markup (a plain-HTML plugin, say) has no prop-components for them
+  // to match, so every DS component reports "no code file" and the gates hard-fail the whole run
+  // for a codebase they don't apply to. Let such a project opt out with
+  // `ds-config.json → frameworkComponents: false`; the gates then SKIP (neutral, like the opt-in
+  // motion/effect gates) instead of failing. Composition also skips when its snapshot was never
+  // captured (opt-in, exit 2) rather than counting as a failure.
+  const parseComponentFrameworkGate = (r, re) => {
+    const skip = frameworkGateSkipReason(cfg.frameworkComponents, r.status);
+    return skip ? { pass: true, planLimited: true, lines: [C.yellow('⏭ SKIPPED - ' + skip)] } : parseGeneric(r, re);
+  };
   addGate('Component props match Figma  (names, defaults, variant options & slots vs code)',
-    parseGeneric(rCompProp, /OK|MISSING|VALUE|SLOT|NO FILE|RENAME/));
+    parseComponentFrameworkGate(rCompProp, /OK|MISSING|VALUE|SLOT|NO FILE|RENAME/));
   addGate('Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)',
-    parseGeneric(rCompose, /OK|MISSING|NO FILE|EXTRA/));
+    parseComponentFrameworkGate(rCompose, /OK|MISSING|NO FILE|EXTRA/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references)',
