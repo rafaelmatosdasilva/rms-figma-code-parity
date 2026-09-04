@@ -16,6 +16,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { rawGapMatches } from './raw-gap.mjs';
 
 const ROOT = process.cwd();
 
@@ -249,9 +250,19 @@ for (const [name, expect] of Object.entries(CONTRACT)) {
   const contractChildPad = [...contractChildren, ...(expect.childFramePadding ?? [])];
   for (const sc of got.childFrameGaps ?? []) {
     const c = contractChildren.find(k => k.name === sc.name);
-    if (!c) FAIL.push({ component: name, field: `children.${sc.name}.gapVar`, expected: '(uncontracted - add a children entry)', got: sc.gapVar });
-    else if ((c.gapVar ?? null) !== sc.gapVar)
-      FAIL.push({ component: name, field: `children.${sc.name}.gapVar`, expected: c.gapVar ?? null, got: sc.gapVar });
+    if (!c) {
+      // A BOUND gap (a real DS token on an inner frame) must be contracted. An UNBOUND gap
+      // (gapVar null, only a raw gapPx — captured so flush/raw inner frames are visible) is NOT
+      // a hard requirement: contracting every raw inner gap would flood the contract, so it is
+      // only enforced when the author opts in with a children entry carrying gapPx. Ignore here.
+      if (sc.gapVar) FAIL.push({ component: name, field: `children.${sc.name}.gapVar`, expected: '(uncontracted - add a children entry)', got: sc.gapVar });
+      continue;
+    }
+    if ((c.gapVar ?? null) !== (sc.gapVar ?? null))
+      FAIL.push({ component: name, field: `children.${sc.name}.gapVar`, expected: c.gapVar ?? null, got: sc.gapVar ?? null });
+    // When both sides pin a raw px gap, a DS-side change to it (e.g. flush 0 → 4px) is a divergence.
+    if (typeof c.gapPx === 'number' && typeof sc.gapPx === 'number' && c.gapPx !== sc.gapPx)
+      FAIL.push({ component: name, field: `children.${sc.name}.gapPx`, expected: c.gapPx, got: sc.gapPx });
   }
   for (const c of contractChildren) {
     if (c.gapVar && !(got.childFrameGaps ?? []).some(k => k.name === c.name))
@@ -899,6 +910,15 @@ for (const [comp, contract] of Object.entries(CONTRACT)) {
         if (usedVar === expectedVar) CHILD_PASS.push(`${comp}/${child.name}/gap`);
         else CHILD_FAIL.push(`${comp}/${child.name}/gap: "${usedVar ?? '(not set)'}" ≠ var(${expectedVar}) [${child.gapVar}]`);
       }
+    } else if (typeof child.gapPx === 'number') {
+      // Raw (unbound) inner-frame gap, INCLUDING 0 — a "flush" child frame the DS renders with no
+      // gap token. This is exactly the class token-only childFrameGaps misses: a DS frame whose
+      // children sit flush (gap 0), so nothing stops the code adding a stray gap. The CSS must
+      // render the same literal. Accept "0"/"0px" for 0, else "<n>px".
+      const m = block.match(/(?<![a-zA-Z-])gap\s*:\s*([^;\n]+)/);
+      const got = m ? m[1].trim() : null;
+      if (rawGapMatches(got, child.gapPx)) CHILD_PASS.push(`${comp}/${child.name}/gap`);
+      else CHILD_FAIL.push(`${comp}/${child.name}/gap: "${got ?? '(not set)'}" ≠ ${child.gapPx === 0 ? '0' : child.gapPx + 'px'} [raw ${child.gapPx}px]`);
     }
     for (const [side, tokenName] of [['tb', child.paddingVar?.tb], ['lr', child.paddingVar?.lr]]) {
       if (!tokenName) continue;
