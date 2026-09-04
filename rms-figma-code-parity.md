@@ -768,7 +768,15 @@ for (const child of defaultVariant.children ?? []) {
   if (pv) childFramePadding.push({ name: child.name, paddingVar: pv });
   const gapId = child.boundVariables?.itemSpacing?.id;
   const gv = gapId ? idToVar[gapId]?.name ?? null : null;
-  if (gv) childFrameGaps.push({ name: child.name, gapVar: gv });
+  // A token-bound gap is always recorded. An UNBOUND gap (no variable) is recorded too, but only
+  // for an auto-layout frame with ≥2 children — where a gap is actually meaningful — as
+  // { gapVar: null, gapPx }. This makes a flush (gap 0) or raw-px inner frame visible so a
+  // `children` entry can pin it with `gapPx` and a Phase-1 diff catches a DS change to it.
+  const isAutoLayout = child.layoutMode && child.layoutMode !== 'NONE';
+  const gapPx = typeof child.itemSpacing === 'number' ? child.itemSpacing : null;
+  if (gv) childFrameGaps.push({ name: child.name, gapVar: gv, gapPx });
+  else if (isAutoLayout && gapPx !== null && (child.children?.length ?? 0) >= 2)
+    childFrameGaps.push({ name: child.name, gapVar: null, gapPx });
 }
 // Include childFramePadding / childFrameGaps in snapshot only when non-empty
 ```
@@ -822,6 +830,21 @@ Write the result in this shape:
    ```
 
 **`childFrameGaps` → contracted `children` entry required.** Same idea for inner-frame gaps: every snapshot `childFrameGaps` entry must have a matching `children: [{ name, cssSelector, gapVar }]` entry in `structure-contract.mjs`. Gate [3] fails on an uncontracted snapshot entry, a `gapVar` mismatch (contract stale vs Figma), or a contracted `gapVar` whose frame no longer binds a gap in Figma. Set `cssSelector: null` when the child frame is flattened in the HTML (its gap/padding is expressed on the root rule or geometrically) - the CSS lookup in Gate [3f] is skipped, but the snapshot cross-check still runs, so a DS rebind is always caught. Document the flattening in a comment next to the entry.
+
+**Unbound / flush inner gaps (`gapPx`).** A `gapVar` only exists when the DS binds the inner
+frame's spacing to a *token*. A frame whose children sit **flush** (auto-layout gap 0) or use a
+raw px gap has no token, so it never appeared in `childFrameGaps` and nothing stopped the code
+from adding a stray gap there - the label-to-icon gap on the switch's Content frame (DS 0, code
+`gap/xs`) drifted for exactly this reason. Two parts close it:
+- **Capture** records auto-layout child frames with an unbound gap too, as
+  `{ name, gapVar: null, gapPx: <number> }` (including `gapPx: 0`), so the value is visible and a
+  Phase-1 diff surfaces a DS change to it.
+- **Contract** a `children` entry may pin the raw value with `gapPx` instead of `gapVar`:
+  `{ name: 'Content', cssSelector: '.switch-content', gapPx: 0 }`. Gate [3f] then asserts the CSS
+  `gap` equals that literal (`0`/`0px`, or `<n>px`), and the snapshot cross-check flags a DS-side
+  change to a contracted `gapPx`. To avoid flooding the contract, an **uncontracted** unbound gap
+  is *not* a failure (unlike an uncontracted token gap) - it is only enforced once you opt in with
+  a `gapPx` entry. Use it whenever "the DS keeps these flush" is a real constraint.
 
 ---
 

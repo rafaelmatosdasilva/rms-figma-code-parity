@@ -54,8 +54,6 @@ rms-figma-code-parity --update     # get the latest
 
 Every run also gives you a quiet heads-up (once a day) when a new version is out.
 
-**Installed an older way and it won't update?** In the terminal, run the install command from step 1 once more. It fixes the setup for good, and that is your last download.
-
 ---
 
 ## What it does
