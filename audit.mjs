@@ -60,6 +60,20 @@ function _argValues(flag) {
 const SCOPE_COMPONENTS = [..._argValues('--component'), ..._argValues('--components')]
   .flatMap(v => v.split(',')).map(s => s.trim()).filter(Boolean);
 
+// ── Non-interactive first-time setup (for agents / CI) ────────────────────────
+// First-time setup normally prompts on stdin, which an agent turn or CI job cannot
+// drive reliably. Supply the answers as flags instead and setup runs without any
+// prompt:
+//   --figma-url=<url|key>   --theme-css=a.css,b.css   --figma-source-url=<url>
+// When --figma-url is present, setup is non-interactive; a missing --theme-css
+// falls back to auto-detected token CSS, and if none is detected setup exits with
+// a clear error instead of writing a broken (empty themeCSS) config.
+function _argValue(flag) { const v = _argValues(flag); return v.length ? v[v.length - 1] : null; }
+const INIT_FIGMA_URL      = _argValue('--figma-url') ?? _argValue('--figma-key');
+const INIT_THEME_CSS      = _argValue('--theme-css');
+const INIT_SOURCE_URL     = _argValue('--figma-source-url');
+const INIT_NONINTERACTIVE = INIT_FIGMA_URL != null;
+
 // ── Easy updates: link the command to this folder, and pull latest ────────────
 // So people never have to re-download. `--link-command` points the global
 // /rms-figma-code-parity command at THIS local skill folder via a symlink, so a
@@ -851,7 +865,54 @@ async function bootstrapConfig() {
   }
   const unique = [...new Set(candidates)];
   const detectedCSS = unique.length === 1 ? unique[0] : null;
-  if (unique.length) console.log(C.dim(`  Found token CSS file(s): ${unique.join(', ')}`));
+
+  // No static token CSS? Many design systems declare no token values on disk - they load
+  // them at RUNTIME from a dynamic <link> or a remote stylesheet URL built in code. Scan the
+  // source for those so a runtime-token DS gets a concrete pointer ("your values live here")
+  // instead of a dead end. Fully generic - matches any stylesheet URL / dynamic <link>, no
+  // project-specific strings.
+  function detectRuntimeStylesheets(root) {
+    const hits = new Set();
+    const SRC_EXT = ['.js', '.ts', '.mjs', '.vue', '.jsx', '.tsx', '.html'];
+    const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.parity-refs', '.parity-out', 'coverage']);
+    const URL_RE  = /https?:\/\/[^'"`\s)]+\.css(?:[^'"`\s)]*)?/gi;      // remote .css (incl. ${..} in backticks)
+    const TMPL_RE = /(?:href|url)\s*[:=]\s*`([^`]*\.css[^`]*)`/gi;      // href = `…css` template literals
+    const LINK_RE = /<link\b[^>]*\bid=["']([^"']+)["'][^>]*\brel=["']stylesheet["']|<link\b[^>]*\brel=["']stylesheet["'][^>]*\bid=["']([^"']+)["']/gi;
+    let scanned = 0;
+    (function walk(dir, depth) {
+      if (depth > 6 || scanned > 4000) return;
+      let entries; try { entries = readdirSync(dir); } catch { return; }
+      for (const e of entries) {
+        const p = join(dir, e);
+        let st; try { st = statSync(p); } catch { continue; }
+        if (st.isDirectory()) { if (!SKIP.has(e)) walk(p, depth + 1); continue; }
+        const dot = e.lastIndexOf('.'); if (dot === -1 || !SRC_EXT.includes(e.slice(dot))) continue;
+        scanned++;
+        let t; try { t = readFileSync(p, 'utf8'); } catch { continue; }
+        let m;
+        URL_RE.lastIndex = 0;  while ((m = URL_RE.exec(t)))  hits.add(m[0]);
+        TMPL_RE.lastIndex = 0; while ((m = TMPL_RE.exec(t))) hits.add(m[1]);
+        LINK_RE.lastIndex = 0; while ((m = LINK_RE.exec(t))) hits.add(`<link id="${m[1] || m[2]}"> - href set at runtime`);
+      }
+    })(root, 0);
+    return [...hits];
+  }
+  // Rank hints so the likely token loader shows first: the dynamic <link> mechanism, then
+  // app/same-origin URLs, and well-known third-party CDNs (highlighters, fonts) last - those
+  // are almost never where DS token values live.
+  const CDN_RE = /cdnjs|jsdelivr|unpkg|googleapis|gstatic|cloudflare/i;
+  const rankHint = h => h.startsWith('<link') ? 0 : (CDN_RE.test(h) ? 2 : 1);
+  const runtimeHints = (unique.length ? [] : detectRuntimeStylesheets(ROOT))
+    .sort((a, b) => rankHint(a) - rankHint(b));
+  const printHints = (out, indent) => { for (const h of runtimeHints.slice(0, 8)) out(C.dim(indent + h)); };
+
+  if (unique.length) {
+    console.log(C.dim(`  Found token CSS file(s): ${unique.join(', ')}`));
+  } else if (runtimeHints.length) {
+    console.log(C.yellow('  ⚠️  No static token CSS found - token values look loaded at runtime from:'));
+    printHints(console.log, '       ');
+    console.log(C.dim('     Download the theme stylesheet(s) locally, then pass them via --theme-css.'));
+  }
 
   // Auto-detect plugin CSS
   const pluginCSS = [], plugins = [];
@@ -872,29 +933,68 @@ async function bootstrapConfig() {
   }
   console.log('');
 
-  // ── 3 questions ───────────────────────────────────────────────────────────────
-  const rl  = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const ask = q => new Promise(res => rl.question(q, res));
-
-  // Q1 - Figma file URL
-  const figmaRaw     = (await ask('Figma file URL: ')).trim();
-  const figmaFileKey = (() => {
-    const m = figmaRaw.match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
-    return m ? m[1] : figmaRaw;
-  })();
-
-  // Q2 - Token CSS path(s)
-  let themeCSS;
+  // ── Setup answers ─────────────────────────────────────────────────────────────
+  // Answers come from flags (non-interactive) or interactive prompts. Both paths
+  // produce: figmaRaw, themeCSS, figmaSourceKey.
+  const parseKey = raw => {
+    const m = (raw || '').match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
+    return m ? m[1] : (raw || '').trim();
+  };
   const defaultHint = detectedCSS ?? (unique.length > 1 ? unique.join(', ') : null);
-  if (defaultHint) {
-    const ans  = (await ask(`Token CSS file(s) [${defaultHint}]: `)).trim();
-    const parts = (ans || defaultHint).split(',').map(s => s.trim()).filter(Boolean);
-    themeCSS = parts.length === 1 ? parts[0] : parts;
+  // Resolve a token-CSS answer to a string / array / null. A blank answer falls
+  // back to any auto-detected file(s); null means "nothing given and none found".
+  const resolveTheme = ans => {
+    const parts = (ans || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (parts.length) return parts.length === 1 ? parts[0] : parts;
+    if (unique.length) return unique.length === 1 ? unique[0] : unique;
+    return null;
+  };
+
+  let figmaRaw, themeCSS, figmaSourceKey = '';
+
+  if (INIT_NONINTERACTIVE) {
+    console.log(C.dim('  Non-interactive setup (flags provided)'));
+    figmaRaw = INIT_FIGMA_URL || '';
+    themeCSS = resolveTheme(INIT_THEME_CSS);
+    if (INIT_SOURCE_URL) figmaSourceKey = parseKey(INIT_SOURCE_URL);
+    if (themeCSS == null) {
+      console.error(C.red('\n❌ No token CSS file: pass --theme-css=<path[,path]> (none was auto-detected).'));
+      console.error(C.dim('   This DS may inject token values at runtime rather than declaring them in a static CSS file;'));
+      console.error(C.dim('   the value gates need a file that declares :root { --token: value } to resolve against.'));
+      if (runtimeHints.length) {
+        console.error(C.dim('   Detected runtime-loaded stylesheet(s) that likely hold the values - download one and point --theme-css at it:'));
+        printHints(console.error, '     ');
+      }
+      process.exit(2);
+    }
   } else {
-    const ans  = (await ask('Token CSS file(s) (e.g. src/styles/theme.css): ')).trim();
-    const parts = ans.split(',').map(s => s.trim()).filter(Boolean);
-    themeCSS = parts.length === 1 ? (parts[0] || 'src/theme.css') : parts;
+    const rl  = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask = q => new Promise(res => rl.question(q, res));
+
+    figmaRaw = (await ask('Figma file URL: ')).trim();
+    const themeAns = defaultHint
+      ? ((await ask(`Token CSS file(s) [${defaultHint}]: `)).trim() || defaultHint)
+      : (await ask('Token CSS file(s) (e.g. src/styles/theme.css): ')).trim();
+    themeCSS = resolveTheme(themeAns);
+
+    const isConsumer = (await ask('Is this a Figma consumer file that uses an external DS library? (y/N): ')).trim().toLowerCase();
+    if (isConsumer === 'y' || isConsumer === 'yes') {
+      const srcUrl = (await ask('DS source Figma URL: ')).trim();
+      if (srcUrl) figmaSourceKey = parseKey(srcUrl);
+    }
+
+    rl.close();
+    if (themeCSS == null) {
+      console.error(C.red('\n❌ No token CSS file provided and none auto-detected. Re-run and give a path.'));
+      if (runtimeHints.length) {
+        console.error(C.dim('   Token values look loaded at runtime from - download one and point --theme-css at it:'));
+        printHints(console.error, '     ');
+      }
+      process.exit(2);
+    }
   }
+
+  const figmaFileKey = parseKey(figmaRaw);
 
   // No token prompt. Parity is token-free and plan-agnostic: running the skill captures
   // the Figma data via the plugin and commits it, and everyone runs against that. A
@@ -902,18 +1002,6 @@ async function bootstrapConfig() {
   // run + the screenshot gate); if one is already in the environment we quietly use it.
   const figmaToken = process.env.FIGMA_TOKEN ?? '';
 
-  // Q3b - Consumer file?
-  let figmaSourceKey = '';
-  const isConsumer = (await ask('Is this a Figma consumer file that uses an external DS library? (y/N): ')).trim().toLowerCase();
-  if (isConsumer === 'y' || isConsumer === 'yes') {
-    const srcUrl = (await ask('DS source Figma URL: ')).trim();
-    if (srcUrl) {
-      const m = srcUrl.match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
-      figmaSourceKey = m ? m[1] : srcUrl;
-    }
-  }
-
-  rl.close();
   console.log('');
 
   // ── Auto-detect Figma collections ─────────────────────────────────────────────

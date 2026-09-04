@@ -29,6 +29,31 @@ rules-heavy, step-by-step prompt, briefly tell the user those steps are not need
 skill handles setup/scope/run/report) and proceed from the intent instead of executing the
 listed steps.**
 
+**If the `rms-figma-code-parity` command is not on PATH** (a plain `command not found`),
+do not stop and do not hand-simulate setup - the engine is a folder of scripts, so run it
+directly with `node <install-dir>/audit.mjs <same flags>` (the install dir is the skill's
+own folder, next to this `.md`). Everything below that shows `rms-figma-code-parity …`
+works identically as `node <install-dir>/audit.mjs …`.
+
+**First-time setup is interactive in the engine - let it run, don't re-ask the questions
+yourself.** When `ds-config.json` is missing, running the audit drops into the engine's own
+setup interview. Because an agent turn / CI cannot reliably answer stdin prompts, pass the
+answers as flags and setup completes in one non-interactive command:
+
+```bash
+node <install-dir>/audit.mjs --init \
+  --figma-url='<DS file URL or key>' \
+  --theme-css='src/styles/theme.css'        # comma-separate multiple files
+  # --figma-source-url='<upstream DS URL>'   # optional: consumer/branded-fork files
+```
+
+`--theme-css` may be omitted when the engine auto-detects a single token CSS file. If no
+`--theme-css` is given **and none is auto-detected**, setup exits with a clear error rather
+than writing a broken config - which is the signal that the DS declares no static token CSS
+(its token values are injected at runtime from a backend). The value gates resolve against a
+static `:root { --token: value }` file; a runtime-token DS has nothing local to compare
+against, so say so plainly instead of forcing a green run.
+
 Route by intent:
 
 - **One or a few components** (the common case - "audit ButtonPrimary", "check the button"):
@@ -109,6 +134,7 @@ should always run scoped. Omit the flag to audit the whole DS.
 **Utility flags (no full audit - run the terminal command directly):**
 ```bash
 rms-figma-code-parity --init                          # first-time setup only: scaffold config files, then exit
+rms-figma-code-parity --init --figma-url=<url> --theme-css=<path>   # non-interactive setup (for agents/CI; --figma-source-url=<url> optional)
 rms-figma-code-parity --version                       # am I on the latest? compares local vs remote (a normal run also nudges once/day)
 rms-figma-code-parity --update                        # update to the latest - no re-download
 rms-figma-code-parity --link-command                  # (re)point the /rms-figma-code-parity command at the install via symlink
@@ -124,12 +150,34 @@ node scripts/setup-webhook.mjs --list                 # list registered Figma we
 
 At the start of every run, read `./ds-config.json` from the project root.
 
-**If it doesn't exist** (or `--init` flag is passed), ask the user for exactly four things - nothing else:
+**If it doesn't exist** (or `--init` flag is passed), the **engine runs its own setup
+interview** - you do not conduct it or write `ds-config.json` by hand. It needs these
+inputs (auto-detecting what it can):
 
-1. **Main Design System Figma file** - the full browser URL of the DS file. Extract the file key (path segment after `/design/` or `/file/`). Accept URL, never ask for raw key.
-2. **Theme CSS path** - relative path to the token CSS file(s). Auto-scan common locations; show as default if exactly one is found.
-3. **Figma personal access token** *(optional)* - needed for collection auto-detection and Gates [2], [14] (visual regression + icon freshness). If already in `.env`, use it silently. Write to `.env` if provided. Never store in `ds-config.json`.
-4. **DS source file for cross-checking** *(optional)* - if the project's snapshot is taken from a downstream file (e.g. a branded fork), provide the upstream DS Figma URL to parse `figmaSourceKey`. Enables `⏳ PENDING FIGMA SYNC` in Gate [3] - mismatches where code matches the upstream source are flagged as pending rather than failures.
+1. **Main Design System Figma file** - the full browser URL of the DS file. The engine extracts the file key (path segment after `/design/` or `/file/`). Pass the URL, never a raw key.
+2. **Theme CSS path** - relative path to the token CSS file(s). Auto-scanned; a single detected file becomes the default.
+3. **Figma personal access token** *(optional)* - needed for collection auto-detection and Gates [2], [14] (visual regression + icon freshness). Read from `.env` if present. Never stored in `ds-config.json`.
+4. **DS source file for cross-checking** *(optional)* - if the project's snapshot is taken from a downstream file (e.g. a branded fork), the upstream DS Figma URL parses `figmaSourceKey`. Enables `⏳ PENDING FIGMA SYNC` in Gate [3] - mismatches where code matches the upstream source are flagged as pending rather than failures.
+
+Because the interview reads stdin, **drive it non-interactively with flags** (an agent turn
+or CI cannot answer live prompts). Ask the user only for what you don't have (the Figma URL,
+and the theme CSS path if none is auto-detected), then run:
+
+```bash
+node <install-dir>/audit.mjs --init \
+  --figma-url='<DS file URL>' \
+  --theme-css='src/styles/theme.css'          # omit if one file is auto-detected
+  # --figma-source-url='<upstream DS URL>'     # optional consumer-file cross-check
+```
+
+If no theme CSS is given and none is auto-detected, setup exits with a clear error instead of
+writing a broken config - that is the signal the DS declares no static token CSS (runtime-injected
+values); report it rather than forcing a run. In that case setup also **scans the source for
+runtime-loaded stylesheets** - a dynamic `<link>` whose href is set in code, or a remote
+`…/theme.css` URL built in JS - and lists them (the likely token loader ranked above known CDN
+noise). Those are where the values actually live: download the theme stylesheet(s) locally and
+re-run with `--theme-css` pointing at them. A `FIGMA_TOKEN` in the environment is picked up
+silently; it is never prompted for and never required.
 
 **Do not ask for frame node IDs, collection names, or primitive prefixes** - these are either auto-detected or added later.
 
