@@ -194,7 +194,7 @@ function resolve(varName, modeIdx, depth = 0) {
   const raw = override ?? modeVars[0][varName];
   if (!raw) { cache.set(varName, null); return null; }
   const t = raw.trim();
-  const vMatch  = t.match(/^var\((--.+?)\)$/);
+  const vMatch  = t.match(/^var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*\)$/);
   if (vMatch)  { const r = resolve(vMatch[1],  modeIdx, depth + 1); cache.set(varName, r); return r; }
   const vfMatch = t.match(/^var\((--.+?),/);
   if (vfMatch) { const r = resolve(vfMatch[1], modeIdx, depth + 1); cache.set(varName, r); return r; }
@@ -213,7 +213,7 @@ function resolveScalar(varName, depth = 0) {
   if (depth === 0 && scalarCache.has(varName)) return scalarCache.get(varName);
   const raw = modeVars[0][varName]; if (!raw) return null;
   const t = raw.trim();
-  const v  = t.match(/^var\((--.+?)\)$/);   if (v)  { const r = resolveScalar(v[1],  depth + 1); if (depth === 0) scalarCache.set(varName, r); return r; }
+  const v  = t.match(/^var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*\)$/);   if (v)  { const r = resolveScalar(v[1],  depth + 1); if (depth === 0) scalarCache.set(varName, r); return r; }
   const vf = t.match(/^var\((--.+?),/);      if (vf) { const r = resolveScalar(vf[1], depth + 1); if (depth === 0) scalarCache.set(varName, r); return r; }
   if (depth === 0) scalarCache.set(varName, t);
   return t;
