@@ -279,6 +279,25 @@ you run the Plugin API capture. Treating an expired credential as a plan limitat
 the dangerous confusion: every REST-backed refresh quietly stops while the audit reports
 a condition you cannot fix.
 
+**Every Figma REST call has a hard timeout.** Node's global `fetch` has none, so before this
+guard a single stalled or rate-limited Figma response would hang the whole audit — and, via the
+pre-commit hook, the commit — forever (typically after running the audit several times in quick
+succession, when the API starts throttling and one request hangs open). All REST calls now go
+through `figmaFetch` (`figma-fetch.mjs`), which aborts after `FIGMA_FETCH_TIMEOUT_MS` (default
+20s, overridable via the env var) and throws; each caller already catches and falls back to the
+committed snapshot, so a slow API degrades to "refresh skipped, using cache" instead of a hang. If
+Phase 1 warns `Figma API did not respond within Ns`, the audit still runs at full strength against
+the committed snapshots — re-run later (or raise `FIGMA_FETCH_TIMEOUT_MS` for a genuinely large file).
+
+**The component-values sweep is CPU-bounded too.** A network timeout can't rescue a *synchronous*
+runaway: Figma's `/nodes` endpoint expands instance subtrees inline, so a component set with nested
+instances can return a document tree with millions of nodes, and walking it pins the CPU at 100% —
+which also blocks the event loop, so no timer fires (this, not a slow network, was the real cause of
+the audit "hanging" mid–Phase 1). The value walk (`collect-raw-values.mjs`) therefore carries a
+node-visit budget (`PARITY_VALUE_NODE_BUDGET`, default 300k): once spent it stops descending and the
+sweep finishes with a representative sample, logging `walk capped at N nodes`. Normal component sets
+are far under the cap and are collected in full.
+
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
 
 ---

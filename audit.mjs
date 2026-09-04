@@ -26,6 +26,9 @@ import { existsSync, readdirSync, readFileSync, statSync,
 import { join, dirname, resolve, relative }                     from 'path';
 import { fileURLToPath }                                        from 'url';
 import { buildReport }                                          from './report-html.mjs';
+import { makeFigmaFetch }                                       from './figma-fetch.mjs';
+import { collectRawValues, COLLECT_NODE_BUDGET }                from './collect-raw-values.mjs';
+import { extractDynamicClassPrefixes }                          from './dynamic-class-prefixes.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT       = process.cwd();
@@ -42,6 +45,12 @@ const today      = new Date().toISOString().slice(0, 10);
 const WIDTH      = 60;
 const SHOW_TREND = process.argv.includes('--trend');
 const INIT_ONLY  = process.argv.includes('--init');
+
+// Every Figma REST call goes through figmaFetch, which adds a hard timeout — Node's global fetch
+// has none, so one stalled/rate-limited response would otherwise hang the whole audit (and the
+// pre-commit hook) forever. On timeout it throws; each caller catches and falls back to the cached
+// snapshot. See figma-fetch.mjs for the full rationale.
+const figmaFetch = makeFigmaFetch();
 
 // ── Scoped runs: audit one or more chosen components, not the whole DS ─────────
 // `--component ButtonPrimary` or `--component ButtonPrimary,Toast` or repeated
@@ -169,7 +178,7 @@ async function fetchFigmaFileVersion(fileKey, token) {
   if (!token || !fileKey) return;
   try {
     // depth=1 keeps the payload to the document node - no page or child traversal.
-    const res = await fetch(`https://api.figma.com/v1/files/${fileKey}?depth=1`, {
+    const res = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}?depth=1`, {
       headers: { 'X-Figma-Token': token },
     });
     if (!res.ok) {
@@ -202,7 +211,7 @@ async function fetchComponentInventory(fileKey, token, pageId) {
     // works on every plan and, unlike /component_sets, sees UNPUBLISHED components (a DS
     // file usually isn't published to a library, so /component_sets returns empty there).
     if (pageId) {
-      const nRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(pageId)}&depth=1`, { headers: h });
+      const nRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/nodes?ids=${encodeURIComponent(pageId)}&depth=1`, { headers: h });
       if (nRes.ok) {
         const { nodes } = await nRes.json();
         const doc = nodes?.[pageId]?.document ?? Object.values(nodes ?? {})[0]?.document;
@@ -212,11 +221,11 @@ async function fetchComponentInventory(fileKey, token, pageId) {
       }
     }
     // Fallback: published library endpoints (only populated for published DS files).
-    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
+    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
     if (!csRes.ok) return;
     const { meta: csMeta } = await csRes.json();
     const names = new Set(Object.values(csMeta?.component_sets ?? {}).map(s => s.name));
-    const compRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, { headers: h });
+    const compRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/components`, { headers: h });
     if (compRes.ok) {
       const { meta: compMeta } = await compRes.json();
       for (const c of Object.values(compMeta?.components ?? {})) {
@@ -288,7 +297,7 @@ if (SHOW_TREND) {
 // patterns, and returns the best mapping for ds-config.json without user input.
 async function analyseCollections(fileKey, token) {
   try {
-    const res  = await fetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
+    const res  = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
       headers: { 'X-Figma-Token': token },
     });
     if (!res.ok) {
@@ -403,7 +412,7 @@ async function refreshComponentProps(fileKey, token, outPath) {
     const h = { 'X-Figma-Token': token };
 
     // ① Component SETS (variant groups) - the primary source
-    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
+    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, { headers: h });
     if (!csRes.ok) {
       console.log(C.yellow(`  ⚠️  Figma ${csRes.status} - component props refresh skipped`));
       return false;
@@ -414,7 +423,7 @@ async function refreshComponentProps(fileKey, token, outPath) {
     const names = Object.fromEntries(sets.map(([id, s]) => [id, s.name]));
 
     // ② Standalone COMPONENTS (single components not in a variant set)
-    const compRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/components`, { headers: h });
+    const compRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/components`, { headers: h });
     const { meta: compMeta } = compRes.ok ? await compRes.json() : { meta: {} };
     const standaloneEntries = Object.entries(compMeta?.components ?? {})
       .filter(([, c]) => !c.containing_frame?.containingStateGroup);
@@ -437,7 +446,7 @@ async function refreshComponentProps(fileKey, token, outPath) {
     const BATCH = 50;
     for (let i = 0; i < ids.length; i += BATCH) {
       const batch = ids.slice(i, i + BATCH);
-      const nRes  = await fetch(
+      const nRes  = await figmaFetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
         { headers: h }
       );
@@ -505,7 +514,7 @@ function collectBoundVis(node, idToName, allSet, visibleSet, toggleSet, hidden =
 let _varIdMapPromise = null;
 function buildVarIdMap(fileKey, token) {
   return (_varIdMapPromise ??= (async () => {
-    const res = await fetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
+    const res = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
       headers: { 'X-Figma-Token': token },
     });
     if (!res.ok) {
@@ -532,7 +541,7 @@ async function refreshBoundTokens(fileKey, frames, token, outPath) {
     const idToName = await buildVarIdMap(fileKey, token);
     const tokenSet = new Set();
     for (const frame of frames) {
-      const nRes = await fetch(
+      const nRes = await figmaFetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${frame.nodeId}`,
         { headers: { 'X-Figma-Token': token } },
       );
@@ -560,7 +569,7 @@ async function refreshFrameGeometry(fileKey, frames, token, outPath) {
   try {
     const byName = {};
     for (const frame of frames) {
-      const nRes = await fetch(
+      const nRes = await figmaFetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${frame.nodeId}`,
         { headers: { 'X-Figma-Token': token } },
       );
@@ -626,7 +635,7 @@ function collectBindingsFromNode(node, idToName, result, maxDepth = 1, depth = 0
 async function refreshStateBindings(fileKey, token, outPath) {
   try {
     const idToName = await buildVarIdMap(fileKey, token);
-    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
+    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
       headers: { 'X-Figma-Token': token },
     });
     if (!csRes.ok) return false;
@@ -639,7 +648,7 @@ async function refreshStateBindings(fileKey, token, outPath) {
     const BATCH  = 50;
     for (let i = 0; i < setIds.length; i += BATCH) {
       const batch = setIds.slice(i, i + BATCH);
-      const nRes  = await fetch(
+      const nRes  = await figmaFetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
         { headers: { 'X-Figma-Token': token } },
       );
@@ -678,7 +687,7 @@ async function refreshStateBindings(fileKey, token, outPath) {
 async function refreshStateTokens(fileKey, token, outPath) {
   try {
     const idToName = await buildVarIdMap(fileKey, token);
-    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
+    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
       headers: { 'X-Figma-Token': token },
     });
     if (!csRes.ok) { console.log(C.yellow(`  ⚠️  /component_sets → ${csRes.status}`)); return false; }
@@ -689,7 +698,7 @@ async function refreshStateTokens(fileKey, token, outPath) {
     const BATCH = 50;
     for (let i = 0; i < setIds.length; i += BATCH) {
       const batch = setIds.slice(i, i + BATCH);
-      const nRes = await fetch(
+      const nRes = await figmaFetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
         { headers: { 'X-Figma-Token': token } },
       );
@@ -722,30 +731,9 @@ async function refreshStateTokens(fileKey, token, outPath) {
 // tokens, the literal values. This is what lets the hardcoded-value gate answer
 // "is this 24px the same 24px Figma uses on THIS component?" per component instead
 // of globally. Written as component-values.snapshot.json: { "Comp": { nums, colors } }.
-const _rgbToHex = (c) => {
-  if (!c) return null;
-  const to = (x) => Math.round((x ?? 0) * 255).toString(16).padStart(2, '0');
-  return (to(c.r) + to(c.g) + to(c.b)).toLowerCase();
-};
-function collectRawValues(node, nums, colors) {
-  if (!node || typeof node !== 'object') return;
-  const pushN = (v) => {
-    const n = Number(v);
-    if (Number.isFinite(n) && n !== 0) { nums.add(Math.round(n * 100) / 100); nums.add(Math.round(n)); }
-  };
-  const bb = node.absoluteBoundingBox || node.size;
-  if (bb) { pushN(bb.width ?? bb.x); pushN(bb.height ?? bb.y); }
-  pushN(node.cornerRadius);
-  if (Array.isArray(node.rectangleCornerRadii)) node.rectangleCornerRadii.forEach(pushN);
-  pushN(node.strokeWeight);
-  pushN(node.itemSpacing);
-  pushN(node.paddingLeft); pushN(node.paddingRight); pushN(node.paddingTop); pushN(node.paddingBottom);
-  if (node.style?.fontSize) pushN(node.style.fontSize);
-  for (const f of node.fills   ?? []) if (f?.type === 'SOLID' && f.color) { const h = _rgbToHex(f.color); if (h) colors.add(h); }
-  for (const s of node.strokes ?? []) if (s?.color) { const h = _rgbToHex(s.color); if (h) colors.add(h); }
-  for (const e of node.effects ?? []) if (e?.color) { const h = _rgbToHex(e.color); if (h) colors.add(h); }
-  for (const child of node.children ?? []) collectRawValues(child, nums, colors);
-}
+// collectRawValues + its node-visit budget live in a module so the runaway-tree guard is unit-
+// tested. See collect-raw-values.mjs for why the budget exists (a synchronous walk of a giant
+// instance-expanded tree spins the CPU and hangs the whole audit).
 
 // Icon inventory (Gate 15): list the icon names the DS defines in Figma so the check can
 // confirm each has a code symbol. The icon set often lives in a SEPARATE library file
@@ -754,7 +742,7 @@ function collectRawValues(node, nums, colors) {
 // (only names starting with it), cfg.icons.nameFrom = 'last' (use the last "/"-segment).
 async function refreshIcons(libraryKey, token, outPath, opts = {}) {
   try {
-    const res = await fetch(`https://api.figma.com/v1/files/${libraryKey}/components`, { headers: { 'X-Figma-Token': token } });
+    const res = await figmaFetch(`https://api.figma.com/v1/files/${libraryKey}/components`, { headers: { 'X-Figma-Token': token } });
     if (!res.ok) { console.log(C.yellow(`  ⚠️  icons /components → ${res.status} (icon inventory not refreshed)`)); return false; }
     const comps = (await res.json())?.meta?.components ?? {};
     const names = new Set();
@@ -779,7 +767,7 @@ async function refreshIcons(libraryKey, token, outPath, opts = {}) {
 
 async function refreshComponentValues(fileKey, token, outPath) {
   try {
-    const csRes = await fetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
+    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
       headers: { 'X-Figma-Token': token },
     });
     if (!csRes.ok) return false;
@@ -789,9 +777,10 @@ async function refreshComponentValues(fileKey, token, outPath) {
     if (!setIds.length) return false;
     const result = {};
     const BATCH  = 50;
+    const budget = { n: COLLECT_NODE_BUDGET };   // shared across the whole sweep — bounds total CPU
     for (let i = 0; i < setIds.length; i += BATCH) {
       const batch = setIds.slice(i, i + BATCH);
-      const nRes  = await fetch(
+      const nRes  = await figmaFetch(
         `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
         { headers: { 'X-Figma-Token': token } },
       );
@@ -800,12 +789,14 @@ async function refreshComponentValues(fileKey, token, outPath) {
       for (const [setId, data] of Object.entries(nodes ?? {})) {
         const name = sets[setId]?.name ?? data?.document?.name ?? setId;
         const nums = new Set(), colors = new Set();
-        collectRawValues(data?.document, nums, colors);
+        collectRawValues(data?.document, nums, colors, budget);
         result[name] = { nums: [...nums].sort((a, b) => a - b), colors: [...colors].sort() };
       }
+      if (budget.n <= 0) break;   // hit the node budget — stop rather than spin on a pathological tree
     }
+    const capped = budget.n <= 0;
     writeFileSync(outPath, JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2) + '\n');
-    console.log(C.dim(`  ✅ Component values: ${Object.keys(result).length} component set(s) swept`));
+    console.log(C.dim(`  ✅ Component values: ${Object.keys(result).length} component set(s) swept${capped ? ` (walk capped at ${COLLECT_NODE_BUDGET} nodes — raise PARITY_VALUE_NODE_BUDGET if needed)` : ''}`));
     return true;
   } catch (e) {
     console.log(C.yellow(`  ⚠️  Component values refresh failed: ${e.message}`));
@@ -1681,14 +1672,7 @@ function reportFull(label, items, shown) {
     // rarely a standalone literal - it is the tail of a longer string, as in
     //   '<div class="buttonList issue-item t-' + iss.type + '">'
     // so take the trailing name-ish fragment of any string spliced with + or ${…}.
-    const dynamicPrefixes = [
-      // '…prefix-' +   and   "…prefix-" +
-      ...[...usageCorpus.matchAll(/['"]([^'"]*?)['"]\s*\+/g)].map(m => m[1]),
-      // `…prefix-${expr}`
-      ...[...usageCorpus.matchAll(/([^`$}]*)\$\{/g)].map(m => m[1]),
-    ]
-      .map(frag => frag.match(/([a-zA-Z][\w-]*-)$/)?.[1])
-      .filter(Boolean);
+    const dynamicPrefixes = extractDynamicClassPrefixes(usageCorpus);
     const deadClasses = [...defined.entries()]
       .filter(([c]) => !deadCssExempt.has(c))
       .filter(([c]) => !new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(usageCorpus))
