@@ -132,7 +132,15 @@ function buildBlockIndex(css) {
   let m;
   while ((m = re.exec(css)) !== null) {
     const sel = m[1].trim().replace(/\s+/g, ' ');
-    if (sel) index.set(sel, m[2]);
+    if (!sel) continue;
+    // A selector can appear more than once — the base rule plus @media / state overrides. Keep the
+    // block with the MOST content (the base rule) instead of the last one seen: a bare-selector
+    // override nested in @media (e.g. `@media (dark) { .buttonTertiary { color } }`) would otherwise
+    // clobber the full base rule, so its geometry (height/padding/gap/radius) went silently
+    // unchecked — that is how the button root gap drifted with no gate catching it. Ties keep the
+    // first (base normally comes first). Overrides are still reachable via the line-scan fallback.
+    const prev = index.get(sel);
+    if (prev === undefined || m[2].length > prev.length) index.set(sel, m[2]);
   }
   return index;
 }
@@ -241,6 +249,12 @@ for (const [name, expect] of Object.entries(CONTRACT)) {
     const e = expect.paddingVar?.[side] ?? null, g = got.paddingVar?.[side] ?? null;
     if (e !== g) FAIL.push({ component: name, field: `paddingVar.${side}`, expected: e, got: g });
   }
+  // Root gapPx: a raw/flush root gap pinned in the contract (gapVar null). When both sides carry it,
+  // a DS-side change to it (e.g. flush 0 → a real gap) is a divergence. (The CSS side is enforced
+  // in the per-component gap check below.) Only compared when the snapshot captured it, so older
+  // snapshots without root gapPx don't churn.
+  if (typeof expect.gapPx === 'number' && typeof got.gapPx === 'number' && expect.gapPx !== got.gapPx)
+    FAIL.push({ component: name, field: 'gapPx', expected: expect.gapPx, got: got.gapPx });
 
   // Child-frame gap/padding bindings: snapshot childFrameGaps/childFramePadding vs contract.children.
   // Catches DS-side spacing rebinds on inner frames (e.g. a toast content gap changed from gap/s
@@ -513,6 +527,21 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
 
     if (contract.gapVar)
       check('gap', gapBlock, 'gap', FIGMA_LAYOUT_TO_CSS[contract.gapVar], selCfg.gapSel ?? selCfg.main);
+    else if (typeof contract.gapPx === 'number') {
+      // Root gap the DS renders as a raw literal, INCLUDING 0 (a flush root — e.g. a button whose
+      // label sits against the icon with only the LabelContainer padding). Token-bound root gaps go
+      // through gapVar above; this is the UNBOUND case the child-frame gapPx check couldn't see
+      // (it only walks children). It is exactly how all four buttons drifted: the DS root is flush
+      // (rootGap 0) but the code added gap/s on top of the span padding, doubling the label↔icon gap.
+      const sel = selCfg.gapSel ?? selCfg.main;
+      if (!gapBlock) PROP_FAIL.push(`${comp}/gap: selector "${sel}" not found`);
+      else {
+        const m = gapBlock.match(/(?<![a-zA-Z-])gap\s*:\s*([^;\n]+)/);
+        const got = m ? m[1].trim() : null;
+        if (rawGapMatches(got, contract.gapPx)) PROP_PASS.push(`${comp}/gap`);
+        else PROP_FAIL.push(`${comp}/gap: "${got ?? '(not set)'}" ≠ ${contract.gapPx === 0 ? '0' : contract.gapPx + 'px'} [raw ${contract.gapPx}px root gap]`);
+      }
+    }
     if (contract.paddingVar?.tb && !selCfg.skipTBPadding)
       check('padding-tb', mainBlock, 'padding', FIGMA_LAYOUT_TO_CSS[contract.paddingVar.tb], selCfg.main);
     if (contract.paddingVar?.lr && !selCfg.skipLRPadding)

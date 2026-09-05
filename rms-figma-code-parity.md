@@ -846,6 +846,20 @@ from adding a stray gap there - the label-to-icon gap on the switch's Content fr
   is *not* a failure (unlike an uncontracted token gap) - it is only enforced once you opt in with
   a `gapPx` entry. Use it whenever "the DS keeps these flush" is a real constraint.
 
+**Root gaps are covered too, and a `findBlock` blind spot is closed.** A component's OWN root gap
+can also be flush/raw (not just child frames) — every DS button root is `HORIZONTAL` with
+`rootGap 0`, the label↔icon spacing coming entirely from the LabelContainer padding. A contract
+entry pins it with a top-level `gapPx` (alongside `gapVar: null`): `{ …, gapVar: null, gapPx: 0 }`,
+enforced against the component's `COMPONENT_CSS_SELECTORS.main` gap (or via a `CSS_PROPERTY_ASSERTIONS`
+`{ prop:'gap', expected:'0' }` for a selector the block index mis-resolves). This is exactly how all
+four buttons drifted (code added `gap/s` on top of the span padding, doubling the label↔icon gap)
+with no gate catching it. Two reasons it was invisible: the child-frame gapPx check only walks
+children, and — the deeper one — `buildBlockIndex` kept the **last** rule seen for a selector, so a
+bare-selector override nested in `@media (dark)` (e.g. `.buttonTertiary { color }`) clobbered the full
+base rule and left its geometry (height/padding/gap/radius) silently unchecked. The index now keeps
+the **fullest** block per selector, so the base rule always wins and any component with a dark-mode
+bare override is checkable again.
+
 ---
 
 ## Phase 1 - Step 1d: Capture effect styles → `effects` key in snapshot
