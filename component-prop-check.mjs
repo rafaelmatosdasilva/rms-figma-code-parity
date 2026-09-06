@@ -243,14 +243,22 @@ const figmaValueOf = (def) => {
 if (cfg.frameworkComponents === false && cfg.htmlRealization) {
   const REAL = cfg.htmlRealizations ?? {};
   const STRICT = !!cfg.htmlRealizationStrict;
-  const cssPaths = Array.isArray(cfg.paths?.pluginCSS) ? cfg.paths.pluginCSS
-                 : (cfg.paths?.pluginCSS ? [cfg.paths.pluginCSS] : []);
-  const srcBlob = cssPaths.map(p => { try { return readFileSync(join(ROOT, p), 'utf8'); } catch { return ''; } }).join('\n');
+  // Realization source = the plugin markup/CSS AND the theme CSS: a DS class is DEFINED in the
+  // theme (`.badge-label { … }`) and USED in the plugin markup (`class="badge-label"`), and either
+  // location realizes the property. Merge both so a class token is found wherever it lives.
+  const asList = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
+  const srcPaths = [...asList(cfg.paths?.pluginCSS), ...asList(cfg.paths?.themeCSS)];
+  const srcBlob = srcPaths.map(p => { try { return readFileSync(join(ROOT, p), 'utf8'); } catch { return ''; } }).join('\n');
   const present = (a) => {
     if (!a) return false;
     if (a.startsWith('state:')) return true;                       // realized as a CSS state - Gate [11]
-    if (a.startsWith('.')) return new RegExp('\\.' + a.slice(1).replace(/[^\w-]/g, m => '\\' + m) + '\\b').test(srcBlob);
-    if (a.startsWith('#')) return srcBlob.includes(a);
+    if (a.startsWith('.') || a.startsWith('#')) {
+      // Match the class/id token wherever it appears: a CSS selector (`.badge-label`), or a markup
+      // class/id attribute (`class="badge-label"`, `id="x"`). So bound the bare name by any
+      // non-identifier char rather than requiring the leading `.`/`#`.
+      const name = a.slice(1).replace(/[.*+?^${}()|[\]\\]/g, m => '\\' + m);
+      return new RegExp(`(?:^|[^\\w-])${name}(?![\\w-])`).test(srcBlob);
+    }
     return srcBlob.includes(a);                                    // bare element / attribute token
   };
   const REALIZED = [], UNREALIZED = [], UNMAPPED = [], VIASTATE = [];
