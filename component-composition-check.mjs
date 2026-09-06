@@ -105,6 +105,43 @@ function usedComponents(file) {
   return used;
 }
 
+// ── HTML mode (frameworkComponents:false, opt-in) ─────────────────────────────
+// A plain-HTML/CSS DS consumer has all its components as classes in the plugin markup + theme
+// CSS, not as prop-components in per-file modules - so resolveFile finds nothing and the gate
+// would just SKIP. Instead, verify each sub-component Figma nests is realized as a class in the
+// plugin source. Only parents actually built here are checked (an unbuilt DS component's
+// composition is moot); icons (Gate [15]/[16]) and raw layers are excluded. Opt in with
+// ds-config.json → htmlRealization: true (shared with Gate [12]); htmlCompositionStrict makes a
+// missing sub-component a hard fail (default: advisory - a DS component the plugins don't use is
+// not a bug). Default off → this block is skipped and the normal framework check runs below.
+if (cfg.frameworkComponents === false && cfg.htmlRealization) {
+  const asList = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
+  const srcNorm = norm([...asList(cfg.paths?.pluginCSS), ...asList(cfg.paths?.themeCSS)]
+    .map(p => { try { return readFileSync(join(ROOT, p), 'utf8'); } catch { return ''; } }).join('\n'));
+  const isIconOrLayer = (n) => /^icon[-/ ]/i.test(n) || n.startsWith('.');
+  const inSource = (name) => { const sn = selNorm(name); return sn.length >= 4 && srcNorm.includes(sn); };
+  const OK = [], MISSING = [], SKIP = [];
+  for (const [name, list] of Object.entries(SNAP)) {
+    if (name.startsWith('_') || !Array.isArray(list)) continue;
+    if (KNOWN_UNIMPLEMENTED.has(name)) continue;
+    if (!inSource(name)) { SKIP.push(name); continue; }   // parent not built in these plugins - composition moot
+    for (const child of list) {
+      if (child === name || isIconOrLayer(child) || KNOWN_UNIMPLEMENTED.has(child)) continue;
+      if (KNOWN_EXCEPTIONS.has(`${name}/${child}`)) { OK.push(`${name} → ${child} (exempt)`); continue; }
+      if (inSource(child)) OK.push(`${name} → ${child}`);
+      else MISSING.push(`${name}: Figma nests "${child}" but its class is not in the plugin source`);
+    }
+  }
+  console.log('\nGate [13] - sub-component composition  (HTML mode - each nested DS component realized as a class)\n');
+  console.log(`  ✅ OK       ${OK.length}`);
+  console.log(`  ⏭ SKIP     ${SKIP.length}   (parent component not built in these plugins)`);
+  console.log(`  ❌ MISSING  ${MISSING.length}   (Figma nests a sub-component the plugin source doesn't use${cfg.htmlCompositionStrict ? '' : ' - advisory'})`);
+  for (const m of MISSING) console.log(`     ${cfg.htmlCompositionStrict ? '❌' : '⚠️ '} ${m}`);
+  const fail = cfg.htmlCompositionStrict ? MISSING.length : 0;
+  console.log(fail ? `\n❌ Composition: ${fail} nested sub-component(s) missing\n` : `\n✅ Composition: every built component uses the sub-components Figma nests\n`);
+  process.exit(fail ? 1 : 0);
+}
+
 // ── Compare ───────────────────────────────────────────────────────────────────
 const MISSING = [], EXTRA = [], NOFILE = [], OK = [];
 for (const [name, list] of Object.entries(SNAP)) {

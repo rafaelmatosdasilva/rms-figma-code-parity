@@ -2431,7 +2431,9 @@ function reportFull(label, items, shown) {
       ? parseGeneric(rCompProp, /REALIZED|UNREALIZED|UNMAPPED|VIA STATE/)
       : parseComponentFrameworkGate(rCompProp, /OK|MISSING|VALUE|SLOT|NO FILE|RENAME/));
   addGate('Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)',
-    parseComponentFrameworkGate(rCompose, /OK|MISSING|NO FILE|EXTRA/));
+    (cfg.frameworkComponents === false && cfg.htmlRealization)
+      ? parseGeneric(rCompose, /OK|MISSING|SKIP/)
+      : parseComponentFrameworkGate(rCompose, /OK|MISSING|NO FILE|EXTRA/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references)',
