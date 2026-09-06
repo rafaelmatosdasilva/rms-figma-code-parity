@@ -67,14 +67,29 @@ Route by intent:
 - **The whole design system:** run `rms-figma-code-parity` in the terminal (or `/rms-figma-code-parity` in Claude Code),
   then follow the phases below.
 
-**Phase 1 (live Figma refresh) is best-effort, not mandatory.** Run it when you actually
-can - a valid `FIGMA_TOKEN` (or authorised Figma MCP) is present AND the target is a real
-screen/frame. When it is not available (no token, a 403 plan limit, a `COMPONENT_SET`
-definition URL with no frames, or MCP not authorised), **skip the live refresh and audit
-the committed snapshots as they are.** Never hand-improvise Figma reads or hand-fill
-snapshot values to fake a refresh - that is unreliable and is a top source of confusion.
-Simply state that the live refresh was skipped and which snapshot the audit used; the gates
-still run, and "Data is up to date" will note the snapshot's age.
+**Running the command means running the WHOLE thing - Phase 1 included - whenever Phase 1
+CAN run.** An unscoped invocation is a request for a full audit, not a Phase-2-only pass over
+whatever snapshots happen to be committed. So if a live refresh is available - a valid
+`FIGMA_TOKEN`, an authorised Figma MCP, or the Plugin API (`use_figma`, which works on any plan
+with no token) - **do the Phase 1 refresh; do not skip it just because auditing the committed
+snapshots is fewer steps.** Skipping the refresh and reporting green against 5-day-old snapshots
+is the failure mode this line exists to prevent: stale snapshots pass against outdated data, so
+real DS drift (retuned tokens, a resized component) stays invisible while every gate reads green.
+Only narrow the run when the user explicitly asks for a specific scope (e.g. one component, or
+"just re-run the gates").
+
+**Phase 1 (live Figma refresh) is best-effort, not mandatory - "best-effort" means run it when
+you CAN, not skip it when it's inconvenient.** Run it whenever a refresh path is available (token,
+MCP, or the Plugin API) AND the target is a real screen/frame. When it is genuinely not available
+(no token, no MCP, no Plugin API access, or a `COMPONENT_SET` definition URL with no frames),
+**skip the live refresh and audit the committed snapshots as they are.** Never hand-improvise Figma
+reads or hand-fill snapshot values to fake a refresh - that is unreliable and is a top source of
+confusion. And never overwrite a snapshot with a lossy capture: a one-shot structure/icon grab that
+mis-selects a variant or measures a wrapper injects *false* drift, which is worse than a stale-but-
+accurate snapshot - refresh a snapshot only with a capture faithful to the documented Step 1c/icon
+logic, and leave the others stale (say so) rather than corrupt them. Whatever you skip, state it
+plainly and which snapshot the audit used; the gates still run, and "Data is up to date" will note
+the snapshot's age.
 
 ---
 
