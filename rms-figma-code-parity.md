@@ -878,6 +878,33 @@ base rule and left its geometry (height/padding/gap/radius) silently unchecked. 
 the **fullest** block per selector, so the base rule always wins and any component with a dark-mode
 bare override is checkable again.
 
+### Capture robustness — four Phase-1 lessons
+
+The audit compares code against the committed snapshots, so a lossy or stale capture is invisible
+until it produces a wrong result. Four rules keep Phase 1 honest — they are capture-time (agent /
+Plugin API) discipline, not gates, because a tokenless plan has no live Figma access from the engine:
+
+- **Stored `nodeId`s go stale — resolve by name+resting variant, not the saved id.** When the DS is
+  reorganised, a snapshot's stored variant `nodeId` can resolve to a *different* node (often the whole
+  `COMPONENT_SET`), so measuring it yields the set's stacked height and flipped strokes — noise that
+  reads as drift. On every structure refresh, re-resolve each component by **set name**, pick the
+  **resting variant** (first `State=` value with `Disabled=False`/`Selected=False`), and validate that
+  each stored `nodeId` still resolves to a node whose name matches the component — a mismatch is the
+  signal the DS was restructured, and the `nodeId`s must be re-captured.
+- **Height-match to tell real drift from a mis-measured variant.** Before recording a height change,
+  check whether *any* variant still has the old height. If one does, the geometry did not change — you
+  measured the wrong variant (the classic `toast` success-vs-loading, or a `min-height` bar that grew
+  to hug wrapped content). Only "no variant has the old height" is real drift.
+- **Capture icon path data via the Plugin API so freshness works tokenless.** Gate [16]'s live
+  path/name freshness needs `FIGMA_TOKEN`; on a plan without one, capture each icon's vector path in
+  Phase 1 (Plugin API, any plan) into `figma-icons.snapshot.json`, so Gate [16] still compares the
+  snapshot against the code. Also diff the **live DS icon set** against the snapshot to surface added
+  icons (a DS may carry more icons than the code uses — those are unused, not missing).
+- **A height change touches the contract AND the snapshot together.** Gate [3a] compares `contract.h`
+  to `snapshot.h`, so refreshing one without the other fails. For a component that hugs its content,
+  prefer `sizing: 'hug'` (see the structure-contract section) over chasing the ±1px re-measure through
+  both files.
+
 ---
 
 ## Phase 1 - Step 1d: Capture effect styles → `effects` key in snapshot
