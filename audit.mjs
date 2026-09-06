@@ -1373,6 +1373,7 @@ function reportFull(label, items, shown) {
     const compProps = snapshotAge(SNAP_COMP_PROPS);
     const lines  = [];
     let warn     = false;
+    let versionMismatch = false;   // set when the DS file version differs from a snapshot's stamp
 
     // An invalid credential must never be excused as a plan limitation - that reads as
     // "nothing to do here" while every REST-backed refresh silently stops running.
@@ -1406,7 +1407,8 @@ function reportFull(label, items, shown) {
         lines.push(C.yellow('   Figma versions the whole file, so this is often an unrelated edit elsewhere.'));
         lines.push(C.yellow('   Re-run /rms-figma-code-parity (Phase 1) if the change touched audited components.'));
         lines.push(C.yellow('   Real drift is still caught below by the component inventory and the value gates.'));
-        // Advisory only - does NOT fail the gate.
+        versionMismatch = true;
+        // Advisory only by default - escalated to a hard fail below when versionLockStrict is set.
       } else {
         lines.push('DS file unchanged since capture ✓ (version matches)');
       }
@@ -1423,7 +1425,8 @@ function reportFull(label, items, shown) {
         lines.push(C.yellow('⚠️  Structure snapshot captured at an older file version (advisory)'));
         lines.push(C.yellow(`   structure version ${structVersion} → file is now ${_figmaFileVersion}`));
         lines.push(C.yellow('   Re-run Phase 1 Step 1c if a padding/gap/height rebind was part of the change.'));
-        // Advisory only - does NOT fail the gate.
+        versionMismatch = true;
+        // Advisory only by default - escalated to a hard fail below when versionLockStrict is set.
       }
     }
 
@@ -1559,7 +1562,35 @@ function reportFull(label, items, shown) {
       }
     }
 
-    const anyPlanLimited = varsPlanLimited || structPlanLimited || walksPlanLimited;
+    let anyPlanLimited = varsPlanLimited || structPlanLimited || walksPlanLimited;
+
+    // ── Opt-in escalations (default off → byte-identical for projects that don't set them) ──
+    // A plan without REST refresh downgrades staleness to a non-failing advisory (above), which
+    // is right day-to-day but lets a snapshot drift indefinitely. `maxSnapshotAgeDays` is a hard
+    // ceiling: past it, the audit fails even when plan-limited - the Plugin API capture works on
+    // any plan, so "we literally never refreshed" is a real problem, not a plan excuse.
+    const maxDays = Number(cfg.maxSnapshotAgeDays);
+    if (Number.isFinite(maxDays) && maxDays > 0) {
+      const ceilingH = maxDays * 24;
+      const ages = [SNAP_VARS, SNAP_STRUCT, SNAP_COMP_PROPS, SNAP_FRAME_GEOM, 'bound-tokens.json', 'component-state-tokens.json']
+        .filter(Boolean).map(f => (existsSync(join(ROOT, f)) ? snapshotAge(f) : null)).filter(a => a != null);
+      const worst = ages.length ? Math.max(...ages) : null;
+      if (worst != null && worst > ceilingH) {
+        lines.push(C.red(`❌ a snapshot is ~${Math.floor(worst / 24)}d old, past the ${maxDays}d ceiling (ds-config → maxSnapshotAgeDays)`));
+        lines.push(C.red('   The Plugin API capture works on any plan - run Phase 1 and commit the refreshed snapshots.'));
+        warn = true;
+        anyPlanLimited = false;   // the ceiling overrides the plan-limited downgrade
+      }
+    }
+    // versionLockStrict promotes the whole-file version-mismatch advisory to a hard fail. Off by
+    // default because a version bump is usually an unrelated edit elsewhere in the file; turn it on
+    // for a DS file disciplined enough that any bump warrants a Phase 1 re-run.
+    if (cfg.versionLockStrict && versionMismatch) {
+      lines.push(C.red('❌ versionLockStrict: DS file version differs from the snapshot - re-run Phase 1 to reconcile'));
+      warn = true;
+      anyPlanLimited = false;
+    }
+
     return { pass: !warn && !anyPlanLimited, planLimited: !warn && anyPlanLimited, lines };
   }
 

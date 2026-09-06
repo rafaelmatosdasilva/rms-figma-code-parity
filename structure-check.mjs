@@ -241,7 +241,14 @@ for (const [name, expect] of Object.entries(CONTRACT)) {
   if (!hasStructuralFields(expect)) continue; // propertyMap-only entry - skip snapshot check
   const got = components[name];
   if (!got) { MISSING.push(name); continue; }
+  // sizing:'hug' — the component hugs its content, so its captured `h` is a measurement
+  // that drifts by a sub-pixel or a content tweak with no fixed code height to enforce. Skip
+  // the exact-`h` contract↔snapshot comparison for it (the height is informational), so a hug
+  // component's 20→19px re-measure doesn't churn and doesn't force a paired contract edit. Every
+  // other structural field is still compared. Default (no `sizing`, or 'fixed') is unchanged.
+  const skipH = expect.sizing === 'hug';
   for (const f of SCALAR_FIELDS) {
+    if (f === 'h' && skipH) continue;
     if (expect[f] !== got[f])
       FAIL.push({ component: name, field: f, expected: expect[f], got: got[f] });
   }
@@ -791,9 +798,12 @@ const VHEIGHT_FAIL = [], VHEIGHT_PASS = [];
 for (const [comp, snapComp] of Object.entries(components)) {
   const vh = snapComp?.variantHeight;
   if (!vh || typeof vh !== 'object') continue;
+  const contract = CONTRACT[comp];
+  // A hug component's variants differ in height by content, not by a modelled state geometry -
+  // gating each height would demand a meaningless `states` entry per content length. Skip.
+  if (contract?.sizing === 'hug') { VHEIGHT_PASS.push(`${comp}/variant-height (hug - content-driven)`); continue; }
   const heights = Object.values(vh).filter(h => typeof h === 'number');
   if (new Set(heights).size <= 1) { VHEIGHT_PASS.push(`${comp}/variant-height (uniform)`); continue; }
-  const contract = CONTRACT[comp];
   const baseH = contract?.h;
   const stateHeights = new Set(Object.values(contract?.states ?? {}).map(s => s?.h).filter(h => typeof h === 'number'));
   const uncovered = [...new Set(heights)].filter(h => h !== baseH && !stateHeights.has(h));
