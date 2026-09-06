@@ -2423,8 +2423,13 @@ function reportFull(label, items, shown) {
     const skip = frameworkGateSkipReason(cfg.frameworkComponents, r.status);
     return skip ? { pass: true, planLimited: true, lines: [C.yellow('⏭ SKIPPED - ' + skip)] } : parseGeneric(r, re);
   };
+  // frameworkComponents:false + htmlRealization → the prop check runs in HTML-realization mode
+  // (each Figma property must map to a code artifact) instead of being skipped. Parse its output
+  // rather than collapsing the gate to SKIPPED.
   addGate('Component props match Figma  (names, defaults, variant options & slots vs code)',
-    parseComponentFrameworkGate(rCompProp, /OK|MISSING|VALUE|SLOT|NO FILE|RENAME/));
+    (cfg.frameworkComponents === false && cfg.htmlRealization)
+      ? parseGeneric(rCompProp, /REALIZED|UNREALIZED|UNMAPPED|VIA STATE/)
+      : parseComponentFrameworkGate(rCompProp, /OK|MISSING|VALUE|SLOT|NO FILE|RENAME/));
   addGate('Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)',
     parseComponentFrameworkGate(rCompose, /OK|MISSING|NO FILE|EXTRA/));
 

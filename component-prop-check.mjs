@@ -230,6 +230,58 @@ const figmaValueOf = (def) => {
   return String(def.type || '(value)').toLowerCase();
 };
 
+// ── HTML-realization mode (frameworkComponents:false, opt-in) ─────────────────
+// A plain-HTML/CSS DS consumer has no prop-based components, so the name-matching below finds
+// "no code file" for everything and the gate would just SKIP. Instead, verify each Figma
+// property is REALIZED by a concrete code artifact: a CSS class / #id / element, or (for an
+// interaction state) a pseudo-class Gate [11] already covers. Deterministic + map-driven:
+//   ds-config.json → htmlRealizations[Component][property] = '.class' | '#id' | 'tag' | 'state:'
+// An unmapped property is an advisory TODO by default (a fail under htmlRealizationStrict); a
+// mapped artifact that is absent from the source is always a fail. Opt in with
+// ds-config.json → htmlRealization: true. Default off → this block is skipped and the normal
+// framework prop-matching (below) runs, which the orchestrator SKIPS when frameworkComponents:false.
+if (cfg.frameworkComponents === false && cfg.htmlRealization) {
+  const REAL = cfg.htmlRealizations ?? {};
+  const STRICT = !!cfg.htmlRealizationStrict;
+  const cssPaths = Array.isArray(cfg.paths?.pluginCSS) ? cfg.paths.pluginCSS
+                 : (cfg.paths?.pluginCSS ? [cfg.paths.pluginCSS] : []);
+  const srcBlob = cssPaths.map(p => { try { return readFileSync(join(ROOT, p), 'utf8'); } catch { return ''; } }).join('\n');
+  const present = (a) => {
+    if (!a) return false;
+    if (a.startsWith('state:')) return true;                       // realized as a CSS state - Gate [11]
+    if (a.startsWith('.')) return new RegExp('\\.' + a.slice(1).replace(/[^\w-]/g, m => '\\' + m) + '\\b').test(srcBlob);
+    if (a.startsWith('#')) return srcBlob.includes(a);
+    return srcBlob.includes(a);                                    // bare element / attribute token
+  };
+  const REALIZED = [], UNREALIZED = [], UNMAPPED = [], VIASTATE = [];
+  for (const [figmaName, entry] of Object.entries(SNAP)) {
+    if (figmaName === '_updated' || !entry?.properties) continue;
+    if (KNOWN_UNIMPLEMENTED.has(figmaName)) continue;
+    const map = REAL[figmaName] ?? {};
+    for (const [rawKey, def] of Object.entries(entry.properties)) {
+      const prop = cleanFigmaProp(rawKey);
+      if (!prop) continue;
+      if (isStateAxis(prop, def)) { VIASTATE.push(`${figmaName}/${prop}`); continue; }   // Gate [11]
+      const artifact = map[prop] ?? map[norm(prop)];
+      if (artifact == null) { UNMAPPED.push(`${figmaName}/${prop}`); continue; }
+      if (String(artifact).startsWith('state:')) { VIASTATE.push(`${figmaName}/${prop}`); continue; }
+      if (present(artifact)) REALIZED.push(`${figmaName}/${prop} → ${artifact}`);
+      else UNREALIZED.push(`${figmaName}: property "${prop}" maps to ${artifact} but it is not in the plugin source`);
+    }
+  }
+  console.log('\nGate [12] - HTML realization  (frameworkComponents:false - each Figma property → a code artifact)\n');
+  console.log(`  ✅ REALIZED     ${REALIZED.length}   (property mapped to a CSS class/id/element present in code)`);
+  console.log(`  ➡️  VIA STATE    ${VIASTATE.length}   (interaction state - realized as a pseudo-class, Gate [11])`);
+  console.log(`  ⚠️  UNMAPPED     ${UNMAPPED.length}   (no htmlRealizations entry yet${STRICT ? ' - FAILS under htmlRealizationStrict' : ' - advisory'})`);
+  console.log(`  ❌ UNREALIZED   ${UNREALIZED.length}   (mapped artifact missing from the code)`);
+  for (const u of UNREALIZED) console.log(`     ❌ ${u}`);
+  if (UNMAPPED.length && STRICT) for (const u of UNMAPPED) console.log(`     ❌ UNMAPPED ${u} (htmlRealizationStrict)`);
+  else if (UNMAPPED.length) console.log(`     ⚠️  author ds-config.json → htmlRealizations to verify these: ${UNMAPPED.slice(0, 12).join(', ')}${UNMAPPED.length > 12 ? ` … (+${UNMAPPED.length - 12})` : ''}`);
+  const hardFail = UNREALIZED.length + (STRICT ? UNMAPPED.length : 0);
+  console.log(hardFail ? `\n❌ HTML realization: ${hardFail} unrealized/unmapped\n` : `\n✅ HTML realization: every mapped Figma property is realized in code\n`);
+  process.exit(hardFail ? 1 : 0);
+}
+
 for (const [figmaName, entry] of Object.entries(SNAP)) {
   if (figmaName === '_updated' || !entry?.properties) continue;
   const figDefs = new Map(Object.entries(entry.properties)
