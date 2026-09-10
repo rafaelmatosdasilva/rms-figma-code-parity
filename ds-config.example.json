@@ -7,6 +7,13 @@
     { "name": "Screen / Plugin 2", "nodeId": "XXX-YYYYY" }
   ],
 
+  "_screens_note": "Optional. Reference SCREENS for Gate [20] (screen element completeness) - detail views / modals whose DS controls must each have a code counterpart. Falls back to frames[] when unset.",
+  "screens": [
+    { "name": "Detail view / Modal", "nodeId": "XXX-YYYYY", "plugin": "plugin-1" }
+  ],
+  "screenElementStrict": false,
+  "knownScreenElementExemptions": [],
+
   "figma": {
     "colorCollection": "Color",
     "sizingCollection": "Sizing",

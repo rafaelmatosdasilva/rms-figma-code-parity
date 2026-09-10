@@ -234,6 +234,7 @@ Once `ds-config.json` exists, extract:
   - `dropSegments` - array of path segments to strip from the end of a token path before deriving the var name. Default: `["color", "default"]`. Set to `[]` to preserve all segments (e.g. when CSS vars end in `-color`).
   - `iconTextAlias` - when `true` (default), `/iconText/` in a token path is normalised to `/text/`. Set to `false` when the codebase keeps `iconText` as-is.
 - `paths.themeCSS` - path to the token CSS file, **or an array of paths** for projects that split tokens across multiple files (e.g. `["src/tokens/base.css", "src/tokens/components.css"]`). All files are merged before any gate runs. Auto-detection finds any `.css`/`.scss` file containing `:root {` and `--` - no need to manually configure `pluginCSS` for component files in Vue/React/Svelte projects.
+- `screens` *(optional)* - reference SCREENS for Gate [20] (screen element completeness): an array of `{ name, nodeId, plugin }` for detail views and modals whose DS controls must each have a code counterpart. Distinct from `frames[]` (whole-plugin screenshots for Gate [2]): `screens[]` are the finer views where a designer adds a control the code may not have built. Phase 1 (`refreshScreenElements`) captures each screen's interactive-control inventory into `figma-screens.snapshot.json`; falls back to `frames[]` when unset. `screenElementStrict` *(optional, default `false`)* promotes a missing control from an advisory to a hard fail. `knownScreenElementExemptions` *(optional)* - array of `"<plugin>/<label>"` strings recording a deliberate different realization (e.g. `"tokens-to-ink/Preflight"` when Preflight is built as inline sections rather than a button+modal), which silences that control.
 - `visualRefs` - directory for stored reference screenshots (default: `.parity-refs`)
 - `visualRefScale` *(optional)* - PNG export scale for Gate [2] screenshots (default: `2`). Set to `3` for higher-fidelity references. Changing this value invalidates all stored refs - accept the new `.new.png` files with `mv *.new.png *.png` after the first run at the new scale.
 - `knownUnimplementedComponents` - array of component names (matching keys in `structure-contract.mjs`) to exclude from Gate [10] and Gate [4] checks. Use this only as a temporary hold for DS components not yet built in code. Remove a component from this list as soon as its CSS and propertyMap are implemented. An empty array is the target state.
@@ -326,7 +327,7 @@ are far under the cap and are collected in full.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`rms-figma-code-parity`** | **All 21 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 22 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -1180,13 +1181,13 @@ If `FIGMA_TOKEN` is set, `audit.mjs` regenerates this file on every run via REST
 
 ---
 
-## Phase 2 - Step 2: Run all 21 audit gates
+## Phase 2 - Step 2: Run all 22 audit gates
 
 ```bash
 rms-figma-code-parity
 ```
 
-All 21 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
+All 22 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1213,6 +1214,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [17] | `coverage-check.mjs` | **Audit self-check** | **What this audit actually checked** - The one gate that checks the audit *itself*. Cross-references every DS component in the structure snapshot against the checks the contract declares (CONTRACT entry, CSS selector map, RENDERED_ASSERTIONS/FRAME_GEOMETRY_MAP/CROSS_PLUGIN, CSS_BASE_RULE_VARS, per-variant capture) and prints a coverage matrix. Surfaces the blind spots the other gates can't: a DS component modelled by **nothing** (advisory, or fail under `coverageStrict:true` - unless in `knownUnimplementedComponents`), components with **no rendered/browser assertion** (geometry only checked statically), and **single-variant** components with no per-variant capture (sibling states invisible). This is how a newly-added DS component or state stops being silently unchecked. Also reports **MODE-BLIND** assertions - a `RENDERED_ASSERTIONS` entry pinned to one `colorScheme` when the snapshot has several modes, so the unasserted mode has no browser-level guard. Mode list comes from the snapshot (never hardcoded light/dark); advisory by default, fail under `renderedModeStrict:true`. Note the token *value* in every mode is already covered by gate [3] - this dimension is about which CSS rule wins, so it matters where a cascade/specificity conflict could resolve differently per mode. |
 | [18] | `motion-check.mjs` | **Animation** | **Motion** - Easing and duration variables in Figma (the Motion collection) match their CSS custom properties. Opt-in: a no-op unless `figma.motion` is configured and the snapshot has a `motion` map. |
 | [19] | `effect-check.mjs` | **Animation** | **Shadows** - Figma effect styles (drop/inner shadow) match the CSS `box-shadow` they are tokenised into. Opt-in: a no-op unless `figma.effects` is configured and the snapshot has an `effects` map. |
+| [20] | `screen-element-check.mjs` | **Structure** | **Screen elements match Figma** - The structure/token gates only compare elements that exist on BOTH sides; they cannot see a whole control the DESIGN has but the CODE never built (a "Preflight" button, a modal, an extra toggle on a screen). This closes that gap for **reference screens**: for every screen in `ds-config.json → screens[]` (detail views / modals, distinct from the whole-plugin `frames[]`) the DS element inventory is captured into `figma-screens.snapshot.json` (`refreshScreenElements`: each interactive INSTANCE's component name + its first TEXT label) and each interactive control must have a code counterpart **of the same kind**. Kind-awareness is the whole point: a label appearing as an id, a comment, or a JS identifier (`#preflight-section`, `requestPreflight`) is **not** a counterpart - only the label sitting inside a `<button>` (or matching-kind element) as visible text, OR set as a quoted string (a dynamic/attribute label like `'Scan selection'`), counts. Decorative/structural components (dividerLine, badge, card) are not required; interactive families are (button, switch, radio, segmented, checkbox, input, modal). A DS control with no code counterpart is a **MISSING** - **advisory by default** (visible in the report, never blocks a deferred design), promoted to a hard fail under `screenElementStrict: true`. Record a deliberate different realization (e.g. Preflight built as inline sections instead of a button+modal) in `ds-config.json → knownScreenElementExemptions` (`["tokens-to-ink/Preflight"]`). Inert until the snapshot exists, so it never false-positives before capture. |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -1632,7 +1634,7 @@ return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 21 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| All 22 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 

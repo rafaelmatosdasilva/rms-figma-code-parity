@@ -613,6 +613,60 @@ async function refreshFrameGeometry(fileKey, frames, token, outPath) {
   }
 }
 
+// ── Per-reference-screen element inventory (Gate [20]) ──────────────────────────
+// Walks each reference SCREEN (cfg.screens, falling back to cfg.frames) and records every
+// interactive DS control instance as { component, label } - the visible label being the control's
+// first TEXT descendant. Written to figma-screens.snapshot.json and consumed by
+// screen-element-check.mjs, which requires each to have a code counterpart of the same kind.
+async function refreshScreenElements(fileKey, screens, token, outPath) {
+  if (!screens?.length) return false;
+  try {
+    const INTERACTIVE = /button|switch|toggle|radio|segment|check|modal|dialog|overlay|input|field|stepper/i;
+    const firstText = (n) => {
+      if (!n) return '';
+      if (n.type === 'TEXT' && n.characters) return n.characters.trim();
+      for (const c of n.children ?? []) { const t = firstText(c); if (t) return t; }
+      return '';
+    };
+    const out = {};
+    for (const scr of screens) {
+      const nRes = await figmaFetch(
+        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${scr.nodeId}`,
+        { headers: { 'X-Figma-Token': token } },
+      );
+      if (!nRes.ok) { console.log(C.yellow(`  ⚠️  /nodes ${scr.nodeId} → ${nRes.status}`)); continue; }
+      const { nodes } = await nRes.json();
+      const elements = [];
+      const seen = new Set();
+      (function rec(n) {
+        if (!n) return;
+        if ((n.type === 'INSTANCE' || n.type === 'COMPONENT') && INTERACTIVE.test(n.name || '')) {
+          const label = firstText(n);
+          if (label) {
+            const key = `${n.name}|${label}`;
+            if (!seen.has(key)) { seen.add(key); elements.push({ component: n.name, label }); }
+          }
+        }
+        for (const c of n.children ?? []) rec(c);
+      })(Object.values(nodes ?? {})[0]?.document);
+      const id = scr.nodeId.replace('-', ':');
+      out[id] = { name: scr.name || id, plugin: scr.plugin, elements };
+    }
+    const payload = {
+      _updated: new Date().toISOString(),
+      _note: 'Per-reference-screen inventory of interactive DS controls (component + visible label). Consumed by Gate [20] screen-element-check.mjs. Auto-generated - do not edit by hand.',
+      screens: out,
+    };
+    writeFileSync(outPath, JSON.stringify(payload, null, 1) + '\n');
+    const total = Object.values(out).reduce((a, s) => a + s.elements.length, 0);
+    console.log(C.dim(`  ✅ Screen elements: ${total} control(s) across ${screens.length} screen(s)`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Screen elements refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
 // ── Collect structured state bindings: component → variant → { props, bindings } ─
 // Used by structure-check.mjs Gate [3c] to auto-derive CSS assertions without
 // manual CSS_BASE_RULE_VARS entries. Only fills + strokes at root and direct TEXT
@@ -2236,6 +2290,7 @@ function reportFull(label, items, shown) {
         ? refreshIcons(cfg.iconLibraryFileKey ?? cfg.icons.libraryFileKey, figmaToken, join(ROOT, 'figma-icons.snapshot.json'), cfg.icons ?? {})
         : Promise.resolve(),
       SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
+      refreshScreenElements(figmaFileKey, cfg.screens ?? cfg.frames ?? [], figmaToken, join(ROOT, 'figma-screens.snapshot.json')),
     ]);
   }
 
@@ -2351,7 +2406,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2380,6 +2435,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('component-composition-check.mjs'),
     runScriptAsync('state-opacity-check.mjs'),
     runScriptAsync('icon-inventory-check.mjs'),
+    runScriptAsync('screen-element-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2442,6 +2498,8 @@ function reportFull(label, items, shown) {
     combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
   addGate('Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)',
     combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/), parseGeneric(rIconInv, /IN CODE|MISSING/)));
+  addGate('Screen elements match Figma  (every DS reference-screen control has a code counterpart)',
+    parseGeneric(rScreenEl, /IN CODE|MISSING|counterpart|ADVISORY/));
 
   // ── Animation & motion (Motion / Shadows are opt-in - no-op unless configured) ──
   addGate('Transitions  (duration · easing · property per DS selector)',
