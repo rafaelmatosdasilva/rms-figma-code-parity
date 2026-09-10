@@ -1,4 +1,4 @@
-// screen-element.test.mjs — Gate [20] (Screen element completeness, Figma screen → code).
+// screen-element.test.mjs — the Markup gate (Screen element completeness, Figma screen → code).
 // A DS reference-screen control must have a code counterpart OF ITS KIND. The label merely
 // appearing in the file (an id, a comment, a JS identifier) is NOT a counterpart — that is the
 // exact blind spot this gate closes. Advisory by default; a fail under screenElementStrict.

@@ -613,7 +613,7 @@ async function refreshFrameGeometry(fileKey, frames, token, outPath) {
   }
 }
 
-// ── Per-reference-screen element inventory (Gate [20]) ──────────────────────────
+// ── Per-reference-screen element inventory (the Markup gate) ──────────────────────────
 // Walks each reference SCREEN (cfg.screens, falling back to cfg.frames) and records every
 // interactive DS control instance as { component, label } - the visible label being the control's
 // first TEXT descendant. Written to figma-screens.snapshot.json and consumed by
@@ -654,7 +654,7 @@ async function refreshScreenElements(fileKey, screens, token, outPath) {
     }
     const payload = {
       _updated: new Date().toISOString(),
-      _note: 'Per-reference-screen inventory of interactive DS controls (component + visible label). Consumed by Gate [20] screen-element-check.mjs. Auto-generated - do not edit by hand.',
+      _note: 'Per-reference-screen inventory of interactive DS controls (component + visible label). Consumed by the Markup gate screen-element-check.mjs. Auto-generated - do not edit by hand.',
       screens: out,
     };
     writeFileSync(outPath, JSON.stringify(payload, null, 1) + '\n');
@@ -2492,14 +2492,12 @@ function reportFull(label, items, shown) {
       : parseComponentFrameworkGate(rCompose, /OK|MISSING|NO FILE|EXTRA/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
-  addGate('Markup  (ids · component classes · icon references)',
-    parseGeneric(rHtmlStructure, /✅|❌/));
+  addGate('Markup  (ids · component classes · icon references · every DS screen control is built)',
+    combineGates(parseGeneric(rHtmlStructure, /✅|❌/), parseGeneric(rScreenEl, /IN CODE|MISSING|counterpart|ADVISORY/)));
   addGate('Required pieces are in place  (icon slots · component slots · form controls)',
     combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
   addGate('Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)',
     combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/), parseGeneric(rIconInv, /IN CODE|MISSING/)));
-  addGate('Screen elements match Figma  (every DS reference-screen control has a code counterpart)',
-    parseGeneric(rScreenEl, /IN CODE|MISSING|counterpart|ADVISORY/));
 
   // ── Animation & motion (Motion / Shadows are opt-in - no-op unless configured) ──
   addGate('Transitions  (duration · easing · property per DS selector)',

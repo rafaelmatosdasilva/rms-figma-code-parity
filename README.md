@@ -69,9 +69,9 @@ You always check against the latest design, so you can't accidentally compare ag
 
 ---
 
-## The 22 checks
+## The 21 checks
 
-Each run checks 22 things and tells you which are off. In plain terms:
+Each run checks 21 things and tells you which are off. In plain terms:
 
 | # | What it checks |
 |---|---|
@@ -88,15 +88,14 @@ Each run checks 22 things and tells you which are off. In plain terms:
 | 11 | **All states are built**: hover, disabled, selected… each exists and uses the right values. |
 | 12 | **Component props match Figma**: every Figma component property has a code prop with the same name, default and variant options, and every Figma slot (instance-swap) has a code slot (catches missing props, renames like `size` vs `buttonSize`, a `medium` default the code sets to `small`, a `large` variant the code doesn't accept, or an icon slot with no `<slot>`). |
 | 13 | **Sub-components match Figma**: the sub-components Figma nests inside a component are the ones the code actually uses (catches a Card that should hold a Badge but doesn't). |
-| 14 | **Markup**: the HTML shape (ids, classes, icons) still matches what was approved. |
+| 14 | **Markup**: the HTML shape (ids, classes, icons) still matches what was approved, and every control the design puts on a screen (a button, a modal, a toggle) is actually built in the code, not just mentioned in passing. |
 | 15 | **Required pieces are in place**: buttons use the icon and component the design asks for. |
 | 16 | **Icons**: icons come from the shared set and match Figma. |
-| 17 | **Screen elements match Figma**: a control the design puts on a screen (a button, a modal, a toggle) is actually built in the code, not just mentioned in passing. |
-| 18 | **Transitions**: animations use the durations and easings from the design. |
-| 19 | **Renders correctly in a browser**: the real rendered result matches the design, not just the code on paper. |
-| 20 | **What this audit actually checked**: shows what was and wasn't covered, so nothing slips through unnoticed. |
-| 21 | **Motion** *(optional)*: motion values match Figma, when your DS defines them. |
-| 22 | **Shadows** *(optional)*: shadows match Figma, when your DS defines them. |
+| 17 | **Transitions**: animations use the durations and easings from the design. |
+| 18 | **Renders correctly in a browser**: the real rendered result matches the design, not just the code on paper. |
+| 19 | **What this audit actually checked**: shows what was and wasn't covered, so nothing slips through unnoticed. |
+| 20 | **Motion** *(optional)*: motion values match Figma, when your DS defines them. |
+| 21 | **Shadows** *(optional)*: shadows match Figma, when your DS defines them. |
 
 ---
 
@@ -146,7 +145,6 @@ Each run checks 22 things and tells you which are off. In plain terms:
   ✅  [19]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
   ✅  [20]  Rendered computed styles agree with the DS spec (he…Pass
   ✅  [21]  Coverage - which DS components/states the audit act…Pass
-  ✅  [22]  What this audit actually checked  (which DS compone…Pass
 
 ────────────────────────────────────────────────────────────
 
@@ -168,9 +166,9 @@ Each run checks 22 things and tells you which are off. In plain terms:
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  22/22 [██████████████████████]
-  ❌  2026-06-16  11/12 [█████████████████████░]
-  ✅  2026-06-17  22/22 [██████████████████████]
+  ✅  2026-06-15  21/21 [█████████████████████]
+  ❌  2026-06-16  11/12 [████████████████████░]
+  ✅  2026-06-17  21/21 [█████████████████████]
 ────────────────────────────────────────────────────────────
 ```
 

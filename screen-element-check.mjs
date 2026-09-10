@@ -1,4 +1,4 @@
-// screen-element-check.mjs - Gate [20] (Screen element completeness, Figma screen -> code).
+// screen-element-check.mjs - the Markup gate (Screen element completeness, Figma screen -> code).
 // Run from project root: node scripts/screen-element-check.mjs
 //
 // The structure/token gates compare elements that already exist on BOTH sides. They cannot see
