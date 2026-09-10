@@ -577,6 +577,18 @@ return {motion:motionOut,effects:effectsOut};
 > border) is invisible to the token/value gates and shows up **only** in a full structural
 > capture. A shortcut here is the single most common way real drift ships unaudited.
 >
+> **Ownership gate — resolving and building apply ONLY to a repo you own or were asked to fix.**
+> Capturing everything always holds (verification is always complete). But the two rules below
+> *mutate the codebase*, so they apply only when the audited repo is **yours / this DS**, or the
+> user explicitly asked you to fix or build. When you are merely **verifying a repository someone
+> handed you**, switch to *verify-and-report*: run every gate, produce the divergence report + the
+> table, and **propose** fixes (or `--fix` for mechanical value divergences) — but do **not** edit
+> their code, restructure their DS, impose the base-first model, or build components in, without an
+> explicit go-ahead. A divergence in a consumer repo is often **intentional** (a brand override, a
+> consumer that deliberately lags the DS, an in-progress migration): surface it and let them decide.
+> `figmaSourceKey` (`⏳ PENDING FIGMA SYNC`), `visualRegression.mode: "advisory"` and the exemption
+> lists exist precisely to separate "the code is wrong" from "intentional consumer override".
+>
 > **Resolve, don't defer.** Every real difference found is reconciled *in the same run* into the
 > snapshot **and** the contract **and** the CSS - the point of parity is to *fix*, not to file a
 > question. Don't stop to ask for sign-off on a verified DS fact; implement it (Figma is truth).
