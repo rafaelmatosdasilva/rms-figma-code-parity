@@ -567,6 +567,28 @@ return {motion:motionOut,effects:effectsOut};
 
 ## Phase 1 - Step 1c: Capture component structure → `figma-structure.snapshot.json`
 
+> **HARD RULE - capture, RESOLVE, and BUILD every component. Automatic mode.**
+> An unscoped parity run must walk **all** `COMPONENT_SET`/`COMPONENT` nodes on the components
+> page and capture the complete Step 1c field set for each - not a quick "signature" (a few
+> fields), not only the ones already in the contract, not a sample. The only time you narrow the
+> component set is when the user **explicitly** asks for a subset (`--component X`). Skipping
+> components, or capturing a thin subset of their fields, is treated as not doing the job: a DS
+> redesign (a component that got taller, gained a `Disabled` variant, dropped padding, added a
+> border) is invisible to the token/value gates and shows up **only** in a full structural
+> capture. A shortcut here is the single most common way real drift ships unaudited.
+>
+> **Resolve, don't defer.** Every real difference found is reconciled *in the same run* into the
+> snapshot **and** the contract **and** the CSS - the point of parity is to *fix*, not to file a
+> question. Don't stop to ask for sign-off on a verified DS fact; implement it (Figma is truth).
+>
+> **Build, don't park.** `knownUnimplementedComponents` is a temporary hold, and an **empty list
+> is the target**. Every DS component belongs in the **base** design system
+> (`theme.css` / `ui-shared.js`), never redefined per-plugin - so build any live DS component that
+> isn't yet implemented into the base (CSS + tokens + contract entry), then remove it from
+> `knownUnimplementedComponents`. Component geometry/identity pinned inside a plugin file
+> (`apps/*/ui.src.html`) is a smell: move it to the base and leave only genuine per-plugin layout
+> (sticky offsets, page composition) behind.
+
 Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the `State=Default` child (never the SET - its height equals all variants stacked), and extract structural facts:
 
 ```js
