@@ -86,11 +86,29 @@ if (!Object.keys(CONTRACT).length && !STATE_SELECTORS.length) {
 // themeCSS  - used for height rules and base-rule var checks (central declarations)
 // allCss    - theme + all plugin files, used for state selector checks
 //             (state rules often live in plugin/component files)
-let themeCSS = null;
-try { themeCSS = readFileSync(join(ROOT, THEME_PATH), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''); } catch {}
+// Each CSS entry (themeCSS / pluginCSS) is resolved agnostically: a local repo path OR an http(s)
+// URL. Compiled CSS is often not committed - it is a build artifact, sometimes served from a CDN the
+// repo only links to - so a URL entry is fetched. No assumption about framework or build tool.
+const isUrl        = s => /^https?:\/\//i.test(String(s));
+const stripComments = s => s.replace(/\/\*[\s\S]*?\*\//g, '');
+async function loadCss(entry) {
+  if (isUrl(entry)) {
+    try {
+      const opts = AbortSignal.timeout ? { signal: AbortSignal.timeout(15000) } : {};
+      const res  = await fetch(entry, opts);
+      if (!res.ok) return { entry, ok: false, kind: 'url', err: `HTTP ${res.status}` };
+      return { entry, text: stripComments(await res.text()), ok: true, kind: 'url' };
+    } catch (e) { return { entry, ok: false, kind: 'url', err: e.message }; }
+  }
+  const abs = join(ROOT, entry);
+  if (!existsSync(abs)) return { entry, ok: false, kind: 'local' };
+  return { entry, text: stripComments(readFileSync(abs, 'utf8')), ok: true, kind: 'local' };
+}
 
-const cssFiles  = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-const allCss    = cssFiles.map(f => readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')).join('\n');
+const themeSources  = await Promise.all(THEME_PATHS.map(loadCss));
+const pluginSources = await Promise.all(PLUGIN_CSS.map(loadCss));
+let themeCSS = themeSources[0]?.ok ? themeSources[0].text : null;   // value gates read the first theme file
+const allCss = [...themeSources, ...pluginSources].filter(s => s.ok).map(s => s.text).join('\n');
 
 // Build block indexes once - findBlock() uses these for O(1) lookups
 // lightCSS strips @media blocks so dark-mode overrides can't shadow light-mode entries.
@@ -101,20 +119,21 @@ const lightIndex = lightCSS ? buildBlockIndex(lightCSS) : null;
 const allIndex   = buildBlockIndex(allCss);
 
 // ── Preflight: is there real, COMPILED component CSS to check against? ─────────
-// Gate 10 matches literal compiled selectors (e.g. `.button-primary.m`). Those never appear in
-// SCSS/Vue/Svelte SOURCE - `.button-primary { &.m { … } }` only becomes `.button-primary.m` after
-// a build, and `@include`/`@use` mixins never expand at all. And the checker reads ONLY the files
-// listed in ds-config.json → paths.pluginCSS - it does NOT glob the repo, so a folder of CSS someone
-// dropped in but never listed there is invisible to it. When either is the case the gate would
-// silently report every component as "missing", which looks like a parity failure but is really a
-// setup gap. Detect it up front and exit 2 (cannot-verify) with instructions, instead of a bare fail.
+// This gate matches literal compiled selectors (e.g. `.button-primary.m`). Those never appear in
+// pre-processor SOURCE - a nested `.button-primary { &.m { … } }` only becomes `.button-primary.m`
+// after a build, and `@include`/`@use`/mixins never expand at all - regardless of framework or build
+// tool. A pluginCSS entry may be a local path or an http(s) URL; when it is empty, still un-compiled
+// source, or a URL that can't be fetched, the gate would silently report every component as
+// "missing" - which looks like a parity failure but is really a setup gap. Detect it up front and
+// exit 2 (cannot-verify) with instructions, instead of a bare fail.
 {
-  const SOURCE_EXT = /\.(vue|svelte|scss|sass|styl|less)$/i;
-  // SCSS/SFC markers that prove a file is source, not compiled CSS.
+  const SOURCE_EXT = /\.(vue|svelte|scss|sass|styl|less)$/i;   // any pre-processor / single-file-component source
+  // Pre-processor / SFC markers that prove a payload is source, not compiled CSS.
   const SOURCE_MARKERS = /<style[\s>]|@(?:include|mixin|use|forward|extend|if|each|for|function)\b|(?:^|[{;\s])&[.:#>~+\s]/m;
 
-  const sourceLike = cssFiles.filter(f =>
-    SOURCE_EXT.test(f) || SOURCE_MARKERS.test(readFileSync(join(ROOT, f), 'utf8')));
+  const sourceLike  = pluginSources.filter(s =>
+    SOURCE_EXT.test(s.entry) || (s.ok && SOURCE_MARKERS.test(s.text)));
+  const fetchFailed = pluginSources.filter(s => s.kind === 'url' && !s.ok);
 
   // Root selectors the contract expects a compiled stylesheet to contain (best-effort; empty is fine).
   const expected = new Set();
@@ -127,35 +146,44 @@ const allIndex   = buildBlockIndex(allCss);
   const expectedList = [...expected];
   const foundAny     = expectedList.some(sel => allCss.includes(sel));
 
-  const noComponentCss = PLUGIN_CSS.length === 0;
-  const cannotVerify   = sourceLike.length > 0 || noComponentCss ||
-                         (expectedList.length > 0 && !foundAny);
+  // The real signal that there is nothing to check against is: the contract names component
+  // selectors, yet NONE of them appear anywhere in the loaded CSS (theme + plugin). An empty
+  // pluginCSS is NOT itself the signal - many design systems keep component rules in the main/theme
+  // file, and this gate reads them from there. If the contract names no component selectors, there is
+  // nothing component-level to verify and the preflight stays quiet.
+  const selectorsMissing = expectedList.length > 0 && !foundAny;
+  const cannotVerify     = sourceLike.length > 0 || fetchFailed.length > 0 || selectorsMissing;
 
   if (cannotVerify) {
     console.log('\n🚧 Gate [3] STRUCTURE cannot run - no compiled component CSS to verify against.\n');
-    if (noComponentCss)
-      console.log('   ❌ ds-config.json → paths.pluginCSS is empty: only the token/theme file is loaded,');
-    else if (sourceLike.length)
-      console.log('   ❌ the CSS listed in ds-config.json → paths.pluginCSS is source, not compiled CSS:');
+    if (sourceLike.length)
+      console.log('   ❌ the CSS in ds-config.json → paths.pluginCSS is pre-processor source, not compiled CSS:');
+    else if (fetchFailed.length)
+      console.log('   ❌ a pluginCSS URL could not be fetched, so no compiled CSS was loaded:');
     else
-      console.log('   ❌ none of the expected component selectors were found in the CSS that is loaded:');
+      console.log('   ❌ none of the design system\'s component selectors were found in the CSS that is loaded:');
 
-    for (const f of sourceLike.slice(0, 10)) console.log(`        · ${f}  (SCSS/SFC source)`);
-    if (!sourceLike.length && expectedList.length && !foundAny)
+    for (const s of sourceLike.slice(0, 10))  console.log(`        · ${s.entry}  (pre-processor / SFC source)`);
+    for (const s of fetchFailed.slice(0, 10)) console.log(`        · ${s.entry}  (${s.err})`);
+    if (!sourceLike.length && !fetchFailed.length && selectorsMissing) {
       for (const s of expectedList.slice(0, 8)) console.log(`        · looked for ${s} - not present`);
+      if (PLUGIN_CSS.length === 0)
+        console.log('        (paths.pluginCSS is empty - if component CSS lives in a separate/compiled file, list it there.)');
+    }
 
-    console.log('\n   Why: this gate matches literal compiled selectors like `.button-primary.m`. In SCSS/');
-    console.log('   Vue/Svelte source that selector is written nested (`.button-primary { &.m { … } }`) and');
-    console.log('   only exists after a build; `@include`/`@use` mixins never expand in source at all.');
-    console.log('   Note: the checker reads ONLY the files listed in paths.pluginCSS - it does not scan the');
-    console.log('   repo, so a folder of CSS added but not listed there is ignored.\n');
-    console.log('   Fix (pick one), then re-run:');
-    console.log('     1. Build the design system\'s CSS and point paths.pluginCSS at the COMPILED output.');
-    console.log('        e.g. a Vite library build (`vite build --mode library`) emits a single flat .css');
-    console.log('        in dist/ - list that file. Run the build before each audit (dist/ is not committed).');
-    console.log('     2. Add a Sass/PostCSS pre-processing step that flattens the component styles to plain');
-    console.log('        CSS before the audit, and list that output in paths.pluginCSS.');
-    console.log('   Do NOT point paths.pluginCSS at .vue/.scss source - it will read as text and mis-report.\n');
+    console.log('\n   Why: this gate matches literal compiled selectors like `.button-primary.m`. In any');
+    console.log('   pre-processor / component source that selector is written nested');
+    console.log('   (`.button-primary { &.m { … } }`) and only exists after a build; mixins never expand.');
+    console.log('   Note: pluginCSS is auto-detected only from apps/*/ui.src.html (else list it explicitly).');
+    console.log('   A folder of .css dropped into the repo is NOT picked up - add its files to paths.pluginCSS.\n');
+    console.log('   Fix (pick one), then re-run - each pluginCSS entry may be a local path OR an http(s) URL:');
+    console.log('     1. Build the design system to compiled CSS (whatever your build tool) and list that');
+    console.log('        output in paths.pluginCSS. It is usually a build artifact, so run the build before');
+    console.log('        each audit (the compiled file is typically not committed).');
+    console.log('     2. If the compiled CSS is served from a URL, list that URL in paths.pluginCSS - it is');
+    console.log('        fetched. (Point it at the stylesheet the page links to, not the page itself.)');
+    console.log('   Do NOT point paths.pluginCSS at pre-processor source (.vue/.scss/…) - it reads as text');
+    console.log('   and mis-reports.\n');
     process.exit(2);
   }
 }
