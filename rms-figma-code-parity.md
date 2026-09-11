@@ -56,14 +56,23 @@ against, so say so plainly instead of forcing a green run.
 
 Route by intent:
 
-- **One or a few components** (the common case - "audit ButtonPrimary", "check the button"):
-  run the scoped script directly and report its banner in the chat.
+- **One or a few components** (the common case - "audit ButtonPrimary", "check the button",
+  "run the parity on input"): **whenever the request names a specific component or part of the
+  DS, you MUST run scoped to it - pass that name to `--component`.** Do this automatically; the
+  user does not need to say "scoped" or know the flag exists. Naming the part IS the request to
+  scope to it.
   ```bash
+  rms-figma-code-parity --component input                # scope to whatever the user named
   rms-figma-code-parity --component ButtonPrimary        # or A,B  / repeat --component
   ```
-  This is lean and deterministic. Do **not** run the full Phase 1/Phase 2 workflow for a
-  single-component check - that is exactly the heavy path that produces noisy, confusing
-  output. The scope auto-expands to nested sub-components.
+  Then every gate reports **only** findings that belong to that component; DS-wide issues in
+  other components are collapsed to a "… N findings outside scope - not audited" line and never
+  fail the run - so the whole report is about the one thing being audited, which is the point.
+  Run the scoped script directly and report its banner in the chat. This is lean and
+  deterministic. Do **not** run the full Phase 1/Phase 2 workflow for a single-component
+  check - that is exactly the heavy path that produces noisy, confusing output where a gate
+  "fails" on something the user is not auditing. The scope auto-expands to nested sub-components.
+  Only run unscoped when the user explicitly asks for the whole DS / a full audit.
 - **The whole design system:** run `rms-figma-code-parity` in the terminal (or `/rms-figma-code-parity` in Claude Code),
   then follow the phases below.
 
