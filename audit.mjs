@@ -1330,6 +1330,15 @@ function reportFull(label, items, shown) {
   function parseGate3(r) {
     if (r.status === null) return { pass: true, lines: ['⏭ structure-check.mjs not found - skipped'] };
     const out  = r.stdout + r.stderr;
+    if (r.status === 2) {
+      // Cannot verify: no compiled component CSS to check against (paths.pluginCSS empty, or pointed
+      // at SCSS/Vue source). Not a parity divergence - a setup gap. Surface the checker's remediation
+      // verbatim so the fix is on screen, and block (pass:false) rather than a bare/opaque fail.
+      const guidance = out.split('\n')
+        .filter(l => /🚧|❌|·|Why:|Fix|Note:|Do NOT|^\s+\d\./.test(l))
+        .map(l => l.replace(/\s+$/, ''));
+      return { pass: false, lines: [C.yellow('🚧 STRUCTURE cannot verify - no compiled component CSS.'), ...guidance] };
+    }
     const pass = r.status === 0;
     const summary    = out.split('\n').filter(l => /✅|❌/.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n')
