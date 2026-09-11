@@ -2571,7 +2571,7 @@ function reportFull(label, items, shown) {
 
     const props  = read('component-prop-result.json');
     const parity = read('parity-check-result.json');
-    if (!props?.rows?.length && !(parity?.fail?.length || parity?.aliasFail?.length || parity?.passList?.length)) return;
+    if (!props && !(parity?.fail?.length || parity?.aliasFail?.length || parity?.passList?.length)) return;
 
     console.log(C.bold('─'.repeat(WIDTH)));
     console.log(C.bold('  PARITY  ·  Figma ↔ code'));
@@ -2585,6 +2585,10 @@ function reportFull(label, items, shown) {
       }));
       for (const l of table(['FIGMA PROP', 'FIGMA VALUE', 'CODE PROP', 'CODE VALUE'], rows)) console.log(l);
       console.log(C.dim(`  ✓ ${props.summary?.match ?? 0} match   ✗ ${props.summary?.diverged ?? 0} diverge`));
+    } else if (props) {
+      // Empty snapshot: not a pass, just nothing captured.
+      console.log('\n  ' + C.bold('PROPS') + C.dim('  (component properties)'));
+      console.log('  ' + C.yellow('not verified - the props snapshot is empty (capture it via the Figma plugin)'));
     }
 
     if (parity) {

@@ -49,3 +49,14 @@ test('[report] rows classify match / rename / missing / extra', () => {
 test('[regression] real divergences still fail the gate (exit 1)', () => {
   assert.equal(runGate(GATE, FILES).code, 1);
 });
+
+test('[bugfix empty] an empty props snapshot is "not verified", not a false pass', () => {
+  const { code, out, dir } = runGate(GATE, {
+    'ds-config.json': { paths: { snapshotVars: 'figma-vars.snapshot.json' } },
+    'figma-component-props.snapshot.json': { _updated: '2020-01-01' },   // no components
+  });
+  assert.equal(code, 2, out);                       // not run, never exit 0
+  assert.match(out, /not verified/i, out);
+  const r = JSON.parse(readFileSync(join(dir, 'component-prop-result.json'), 'utf8'));
+  assert.equal(r.empty, true);
+});

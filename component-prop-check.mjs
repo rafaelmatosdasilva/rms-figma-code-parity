@@ -46,6 +46,19 @@ if (!existsSync(join(ROOT, SNAP_PATH))) {
 }
 const SNAP = JSON.parse(readFileSync(join(ROOT, SNAP_PATH), 'utf8'));
 
+// An EMPTY snapshot (no component has properties) is NOT a real pass - it is "nothing to
+// compare". This happens when the Figma file is not published as a library, so REST
+// /component_sets returns nothing and the refresh writes an empty snapshot. Treat it as
+// "not run" (exit 2), and record it so the report can say so, instead of a false green.
+if (!Object.entries(SNAP).some(([k, v]) => k !== '_updated' && v?.properties && Object.keys(v.properties).length)) {
+  try { writeFileSync(join(ROOT, 'component-prop-result.json'), JSON.stringify({ pass: null, empty: true, rows: [], summary: { total: 0, match: 0, diverged: 0 } }, null, 2) + '\n'); } catch { /* optional */ }
+  console.log(`\n⏭  ${SNAP_PATH} has no component properties - PROPS not verified (not a pass).`);
+  console.log('   The snapshot is empty. An unpublished Figma file returns nothing from REST /component_sets;');
+  console.log('   capture the props via the Figma plugin (any plan, no token) and commit the snapshot.');
+  console.log('   (exit 2 - treated as "not run", never a pass)\n');
+  process.exit(2);
+}
+
 const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
 const KNOWN_PROP_EXCEPTIONS = new Set(cfg.knownPropExceptions ?? []);   // "Component/prop"
 const COMPONENT_FILES = cfg.componentFiles ?? {};                        // Figma name -> file path
