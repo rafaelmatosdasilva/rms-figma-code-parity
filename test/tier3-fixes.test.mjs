@@ -80,3 +80,45 @@ test('[regression B3] the default light/dark path still detects an orphan-but-us
   assert.equal(code, 1, out);
   assert.match(out, /ORPHAN-BUT-USED/, out);
 });
+
+// ── Gate [10] cannot-verify: compiled CSS inside an HTML <style> is NOT source ──
+// The plugins ship compiled CSS inside `ui.(src.)html`. An inline <style> block, a <script>'s
+// bitwise `&`, or a `<style` tag in JS must NOT make the whole HTML read as pre-processor source
+// (that falsely bailed the structure gate as "cannot verify"). Only real preprocessor markers
+// (@include / nested `&.`), scanned INSIDE the <style> CSS, count as un-compiled source.
+const G10_CONTRACT =
+  "export const CONTRACT = { badge: {} };\n" +
+  "export const COMPONENT_CSS_SELECTORS = { badge: { main: '.badge' } };\n" +
+  "export const CSS_BASE_RULE_VARS = [];\n";
+const g10Files = (pluginEntry, pluginContent) => ({
+  'ds-config.json': { paths: { themeCSS: 'theme.css', snapshotStructure: 'snap.json', pluginCSS: [pluginEntry] } },
+  'snap.json': { components: { badge: {} } },
+  'structure-contract.mjs': G10_CONTRACT,
+  'theme.css': ':root {}\n.badge { background: var(--badge-bg); }\n',   // real compiled component CSS
+  [pluginEntry]: pluginContent,
+});
+
+test('[bugfix gate10] flat compiled CSS in an HTML <style> verifies (not mis-read as source)', () => {
+  const { code, out } = runGate('structure-check.mjs', g10Files(
+    'ui.html',
+    '<html><style>.badge { background: var(--badge-bg); }</style>'
+    + '<script>const masked = value & 0xFF; // Blacks & Whites</script></html>'));
+  assert.equal(code, 0, out);                       // was exit 2 (cannot verify) because of <style> / `&`
+  assert.doesNotMatch(out, /cannot (verify|run)/i, out);
+});
+
+test('[regression gate10] genuine pre-processor source still reports cannot-verify', () => {
+  const { code, out } = runGate('structure-check.mjs', g10Files(
+    'components.scss',
+    '.badge { &.m { background: red; } }\n'));
+  assert.equal(code, 2, out);                       // nested `&.` / .scss ext = un-compiled source
+  assert.match(out, /cannot (verify|run)/i, out);
+});
+
+test('[regression gate10] SCSS nesting inside an HTML <style> also reports cannot-verify', () => {
+  const { code, out } = runGate('structure-check.mjs', g10Files(
+    'ui.html',
+    '<style>.badge { &.m { background: red; } }</style>'));
+  assert.equal(code, 2, out);                       // the <style> CSS itself is nested source
+  assert.match(out, /cannot (verify|run)/i, out);
+});

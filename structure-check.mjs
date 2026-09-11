@@ -128,11 +128,20 @@ const allIndex   = buildBlockIndex(allCss);
 // exit 2 (cannot-verify) with instructions, instead of a bare fail.
 {
   const SOURCE_EXT = /\.(vue|svelte|scss|sass|styl|less)$/i;   // any pre-processor / single-file-component source
-  // Pre-processor / SFC markers that prove a payload is source, not compiled CSS.
-  const SOURCE_MARKERS = /<style[\s>]|@(?:include|mixin|use|forward|extend|if|each|for|function)\b|(?:^|[{;\s])&[.:#>~+\s]/m;
+  // Pre-processor / SFC markers that prove a payload is source, not compiled CSS. NB: an inline
+  // `<style>` block is NOT itself a marker - a plugin that ships compiled CSS inside an HTML file
+  // is common and legitimate. So scan only the CSS (the <style> contents), never the surrounding
+  // HTML/JS, or a bitwise `&` or a `<style` tag in a <script> would read as a nested SCSS selector.
+  const SOURCE_MARKERS = /@(?:include|mixin|use|forward|extend|if|each|for|function)\b|(?:^|[{;\s])&[.:#>~+\s]/m;
+  // For an HTML payload, reduce it to the concatenated <style> block contents before scanning;
+  // a raw stylesheet (.css / .scss / URL body) is scanned as-is.
+  const cssOnly = text => {
+    const styles = [...String(text || '').matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]);
+    return styles.length ? styles.join('\n') : String(text || '');
+  };
 
   const sourceLike  = pluginSources.filter(s =>
-    SOURCE_EXT.test(s.entry) || (s.ok && SOURCE_MARKERS.test(s.text)));
+    SOURCE_EXT.test(s.entry) || (s.ok && SOURCE_MARKERS.test(cssOnly(s.text))));
   const fetchFailed = pluginSources.filter(s => s.kind === 'url' && !s.ok);
 
   // Root selectors the contract expects a compiled stylesheet to contain (best-effort; empty is fine).

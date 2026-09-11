@@ -2512,7 +2512,7 @@ function reportFull(label, items, shown) {
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references · every DS screen control is built)',
-    combineGates(parseGeneric(rHtmlStructure, /✅|❌/), parseGeneric(rScreenEl, /IN CODE|MISSING|counterpart|ADVISORY/)));
+    combineGates(parseGeneric(rHtmlStructure, /✅|❌/), parseGeneric(rScreenEl, /IN CODE|MISSING|MISMATCH|SEP GAP|counterpart|built as|row-separator|ADVISORY/)));
   addGate('Required pieces are in place  (icon slots · component slots · form controls)',
     combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
   addGate('Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)',
