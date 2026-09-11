@@ -13,6 +13,7 @@
 //                             STATE_SELECTORS
 //
 // Exit 0 = all checks pass. Exit 1 = any failure.
+// Exit 2 = cannot verify: no compiled component CSS configured (setup gap, not a parity fail).
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -98,6 +99,66 @@ const lightCSS   = themeCSS ? stripAtRules(themeCSS) : null;
 const themeIndex = themeCSS ? buildBlockIndex(themeCSS) : null;
 const lightIndex = lightCSS ? buildBlockIndex(lightCSS) : null;
 const allIndex   = buildBlockIndex(allCss);
+
+// ── Preflight: is there real, COMPILED component CSS to check against? ─────────
+// Gate 10 matches literal compiled selectors (e.g. `.button-primary.m`). Those never appear in
+// SCSS/Vue/Svelte SOURCE - `.button-primary { &.m { … } }` only becomes `.button-primary.m` after
+// a build, and `@include`/`@use` mixins never expand at all. And the checker reads ONLY the files
+// listed in ds-config.json → paths.pluginCSS - it does NOT glob the repo, so a folder of CSS someone
+// dropped in but never listed there is invisible to it. When either is the case the gate would
+// silently report every component as "missing", which looks like a parity failure but is really a
+// setup gap. Detect it up front and exit 2 (cannot-verify) with instructions, instead of a bare fail.
+{
+  const SOURCE_EXT = /\.(vue|svelte|scss|sass|styl|less)$/i;
+  // SCSS/SFC markers that prove a file is source, not compiled CSS.
+  const SOURCE_MARKERS = /<style[\s>]|@(?:include|mixin|use|forward|extend|if|each|for|function)\b|(?:^|[{;\s])&[.:#>~+\s]/m;
+
+  const sourceLike = cssFiles.filter(f =>
+    SOURCE_EXT.test(f) || SOURCE_MARKERS.test(readFileSync(join(ROOT, f), 'utf8')));
+
+  // Root selectors the contract expects a compiled stylesheet to contain (best-effort; empty is fine).
+  const expected = new Set();
+  const addSel = s => {
+    const m = String(s || '').match(/\.[A-Za-z_][\w-]*/); // first class token, e.g. ".button-primary"
+    if (m) expected.add(m[0]);
+  };
+  for (const c of Object.values(COMPONENT_CSS_SELECTORS)) for (const v of Object.values(c || {})) addSel(v);
+  for (const s of STATE_SELECTORS) addSel(s?.selector);
+  const expectedList = [...expected];
+  const foundAny     = expectedList.some(sel => allCss.includes(sel));
+
+  const noComponentCss = PLUGIN_CSS.length === 0;
+  const cannotVerify   = sourceLike.length > 0 || noComponentCss ||
+                         (expectedList.length > 0 && !foundAny);
+
+  if (cannotVerify) {
+    console.log('\n🚧 Gate [3] STRUCTURE cannot run - no compiled component CSS to verify against.\n');
+    if (noComponentCss)
+      console.log('   ❌ ds-config.json → paths.pluginCSS is empty: only the token/theme file is loaded,');
+    else if (sourceLike.length)
+      console.log('   ❌ the CSS listed in ds-config.json → paths.pluginCSS is source, not compiled CSS:');
+    else
+      console.log('   ❌ none of the expected component selectors were found in the CSS that is loaded:');
+
+    for (const f of sourceLike.slice(0, 10)) console.log(`        · ${f}  (SCSS/SFC source)`);
+    if (!sourceLike.length && expectedList.length && !foundAny)
+      for (const s of expectedList.slice(0, 8)) console.log(`        · looked for ${s} - not present`);
+
+    console.log('\n   Why: this gate matches literal compiled selectors like `.button-primary.m`. In SCSS/');
+    console.log('   Vue/Svelte source that selector is written nested (`.button-primary { &.m { … } }`) and');
+    console.log('   only exists after a build; `@include`/`@use` mixins never expand in source at all.');
+    console.log('   Note: the checker reads ONLY the files listed in paths.pluginCSS - it does not scan the');
+    console.log('   repo, so a folder of CSS added but not listed there is ignored.\n');
+    console.log('   Fix (pick one), then re-run:');
+    console.log('     1. Build the design system\'s CSS and point paths.pluginCSS at the COMPILED output.');
+    console.log('        e.g. a Vite library build (`vite build --mode library`) emits a single flat .css');
+    console.log('        in dist/ - list that file. Run the build before each audit (dist/ is not committed).');
+    console.log('     2. Add a Sass/PostCSS pre-processing step that flattens the component styles to plain');
+    console.log('        CSS before the audit, and list that output in paths.pluginCSS.');
+    console.log('   Do NOT point paths.pluginCSS at .vue/.scss source - it will read as text and mis-report.\n');
+    process.exit(2);
+  }
+}
 
 // ── CSS utility helpers ───────────────────────────────────────────────────────
 // Both helpers take an explicit css string so they work on themeCSS or allCss.
