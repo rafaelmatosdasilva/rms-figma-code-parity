@@ -638,6 +638,8 @@ async function refreshScreenElements(fileKey, screens, token, outPath) {
       const { nodes } = await nRes.json();
       const elements = [];
       const seen = new Set();
+      let rowSeparators = 0; // divider components placed BETWEEN interactive controls in a container
+      const SEP = /divider|separator/i;
       (function rec(n) {
         if (!n) return;
         if ((n.type === 'INSTANCE' || n.type === 'COMPONENT') && INTERACTIVE.test(n.name || '')) {
@@ -647,14 +649,22 @@ async function refreshScreenElements(fileKey, screens, token, outPath) {
             if (!seen.has(key)) { seen.add(key); elements.push({ component: n.name, label }); }
           }
         }
-        for (const c of n.children ?? []) rec(c);
+        // Row separators: a divider/separator that is a SIBLING of an interactive control inside the
+        // same container (a card's slot, a section). They structure the screen but carry no label, so
+        // they never enter `elements` - counted here so the code can be required to render them (the
+        // "dividerLines added between the card rows" miss the label-based inventory can't see).
+        const kids = n.children ?? [];
+        if (kids.length && kids.some(c => (c.type === 'INSTANCE' || c.type === 'COMPONENT') && INTERACTIVE.test(c.name || ''))) {
+          for (const c of kids) if ((c.type === 'INSTANCE' || c.type === 'COMPONENT') && SEP.test(c.name || '')) rowSeparators++;
+        }
+        for (const c of kids) rec(c);
       })(Object.values(nodes ?? {})[0]?.document);
       const id = scr.nodeId.replace('-', ':');
-      out[id] = { name: scr.name || id, plugin: scr.plugin, elements };
+      out[id] = { name: scr.name || id, plugin: scr.plugin, elements, rowSeparators };
     }
     const payload = {
       _updated: new Date().toISOString(),
-      _note: 'Per-reference-screen inventory of interactive DS controls (component + visible label). Consumed by the Markup gate screen-element-check.mjs. Auto-generated - do not edit by hand.',
+      _note: 'Per-reference-screen inventory of interactive DS controls (component + visible label) plus rowSeparators (dividerLines between controls). Consumed by the Markup gate screen-element-check.mjs. Auto-generated - do not edit by hand.',
       screens: out,
     };
     writeFileSync(outPath, JSON.stringify(payload, null, 1) + '\n');
