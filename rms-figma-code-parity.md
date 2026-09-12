@@ -588,6 +588,19 @@ return {motion:motionOut,effects:effectsOut};
 > border) is invisible to the token/value gates and shows up **only** in a full structural
 > capture. A shortcut here is the single most common way real drift ships unaudited.
 >
+> **Refreshing the *vars* snapshot is NOT a Phase 1 refresh — the structure walk (Step 1c) runs in
+> the SAME run, every run.** The tempting shortcut is: capture colours, see they're unchanged, and
+> assume the structure is stable too. It is not — height, padding, gap, slot-gap, stroke and
+> variant changes are *orthogonal* to colour and live **only** in `figma-structure.snapshot.json`.
+> "The tokens didn't move" is never evidence that "the components didn't move" (the exact miss:
+> vars unchanged while a divider's top spacing and a panel's slot gap had drifted). When the
+> Variables REST API is unavailable (403 / non-Enterprise), the engine cannot refresh either
+> snapshot for you, so **you** must run the Step 1c Plugin API walk (works on any plan) alongside
+> the vars capture — refreshing one and not the other is the failure this rule exists to stop.
+> **Set `maxSnapshotAgeDays` in `ds-config.json`** so Gate [1] *hard-fails* on a stale snapshot
+> instead of passing green with an advisory — that turns "always refresh" from a discipline you can
+> forget into a gate you cannot.
+>
 > **Ownership gate — resolving and building apply ONLY to a repo you own or were asked to fix.**
 > Capturing everything always holds (verification is always complete). But the two rules below
 > *mutate the codebase*, so they apply only when the audited repo is **yours / this DS**, or the
@@ -826,7 +839,12 @@ function getBoundPaddingVar(node, idToVar) {
 }
 const childFramePadding = [], childFrameGaps = [];
 for (const child of defaultVariant.children ?? []) {
-  if (child.type !== 'FRAME') continue;
+  // FRAME **and SLOT**: a slotted component (panel, statusBar, overflowList, modal, …) keeps its
+  // content in a `SLOT` node, and its `itemSpacing` is the gap the DS puts between the slotted
+  // items. Skipping non-FRAME children (the old `!== 'FRAME'`) made every slot gap invisible - the
+  // panel's `Content` slot gap (gap/xl) never entered the snapshot, so parity could never see it
+  // drift. Capture layout containers regardless of whether they are a FRAME or a SLOT.
+  if (child.type !== 'FRAME' && child.type !== 'SLOT') continue;
   const pv = getBoundPaddingVar(child, idToVar);
   if (pv) childFramePadding.push({ name: child.name, paddingVar: pv });
   const gapId = child.boundVariables?.itemSpacing?.id;
