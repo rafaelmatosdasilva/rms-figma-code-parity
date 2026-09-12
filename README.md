@@ -37,13 +37,11 @@ In Claude Code, inside your project, type:
 
 ### Just ask - don't write a prompt full of rules
 
-Say what you want in one line and let the skill do the rest:
+Name what to check in one line; the skill handles setup, scoping, running and reporting.
 
 - *"Audit ButtonPrimary"* · *"Check the button and the toast"* · *"Run parity on the whole DS"*
 
-**Don't write a long prompt with steps and rules.** The skill already handles setup, running and reporting; a step-by-step prompt just fights it. Name the component(s) or say "the whole DS" and let it run.
-
-**Just name the part in plain language - that is the whole instruction.** Say *"run the parity on input"* and the skill automatically scopes the audit to `input`: you don't type a flag, know that `--component` exists, or say the word "scoped". When you name one component, every gate reports **only** that component's findings - issues that belong to the rest of the DS are set aside and never fail your run, so the report is entirely about the thing you asked for. The scope auto-expands to the sub-components it contains (a button's icon, a card's badge), so a parent is never reported clean while a child it depends on is broken. Only when you ask for "the whole DS" does it audit everything.
+Naming a component **is** the scope - *"run the parity on input"* audits `input` (and the sub-components it contains) and reports only its findings. Say *"the whole DS"* to audit everything.
 
 ## Staying up to date
 
