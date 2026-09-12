@@ -941,11 +941,31 @@ base rule and left its geometry (height/padding/gap/radius) silently unchecked. 
 the **fullest** block per selector, so the base rule always wins and any component with a dark-mode
 bare override is checkable again.
 
-### Capture robustness — four Phase-1 lessons
+### Capture robustness — Phase-1 lessons
 
 The audit compares code against the committed snapshots, so a lossy or stale capture is invisible
-until it produces a wrong result. Four rules keep Phase 1 honest — they are capture-time (agent /
+until it produces a wrong result. These rules keep Phase 1 honest — they are capture-time (agent /
 Plugin API) discipline, not gates, because a tokenless plan has no live Figma access from the engine:
+
+- **Never dismiss an anomaly — investigate it to the root, never give up.** When a captured value
+  looks *wrong* (the geometry doesn't add up — a group is 63px tall yet its slot reports a 32px gap;
+  a value smells like a "placeholder default"; a height jumped), that mismatch is a *lead*, not
+  permission to shrug it off as noise and move on. Dismissing it ("ambiguous — I won't touch it")
+  is how a **real** divergence ships unaudited: the 32px WAS the DS spec — the slot was laid out
+  **horizontally**, so the two items sit side-by-side in one 40px row, and the "impossible" 32px was
+  the real gap between them. The rule: when a value confuses you, **drill into the actual node
+  structure** (walk the slot's children, their layout axis, sizes and positions) until the value is
+  *explained*. Only after you can say exactly what it is may you decide it's correct, drifted, or a
+  true placeholder — and if the geometry still doesn't reconcile, keep going, don't stop at "ambiguous".
+- **A slot's spacing lives on the SLOT node — capture its gap AND its top/bottom/side padding, not
+  only a FRAME's.** A slotted component (panel, statusBar, overflowList, group) puts its content in a
+  `SLOT`, and both its `itemSpacing` and its `padding*` are DS specs the code must match. The
+  content-container padding is a frequent silent miss: a panel's Content slot is `padding/l` (16) on
+  every side, but the code's scroll/content wrapper is easily left at `top:0` (relying on a child's
+  old padding that a DS redesign since removed — e.g. a compact divider that dropped its top padding),
+  and no value gate sees it because the padding is on a bespoke per-plugin wrapper, not a base class.
+  Capture the SLOT's gap and padding in Step 1c, and contract the code wrapper that realises the slot
+  so Gate [3]/[16] assert its padding — top and bottom included.
 
 - **Stored `nodeId`s go stale — resolve by name+resting variant, not the saved id.** When the DS is
   reorganised, a snapshot's stored variant `nodeId` can resolve to a *different* node (often the whole
