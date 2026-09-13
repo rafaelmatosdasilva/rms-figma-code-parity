@@ -2809,6 +2809,20 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
     console.log(`\n🌐 HTML parity report → ${REPORT_HTML}`);
   }
 
+  // ── Design-intent (opt-in OUTPUT, not a gate) ───────────────────────────────
+  // Aggregates this project's Figma annotations + code notes + facts + usage into
+  // one private, merge-aware design-intent.json. Never affects pass/fail. Off by
+  // default; run with --docs. Project-specific + private (keep gitignored).
+  if (process.argv.includes('--docs') || process.argv.includes('--intent')) {
+    try {
+      const { generateIntent } = await import('./intent-gen.mjs');
+      const r = await generateIntent(ROOT, cfg, {});
+      console.log(`\n📓 Design intent → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · ${r.withDesign} w/ Figma notes · ${r.withCode} w/ code notes · ${r.authoredKept} authored kept)`);
+    } catch (e) {
+      console.log(C.yellow('\n⚠️  --docs: design-intent generation failed (never fails the audit): ' + e.message));
+    }
+  }
+
   // Passive, throttled "you're behind" nudge - at most once/day, best-effort, never
   // blocks or errors a run. Explicit checks: `node scripts/audit.mjs --version`.
   try {

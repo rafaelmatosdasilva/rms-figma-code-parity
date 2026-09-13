@@ -183,9 +183,43 @@ rms-figma-code-parity --update                        # update to the latest - n
 rms-figma-code-parity --link-command                  # (re)point the /rms-figma-code-parity command at the install via symlink
 rms-figma-code-parity --trend                         # show last 20 audit runs + pass/fail trend
 rms-figma-code-parity --report-html parity.html       # generate HTML report only (no Phase 1)
+rms-figma-code-parity --docs                          # ALSO write the design-intent layer (opt-in output; runs after the gates)
 node scripts/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
 node scripts/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
 ```
+
+### `--docs` — the design-intent layer (opt-in OUTPUT, never a gate)
+
+`--docs` (alias `--intent`) is an **output**, not a verification — the same category as
+`--report-html`. It is **off by default**, runs as a post-step *after* the gates (so it reuses
+the fresh snapshots), and **never affects pass/fail**. It is deliberately NOT a gate: a gate
+answers "does the code match Figma?", and generating documentation is neither a check nor
+something to force on a project that already has its own showroom/gallery.
+
+It writes **one** merge-aware file, `<theme-css dir>/design-intent.json` (override with
+`ds-config.json → docs.out`) — a project's **intent layer**, organised as
+`{ system, foundations, components, patterns, templates, pages, flows }`. It is a generated
+**view over the canonical sources — nothing is hand-copied**:
+
+- **Design intent** ← Figma component `description` + `annotations` (from the component-props snapshot).
+- **Code intent** ← each component's `structure-contract.mjs` `_note` **and** the comment that
+  precedes its rule in the token CSS.
+- **Facts** ← the structure snapshot (height, padding/gap tokens, fill, variants, properties).
+- **Usage** ← which plugin sources reference the component's class.
+
+Because the file is regenerated every run, the generator is **merge-aware**: it reads the existing
+file and **preserves everything you authored** — each layer's `authored` string, and every
+component's `authored` field — refreshing only the derived parts. So you get one file that is
+auto-derived where it can be and hand-authored where it must be (the `system`/`patterns`/… layers),
+and regeneration never destroys your prose. Author higher-layer/system intent directly in the
+`authored` fields (Markdown strings).
+
+**It is project-specific and private.** The engine ships only the generic generator; the *content*
+is 100% derived from **your** Figma + code, on your machine. Keep the output **gitignored** (add
+`design-intent.json` to `.gitignore`) and back it up privately alongside the snapshots — never
+commit it to a public repo, since it carries your Figma's internal annotations and DS rationale.
+Any consumer (an optional showroom, the HTML report) reads this **one** JSON — single source, no
+re-derivation.
 
 ---
 
