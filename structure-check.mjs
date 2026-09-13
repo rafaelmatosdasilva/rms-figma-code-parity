@@ -1034,7 +1034,21 @@ const CHILD_FAIL = [], CHILD_PASS = [];
 for (const [comp, contract] of Object.entries(CONTRACT)) {
   if (!contract.children?.length) continue;
   for (const child of contract.children) {
-    if (child.cssSelector === null) continue; // flattened child frame - asserted via other gates
+    if (child.cssSelector === null) {
+      // A documentary (flattened / empty-shell) slot skips the CSS lookup — but a slot that
+      // carries a real DS PADDING token has an inset the code must reproduce, and skipping it
+      // silently is exactly how a slot's top/side padding drifts unseen (the DS said padding/l,
+      // the code shipped padding/s, every gate stayed green). So a null-selector slot with a
+      // padding token MUST name what verifies that padding, via `verifiedBy` (a selector, a
+      // RENDERED_ASSERTIONS reference, or 'geometric …'). No verifiedBy = an unverified DS inset
+      // = FAIL. (Gap-only slots are exempt: a slot's gap spaces whatever is slotted in per-context,
+      // so it isn't a fixed value to assert here.)
+      const padTok = child.paddingVar?.tb || child.paddingVar?.lr;
+      if (padTok && !child.verifiedBy) {
+        CHILD_FAIL.push(`${comp}/${child.name}: DS slot padding (${child.paddingVar?.tb ? 'tb '+child.paddingVar.tb : ''}${child.paddingVar?.lr ? ' lr '+child.paddingVar.lr : ''}) is unverified against code — cssSelector is null and there is no verifiedBy. Give the slot a real cssSelector, or set verifiedBy naming what checks the padding (a selector / RENDERED_ASSERTIONS / 'geometric …').`);
+      }
+      continue; // flattened child frame - asserted via other gates
+    }
     const block = findBlock(allCss, child.cssSelector, allIndex);
     if (!block) {
       CHILD_FAIL.push(`${comp}/${child.name}: selector "${child.cssSelector}" not found in CSS`);
