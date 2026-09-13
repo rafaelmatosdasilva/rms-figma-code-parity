@@ -1004,6 +1004,22 @@ Plugin API) discipline, not gates, because a tokenless plan has no live Figma ac
   the DS `HeadContent` slot had a full background fill the code never reproduced. Reach for this rule
   the moment a slot's `fillStructure` is not `'none'` and the code pins that slot at `top:0`.
 
+- **A DS SCREEN composed of repeated component instances must be reproduced as those instances — a
+  bespoke flat view is where per-group spacing drifts unseen.** The component gates verify a component
+  in isolation; they do NOT verify that a *screen* the DS assembles out of N instances of that component
+  is assembled the same way in code. The canonical miss: the Impact Atlas detail view is, in the DS
+  (screen 308-7820), a **stack of independent `panel` instances — one per list group** (Alias tokens,
+  Affected components), each carrying its own `HeadContent` (padding/l top, padding/s bottom) over
+  `MainContent` (gap/xl). The code hand-built it as one flat scroll-area with sticky dividers, so the
+  per-group spacing had *no home* — every group's top/bottom padding and the gap/xl between groups were
+  hand-approximated and kept drifting, and no gate could see it because there was no per-group panel to
+  contract against. When Step 1c / the screen capture shows a screen repeating a container component per
+  data group, **the fix is structural: reproduce each group as that component** (so the component's own
+  contract/assertions apply per group), OR — when the code must stay bespoke — pin each group's slot
+  spacing explicitly with `RENDERED_ASSERTIONS` (e.g. every group header's `marginTop`/`marginBottom` =
+  the `HeadContent` padding) so a regression to flat fails. The tell: a screen where the same header +
+  body pattern repeats per section, but the code has one container instead of one-per-section.
+
 - **Stored `nodeId`s go stale — resolve by name+resting variant, not the saved id.** When the DS is
   reorganised, a snapshot's stored variant `nodeId` can resolve to a *different* node (often the whole
   `COMPONENT_SET`), so measuring it yields the set's stacked height and flipped strokes — noise that
