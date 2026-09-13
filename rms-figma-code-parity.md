@@ -290,6 +290,7 @@ Once `ds-config.json` exists, extract:
   - Declaring this lets Gate [5] verify per-breakpoint / per-locale overrides exist in CSS. A DS that omits it is unaffected (colour-only check, byte-identical).
 - `figma.motion` *(optional)* - opt-in motion-token parity (easing + duration variables → CSS). `{ explicit?: { token: "--css-var" }, skip?: [token] }`. Tokens default to `--token-path`. No-op unless the snapshot has a `motion` map AND this is set.
 - `figma.effects` *(optional)* - opt-in effect-style parity (Figma shadow styles → CSS `box-shadow`). `{ explicit?: { styleName: "--css-var" }, skip?: [styleName] }`. Requires the shadow to be tokenised as a CSS var. No-op unless the snapshot has an `effects` map AND this is set.
+- `docs.surfaces` *(optional)* - array of documentation files (relative paths, e.g. `["apps/style-guide/index.html"]`) that Gate [20] checks for invented/stale DS references. Local files only (a URL-hosted stylesheet is skipped, never a false failure). Unset = the gate is a no-op PASS. Point it at any living style guide / component showroom / DS doc that should reference only real DS tokens and vars.
 - `figma.primitivePrefix` - token path prefix to exclude from component token walks (e.g. `"primitives/"`)
 - `figma.componentsPage` *(optional)* - node id of the DS components page (e.g. `"1:439"`). Enables Gate [1]'s **component inventory** check: the live component list on that page is diffed against the structure snapshot so an added/removed DS component always surfaces by name. Without it, the check is skipped (a new component can slip through unaudited).
 - `figma.namingConvention` *(optional)* - overrides for how Figma token paths are converted to CSS var names:
@@ -390,7 +391,7 @@ are far under the cap and are collected in full.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`rms-figma-code-parity`** | **All 21 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 22 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -1316,13 +1317,13 @@ If `FIGMA_TOKEN` is set, `audit.mjs` regenerates this file on every run via REST
 
 ---
 
-## Phase 2 - Step 2: Run all 21 audit gates
+## Phase 2 - Step 2: Run all 22 audit gates
 
 ```bash
 rms-figma-code-parity
 ```
 
-All 21 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
+All 22 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1349,6 +1350,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [17] | `coverage-check.mjs` | **Audit self-check** | **What this audit actually checked** - The one gate that checks the audit *itself*. Cross-references every DS component in the structure snapshot against the checks the contract declares (CONTRACT entry, CSS selector map, RENDERED_ASSERTIONS/FRAME_GEOMETRY_MAP/CROSS_PLUGIN, CSS_BASE_RULE_VARS, per-variant capture) and prints a coverage matrix. Surfaces the blind spots the other gates can't: a DS component modelled by **nothing** (advisory, or fail under `coverageStrict:true` - unless in `knownUnimplementedComponents`), components with **no rendered/browser assertion** (geometry only checked statically), and **single-variant** components with no per-variant capture (sibling states invisible). This is how a newly-added DS component or state stops being silently unchecked. Also reports **MODE-BLIND** assertions - a `RENDERED_ASSERTIONS` entry pinned to one `colorScheme` when the snapshot has several modes, so the unasserted mode has no browser-level guard. Mode list comes from the snapshot (never hardcoded light/dark); advisory by default, fail under `renderedModeStrict:true`. Note the token *value* in every mode is already covered by gate [3] - this dimension is about which CSS rule wins, so it matters where a cascade/specificity conflict could resolve differently per mode. Also reports **UNVERIFIED FILL** - every component that *paints its own background* (`fillStructure: 'direct'` - a container / overlay / sticky header, the class where a missing or transparent paint lets whatever is behind bleed through) but has **no rendered `backgroundColor` assertion**. A missing background is invisible to every other gate: "transparent" is not a wrong token, it is a missing paint, so gate [3] (which checks the token's *value*) stays green while the code element never applies it - exactly how the panel/header "content bleeds through the slot" bugs shipped. This makes the check *exhaustive by construction*: the engine enumerates all such fills every run rather than waiting for someone to notice a bleed by eye. `'before'` fills (a `::before`/Background-child pill behind a leaf control) are excluded - their element is legitimately transparent and their value is gate [3]'s job. Advisory by default (lists them); set `fillCoverageStrict:true` to hard-fail until each has a `backgroundColor` rendered assertion (both modes, via the MODE-BLIND check), or park a reviewed exception in `ds-config.json → knownUnverifiedFills`. |
 | [18] | `motion-check.mjs` | **Animation** | **Motion** - Easing and duration variables in Figma (the Motion collection) match their CSS custom properties. Opt-in: a no-op unless `figma.motion` is configured and the snapshot has a `motion` map. |
 | [19] | `effect-check.mjs` | **Animation** | **Shadows** - Figma effect styles (drop/inner shadow) match the CSS `box-shadow` they are tokenised into. Opt-in: a no-op unless `figma.effects` is configured and the snapshot has an `effects` map. |
+| [20] | `docs-truth-check.mjs` | **Docs integrity** | **Docs tell the truth** - A documentation surface (a living style guide, component showroom, or any DS doc) must reference **only DS things that exist** - never invented or stale tokens. Verifies (1) every `var(--x)` used in the doc is declared somewhere real (the canonical `theme.css`/`pluginCSS`, or the doc's own `:root`/chrome vars - a self-contained doc that inlines the theme still gets caught when it references a var declared *nowhere*, e.g. a `--radius-sm` chip), and (2) every DS token path shown as a label (`radii/… gap/… padding/… typography/… general/…`) is a real key in the vars/sizing snapshot (an invented `radii/whatever` fails). Comments (`/* … */`, `<!-- … -->`) are stripped before the usage scan, so prose *about* the DS never counts as a reference. Opt-in and generic: runs only when `ds-config.json → docs: { surfaces: ["apps/style-guide/index.html", …] }` is set; a no-op PASS otherwise. Completeness ("the DS has 8 radii, the doc shows 5") and non-token claims (a fake text style) are out of scope here - the design-intent GENERATOR (`--docs`) is the upstream cure, deriving the doc from canonical sources so invention is impossible. |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -1768,7 +1770,7 @@ return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 21 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| All 22 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 

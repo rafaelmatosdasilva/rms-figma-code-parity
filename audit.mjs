@@ -2425,7 +2425,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2455,6 +2455,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('state-opacity-check.mjs'),
     runScriptAsync('icon-inventory-check.mjs'),
     runScriptAsync('screen-element-check.mjs'),
+    runScriptAsync('docs-truth-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2474,6 +2475,8 @@ function reportFull(label, items, shown) {
     parseGeneric(rExemption, /VALID|STALE|BROKEN/));
   addGate('No invented CSS variables  (every CSS variable traces back to a Figma token)',
     parseGeneric(rNaming, /TRACEABLE|UNINVENTED|UNDOCUMENTED/));
+  addGate('Docs tell the truth  (a style guide / DS doc references only tokens & vars that exist)',
+    parseGeneric(rDocsTruth, /\[docs-truth\]/));
 
   // ── CSS quality ───────────────────────────────────────────────────────────────
   addGate('Clean CSS  (no unused variables · no values that contradict Figma · safe containment)',
