@@ -988,6 +988,22 @@ Plugin API) discipline, not gates, because a tokenless plan has no live Figma ac
   Capture the SLOT's gap and padding in Step 1c, and contract the code wrapper that realises the slot
   so Gate [3]/[16] assert its padding — top and bottom included.
 
+- **A slot's BACKGROUND FILL is a spec too — a header/sticky slot the DS fills must be OPAQUE in code,
+  verified per mode.** When a `SLOT` (or the frame realising it) carries a solid `fills` paint — a
+  panel's `HeadContent` header slot filled with the panel surface (`elevationMedium`/`elevationLow`) is
+  the canonical case — that fill exists to *occlude* whatever sits behind the slot. A sticky header,
+  column-header row, or the gap between a segmented control and the first section divider that is left
+  **transparent** in code lets scrolling list items, connector lines and nodes bleed through the top
+  strip, even though every token value is correct — no value/structure gate sees a missing background,
+  because "transparent" is not a wrong *token*, it is a missing *paint*. So: in Step 1c capture the
+  slot's fill (`fills[0]` bound-var name / hex), and for any slot the DS fills that the code realises as
+  a **sticky/overlapping header**, add a `RENDERED_ASSERTIONS` `backgroundColor` check that the code
+  element computes the panel surface (NOT `rgba(0,0,0,0)`) — **both modes**, since the surface differs
+  light/dark. The real miss this exists to stop: Impact Atlas's graph column-header row and its
+  list-view `.mode-toggle-row`→first-divider gap were transparent, so content showed through the top;
+  the DS `HeadContent` slot had a full background fill the code never reproduced. Reach for this rule
+  the moment a slot's `fillStructure` is not `'none'` and the code pins that slot at `top:0`.
+
 - **Stored `nodeId`s go stale — resolve by name+resting variant, not the saved id.** When the DS is
   reorganised, a snapshot's stored variant `nodeId` can resolve to a *different* node (often the whole
   `COMPONENT_SET`), so measuring it yields the set's stacked height and flipped strokes — noise that
