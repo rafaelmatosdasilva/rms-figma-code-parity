@@ -73,6 +73,25 @@ Route by intent:
   check - that is exactly the heavy path that produces noisy, confusing output where a gate
   "fails" on something the user is not auditing. The scope auto-expands to nested sub-components.
   Only run unscoped when the user explicitly asks for the whole DS / a full audit.
+
+  > **A scoped run STILL refreshes *that component* first — "scoped" narrows the audit, it does
+  > NOT mean "audit the stale snapshot".** "Lean" means skip the DS-*wide* walk of every other
+  > component, never skip Phase 1 for the component you were asked about. When a live refresh is
+  > available (token / MCP / Plugin API), before auditing the named component you MUST re-capture
+  > **its** live state: its bound + variant tokens (so a **new variable** on it is caught), and its
+  > structure INCLUDING its variant set (so it becoming a `COMPONENT_SET`, gaining a `type=…`
+  > variant, or changing a slot is caught), then reconcile and re-stamp `_figmaVersion`. The whole
+  > reason someone scopes to a component is that they just changed it — auditing its *old* snapshot
+  > and reporting green is the worst possible answer. The real miss this rule exists to stop: a
+  > `panel` scoped run reported all-green while the designer had just split `panel/background/color`
+  > into `panel/background/primary` + a new `panel/background/secondary` and turned the panel into a
+  > `type=primary/secondary` set — none of which the committed snapshot knew, because the scoped run
+  > never refreshed it. Note `versionLockStrict` alone will NOT save you here: the component
+  > **inventory** check compares component *names*, and `panel` is still named `panel`, so a
+  > component gaining variants/variables slips through a name diff — only re-capturing the scoped
+  > component surfaces it. And never stamp `_figmaVersion` from a capture that skipped the scoped
+  > component's variants/variables: a version stamped over a partial capture reads "fresh" while
+  > hiding exactly the change you were asked to check.
 - **The whole design system:** run `rms-figma-code-parity` in the terminal (or `/rms-figma-code-parity` in Claude Code),
   then follow the phases below.
 
