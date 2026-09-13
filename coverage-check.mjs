@@ -46,6 +46,18 @@ function classOf(comp) {
 // Does any entry's selector reference this component's class?
 const refsClass = (entries, keyer, cls) => entries.some(e => (keyer(e) ?? '').includes(cls));
 
+// A component "paints a background" when its DS fill sits on the frame ('direct') or a
+// Background child ('before'); such a background can be wrong or MISSING in code without any
+// token gate noticing (transparent is not a wrong token, it is a missing paint). The only guard
+// is a rendered backgroundColor assertion — so a filled component with none is an unverified fill.
+// 'direct' = the element itself is a filled surface (container / overlay / sticky header) — a
+// missing or transparent paint here lets whatever sits behind bleed through, and no token gate
+// sees it. ('before' fills sit on a ::before / Background child, so backgroundColor on the element
+// is legitimately transparent and the fill's VALUE is already covered by Gate [3] — not this class.)
+const paintsBackground = (snap) => snap.fillStructure === 'direct';
+const hasBgAssertion = (cls) => RENDERED.some(e =>
+  (e.selector ?? '').includes(cls) && /^background(Color)?$/i.test(e.prop ?? ''));
+
 const rows = [];
 for (const [comp, snap] of Object.entries(components)) {
   const cls = classOf(comp);
@@ -57,10 +69,18 @@ for (const [comp, snap] of Object.entries(components)) {
     // multi-variant capture present → sibling states are visible to the audit
     variants:  !!snap.variantStroke || !!snap.variantHeight,
     crossPlugin: CROSS.some(e => (e.selector ?? '').includes(cls)),
+    // a filled/slotted container whose background is verified in the browser (both modes covered by the mode gate)
+    fillPainted: paintsBackground(snap),
+    fillChecked: !paintsBackground(snap) || hasBgAssertion(cls),
   };
   const score = ['contract', 'selector', 'rendered', 'baseVars', 'variants'].filter(k => dims[k]).length;
   rows.push({ comp, cls, dims, score, unimpl: UNIMPL.has(comp) });
 }
+// Filled/slotted containers whose background nothing render-verifies — the class that shipped the
+// panel/header "content bleeds through the transparent slot" bugs. Bounded to components that
+// actually paint a background, so it is exhaustive without being a noisy every-node pixel diff.
+const FILL_EXEMPT = new Set(cfg.knownUnverifiedFills ?? []);
+const unverifiedFills = rows.filter(r => !r.unimpl && r.dims.fillPainted && !r.dims.fillChecked && !FILL_EXEMPT.has(r.comp));
 
 // ── Report ────────────────────────────────────────────────────────────────────
 const yn = b => (b ? '✓' : '·');
@@ -124,17 +144,31 @@ if (SNAP_MODES.length > 1) {
   }
 }
 
+const fillStrict = cfg.fillCoverageStrict === true;
+if (unverifiedFills.length) {
+  console.log(`\n${fillStrict ? '❌' : 'ℹ️ '} UNVERIFIED FILL ${unverifiedFills.length}  (paints a background, but no rendered backgroundColor assertion — a missing/transparent fill would ship unseen)`);
+  for (const r of unverifiedFills) console.log(`     ${fillStrict ? '❌' : 'ℹ️ '} ${r.comp} (${r.cls})  fillStructure=${components[r.comp].fillStructure}`);
+  console.log('   Add a RENDERED_ASSERTIONS { selector, prop:\'backgroundColor\', expected, colorScheme } (both modes), or list it in ds-config knownUnverifiedFills.');
+} else {
+  const filled = rows.filter(r => !r.unimpl && r.dims.fillPainted).length;
+  if (filled) console.log(`✅ FILL COVERAGE  every background-painting component (${filled}) has a rendered backgroundColor assertion`);
+}
+
+const anyFail = (cfg.coverageStrict === true && gaps.length)
+  || (modeStrict && modeBlind.length)
+  || (fillStrict && unverifiedFills.length);
+
 if (gaps.length) {
   const strict = cfg.coverageStrict === true;
   console.log(`\n${strict ? '❌' : '⚠️ '} UNCHECKED (${gaps.length}) - DS component modelled by NOTHING (no contract, selector, or assertion):`);
   for (const r of gaps) console.log(`  ${strict ? '❌' : '⚠️ '} ${r.comp}`);
   console.log('   Add a CONTRACT entry (+ selector/assertions), or list it in ds-config knownUnimplementedComponents.');
-  console.log('');
-  process.exit(strict || (modeStrict && modeBlind.length) ? 1 : 0);
 }
 if (modeStrict && modeBlind.length) {
-  console.log('\n❌ Mode-blind rendered assertions above (ds-config renderedModeStrict:true).\n');
-  process.exit(1);
+  console.log('\n❌ Mode-blind rendered assertions above (ds-config renderedModeStrict:true).');
 }
-console.log('\nEvery DS component is modelled by at least one check. ✓\n');
-process.exit(0);
+if (fillStrict && unverifiedFills.length) {
+  console.log('\n❌ Unverified background fills above (ds-config fillCoverageStrict:true).');
+}
+console.log(anyFail ? '' : '\nEvery DS component is modelled by at least one check. ✓\n');
+process.exit(anyFail ? 1 : 0);
