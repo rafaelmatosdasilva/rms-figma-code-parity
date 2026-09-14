@@ -509,6 +509,12 @@ if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);i
 // mode axes (breakpoint sizing, per-locale strings) AND mixed-type collections (a Theme whose floats
 // and booleans also vary light↔dark).
 const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+// Auto-capture a multi-mode SIZING collection (e.g. Desktop/Phone). The flat `sizing`
+// bucket above keeps only the FIRST mode (base) for the value gate; its OTHER modes
+// would otherwise be lost, so capture them here into modeVariants like any per-mode
+// axis (base key 'desktop'; other modes slugified, Phone -> 'phone'). Single-mode
+// sizing collections are a no-op. The showroom's [data-size] axis is built from this.
+if(SIZING_COLLECTION){const _s=collections.find(c=>c.name===SIZING_COLLECTION);if(_s&&_s.modes.length>=2&&!COLLECTIONS.some(c=>c.name===SIZING_COLLECTION))COLLECTIONS.push({name:SIZING_COLLECTION,modes:_s.modes.map((m,i)=>({name:m.name,snapshotKey:i===0?'desktop':m.name.toLowerCase().replace(/[^a-z0-9]+/g,'-')}))});}
 const KIND={COLOR:'color',FLOAT:'scalar',STRING:'string',BOOLEAN:'boolean'};
 const modeVariantsOut={};
 for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const kind=KIND[v.resolvedType]||'scalar';if(kind==='color'&&cc.name===COLOR_COLLECTION)continue;const values={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;values[m.snapshotKey]=kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(values).map(String)).size>1)vars[v.name]={kind,values};}if(Object.keys(vars).length)modeVariantsOut[cc.name]={modes:cc.modes,vars};}
@@ -597,6 +603,12 @@ if(SIZING_COLLECTION){const sc=collections.find(c=>c.name===SIZING_COLLECTION);i
 // mode axes (breakpoint sizing, per-locale strings) AND mixed-type collections (a Theme whose floats
 // and booleans also vary light↔dark).
 const COLLECTIONS=[]; // from figma.collections, e.g. [{name:'Breakpoint',modes:[{name:'Phone',snapshotKey:'phone'},{name:'Tablet',snapshotKey:'tablet'}]}]
+// Auto-capture a multi-mode SIZING collection (e.g. Desktop/Phone). The flat `sizing`
+// bucket above keeps only the FIRST mode (base) for the value gate; its OTHER modes
+// would otherwise be lost, so capture them here into modeVariants like any per-mode
+// axis (base key 'desktop'; other modes slugified, Phone -> 'phone'). Single-mode
+// sizing collections are a no-op. The showroom's [data-size] axis is built from this.
+if(SIZING_COLLECTION){const _s=collections.find(c=>c.name===SIZING_COLLECTION);if(_s&&_s.modes.length>=2&&!COLLECTIONS.some(c=>c.name===SIZING_COLLECTION))COLLECTIONS.push({name:SIZING_COLLECTION,modes:_s.modes.map((m,i)=>({name:m.name,snapshotKey:i===0?'desktop':m.name.toLowerCase().replace(/[^a-z0-9]+/g,'-')}))});}
 const KIND={COLOR:'color',FLOAT:'scalar',STRING:'string',BOOLEAN:'boolean'};
 const modeVariantsOut={};
 for(const cc of COLLECTIONS){const c=collections.find(x=>x.name===cc.name);if(!c||c.modes.length<2)continue;const vars={};for(const id of c.variableIds){const v=idToVar[id];if(!v||v.name.startsWith(PRIMITIVE_PREFIX))continue;const kind=KIND[v.resolvedType]||'scalar';if(kind==='color'&&cc.name===COLOR_COLLECTION)continue;const values={};for(const m of cc.modes){const mid=c.modes.find(fm=>fm.name===m.name)?.modeId;if(!mid)continue;values[m.snapshotKey]=kind==='color'?resolve(id,mid):resolveScalarVal(id,mid);}if(new Set(Object.values(values).map(String)).size>1)vars[v.name]={kind,values};}if(Object.keys(vars).length)modeVariantsOut[cc.name]={modes:cc.modes,vars};}
