@@ -410,7 +410,7 @@ are far under the cap and are collected in full.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`rms-figma-code-parity`** | **All 22 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 23 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -1336,13 +1336,13 @@ If `FIGMA_TOKEN` is set, `audit.mjs` regenerates this file on every run via REST
 
 ---
 
-## Phase 2 - Step 2: Run all 22 audit gates
+## Phase 2 - Step 2: Run all 23 audit gates
 
 ```bash
 rms-figma-code-parity
 ```
 
-All 22 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
+All 23 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1370,6 +1370,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [18] | `motion-check.mjs` | **Animation** | **Motion** - Easing and duration variables in Figma (the Motion collection) match their CSS custom properties. Opt-in: a no-op unless `figma.motion` is configured and the snapshot has a `motion` map. |
 | [19] | `effect-check.mjs` | **Animation** | **Shadows** - Figma effect styles (drop/inner shadow) match the CSS `box-shadow` they are tokenised into. Opt-in: a no-op unless `figma.effects` is configured and the snapshot has an `effects` map. |
 | [20] | `docs-truth-check.mjs` | **Docs integrity** | **Docs tell the truth** - A documentation surface (a living style guide, component showroom, or any DS doc) must reference **only DS things that exist** - never invented or stale tokens, and reuse DS icons rather than hand-drawing them. Verifies (1) every `var(--x)` used in the doc is declared somewhere real (the canonical `theme.css`/`pluginCSS`, or the doc's own `:root`/chrome vars - a self-contained doc that inlines the theme still gets caught when it references a var declared *nowhere*, e.g. a `--radius-sm` chip); (2) every DS token path shown as a label (`radii/… gap/… padding/… typography/… general/…`) is a real key in the vars/sizing snapshot (an invented `radii/whatever` fails); and (3) every icon `<use href="#id">` resolves to a `<symbol id="id">` defined in the doc's own DS icon sheet or the `pluginCSS`/HTML surfaces (a dangling/typo'd icon id fails). It also enforces the DS **construction rules** for the doc's own CSS: (4) **no all-caps** — `text-transform: uppercase` is invented styling (the DS has none) → fails; (5) **colours are variables** — a colour literal (`#hex`/`rgb()`/`hsl()`) as the value of a visual property in a rule is a hardcoded colour → fails (a `--token: #hex` *declaration* is the variable, so it never trips). And it **advises** (never fails) on: an inline `<svg>` that draws its own icon (a `<path>`/`<circle>`/… outside a `<symbol>`) instead of `<use>`-ing a DS one; and a hardcoded `font-size` in a rule (prefer the DS text-scale vars `--s/m/l-size` — advisory because a doc legitimately needs a few display heading sizes the 3-tier component scale doesn't provide). Comments (`/* … */`, `<!-- … -->`) are stripped before the usage scan, so prose *about* the DS never counts as a reference. Opt-in and generic: runs only when `ds-config.json → docs: { surfaces: ["apps/style-guide/index.html", …] }` is set; a no-op PASS otherwise. Completeness ("the DS has 8 radii, the doc shows 5") and non-token claims (a fake text style) are out of scope here - the design-intent GENERATOR (`--docs`) is the upstream cure, deriving the doc from canonical sources so invention is impossible. **Hard rule for construction: when you build a doc/showroom, never use a component, icon, text style, token or var the system doesn't have, and never invent - reuse the DS.** |
+| [21] | `case-check.mjs` | **Docs integrity** | **No invented text casing** - Figma text styles carry no forced casing, so a `text-transform: uppercase | lowercase | capitalize` in the token/component CSS (`paths.themeCSS` + `paths.pluginCSS`) is invented styling that drifts from Figma - the same "no all-caps" rule the docs-truth gate applies to a showroom, applied to the DS CSS itself. Caught a real case: a `.section-label` "uppercase group heading" that had no Figma text style behind it and had spread into two plugins. A DS that genuinely defines an upper/lower/title text style (Figma `textCase`) exempts it via `ds-config.json → knownTextTransforms` (the casing word, or a `"<file>:<line>"`). |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -1789,7 +1790,7 @@ return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 22 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| All 23 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 

@@ -2425,7 +2425,7 @@ function reportFull(label, items, shown) {
   const _g7 = computeGate7();
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rCase] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2456,6 +2456,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('icon-inventory-check.mjs'),
     runScriptAsync('screen-element-check.mjs'),
     runScriptAsync('docs-truth-check.mjs'),
+    runScriptAsync('case-check.mjs'),
   ]);
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
@@ -2477,6 +2478,8 @@ function reportFull(label, items, shown) {
     parseGeneric(rNaming, /TRACEABLE|UNINVENTED|UNDOCUMENTED/));
   addGate('Docs tell the truth  (a style guide / DS doc references only tokens & vars that exist)',
     parseGeneric(rDocsTruth, /\[docs-truth\]/));
+  addGate('No invented text casing  (no text-transform the DS/Figma does not define)',
+    parseGeneric(rCase, /\[text-case\]/));
 
   // ── CSS quality ───────────────────────────────────────────────────────────────
   addGate('Clean CSS  (no unused variables · no values that contradict Figma · safe containment)',
