@@ -148,6 +148,23 @@ for (const surface of SURFACES) {
     }
     if (handDrawn) advisories.push({ surface, kind: 'hand-drawn-icon', count: handDrawn });
   }
+
+  // 4. CSS hygiene — construction rules for a DS doc/showroom:
+  //    (a) NO ALL-CAPS: the DS has none, so `text-transform: uppercase` is invented
+  //        styling → FAIL.
+  //    (b) COLOURS ARE VARIABLES: a colour literal (#hex / rgb() / hsl()) as the
+  //        value of a visual property in a RULE is a hardcoded colour → FAIL.
+  //        (A `--token: #hex` declaration is fine — that IS the variable; matched
+  //        by the visual property name, so `--x:` never trips.)
+  //    (c) TEXT STYLES ARE DS: a hardcoded `font-size` in a rule should be a DS
+  //        text-scale var (--s/m/l-size) → ADVISORY (a doc legitimately needs a
+  //        few display heading sizes the 3-tier component scale doesn't provide).
+  { const re = /text-transform\s*:\s*uppercase/gi; let m;
+    while ((m = re.exec(usable))) findings.push({ surface, kind: 'uppercase' }); }
+  { const re = /(?:^|[;{"'\s])(color|background|background-color|border|border-color|border-top-color|border-right-color|border-bottom-color|border-left-color|fill|stroke|box-shadow|outline|outline-color)\s*:\s*[^;"'}]*?(#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\()/gi;
+    let m; const seen = new Set();
+    while ((m = re.exec(usable))) { const lit = m[0].replace(/\s+/g, ' ').trim(); if (!seen.has(lit)) { seen.add(lit); findings.push({ surface, kind: 'hardcoded-color', ref: lit.slice(0, 60) }); } } }
+  { const re = /font-size\s*:\s*\d/gi; let n = 0; while (re.exec(usable)) n++; if (n) advisories.push({ surface, kind: 'hardcoded-font-size', count: n }); }
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
@@ -155,6 +172,8 @@ function printAdvisories() {
   for (const a of advisories) {
     if (a.kind === 'hand-drawn-icon')
       console.log(`  ⚠️  ${a.surface}: ${a.count} inline <svg> icon${a.count > 1 ? 's' : ''} drawn in the doc — reuse a DS icon (<use href="#…">) instead of hand-drawing (advisory)`);
+    if (a.kind === 'hardcoded-font-size')
+      console.log(`  ⚠️  ${a.surface}: ${a.count} hardcoded font-size${a.count > 1 ? 's' : ''} — prefer a DS text-scale var (--s-size/--m-size/--l-size) (advisory)`);
   }
 }
 
@@ -168,6 +187,8 @@ const MSG = {
   'css-var': (r) => `var(${r}) — used but declared nowhere in theme.css / pluginCSS / the doc`,
   'token-path': (r) => `${r} — not a token in the DS snapshot`,
   'icon-ref': (r) => `<use href="${r}"> — no such DS icon symbol (invented or typo'd icon)`,
+  'uppercase': () => `text-transform: uppercase — the DS has no all-caps; remove it`,
+  'hardcoded-color': (r) => `${r}… — hardcoded colour in a rule; use a DS token / var, never a literal`,
 };
 console.log(`❌ [docs-truth] ${findings.length} invented / dangling DS reference${findings.length > 1 ? 's' : ''} — the doc names DS things that don't exist:`);
 const bySurface = {};
