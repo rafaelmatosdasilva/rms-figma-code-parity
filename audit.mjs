@@ -536,19 +536,39 @@ function buildVarIdMap(fileKey, token) {
   })());
 }
 
+// Shared /nodes cache. Several Phase-1 refreshers fetch the SAME frame node trees
+// (bound tokens and frame geometry request identical `/nodes?ids=<frame>` URLs), so
+// without sharing, every frame is pulled once per refresher - multiplying the request
+// count and the odds of a 429. Fetch each (fileKey,nodeId) once and reuse it; the
+// in-flight PROMISE is cached so concurrent refreshers share a single request. Combined
+// with figmaFetch's retry/backoff, this both lowers pressure and survives throttling -
+// full depth, fewer calls.
+const _nodeDocCache = new Map();
+async function fetchNodeDoc(fileKey, nodeId, token) {
+  const key = fileKey + ' ' + nodeId;
+  if (_nodeDocCache.has(key)) return _nodeDocCache.get(key);
+  const p = (async () => {
+    const res = await figmaFetch(
+      `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${nodeId}`,
+      { headers: { 'X-Figma-Token': token } },
+    );
+    if (!res.ok) return { ok: false, status: res.status, nodes: null };
+    const { nodes } = await res.json();
+    return { ok: true, status: res.status, nodes: nodes ?? {} };
+  })();
+  _nodeDocCache.set(key, p);
+  return p;
+}
+
 async function refreshBoundTokens(fileKey, frames, token, outPath) {
   if (!frames?.length) return false;
   try {
     const idToName = await buildVarIdMap(fileKey, token);
     const tokenSet = new Set();
     for (const frame of frames) {
-      const nRes = await figmaFetch(
-        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${frame.nodeId}`,
-        { headers: { 'X-Figma-Token': token } },
-      );
-      if (!nRes.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nRes.status}`)); continue; }
-      const { nodes } = await nRes.json();
-      for (const data of Object.values(nodes ?? {})) collectBound(data?.document, idToName, tokenSet);
+      const nd = await fetchNodeDoc(fileKey, frame.nodeId, token);
+      if (!nd.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nd.status}`)); continue; }
+      for (const data of Object.values(nd.nodes)) collectBound(data?.document, idToName, tokenSet);
     }
     const result = { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
     writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
@@ -570,13 +590,9 @@ async function refreshFrameGeometry(fileKey, frames, token, outPath) {
   try {
     const byName = {};
     for (const frame of frames) {
-      const nRes = await figmaFetch(
-        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${frame.nodeId}`,
-        { headers: { 'X-Figma-Token': token } },
-      );
-      if (!nRes.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nRes.status}`)); continue; }
-      const { nodes } = await nRes.json();
-      for (const data of Object.values(nodes ?? {})) {
+      const nd = await fetchNodeDoc(fileKey, frame.nodeId, token);
+      if (!nd.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nd.status}`)); continue; }
+      for (const data of Object.values(nd.nodes)) {
         (function rec(n, path) {
           if (!n) return;
           if (n.type === 'FRAME' || n.type === 'INSTANCE' || n.type === 'COMPONENT') {

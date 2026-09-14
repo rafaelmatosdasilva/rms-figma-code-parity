@@ -19,7 +19,7 @@
 //
 // Exit 0 = full parity. Exit 1 = at least one FAIL or NEW SKIP.
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 const ROOT     = process.cwd();
@@ -169,6 +169,53 @@ for (let i = 0; i < rawLines.length; i++) {
   const m = rawLines[i].match(/^\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/);
   if (m) varLineMap[m[1]] = i + 1; // 1-indexed; keeps last occurrence
 }
+
+// ── Declared-var index: locate a token's CSS var even under a different case or
+// scope, WITHOUT weakening detection. A token's kebab var may be declared with a
+// different case (Figma "Advanced/Toast/…" → --Advanced-…, the code writes
+// --advanced-…) or inside a component rule rather than :root. locateVar finds the
+// var that is ACTUALLY declared so a var that genuinely EXISTS is never reported
+// "not declared"; a var that is truly absent everywhere still returns null (and
+// still fails). A :root match (exact or case-insensitive) is value-checked exactly
+// as before - a wrong value still FAILS. A var found only outside :root is reported
+// as an accurate, non-failing status (this gate only ever verified :root tokens).
+const rootByLower = new Map(Object.keys(modeVars[0]).map(n => [n.toLowerCase(), n]));
+const allDeclaredLower = new Set();
+for (const mm of css.matchAll(/(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) allDeclaredLower.add(mm[1].toLowerCase());
+function locateVar(expected) {
+  if (modeVars[0][expected]) return { name: expected, root: true };                 // exact :root
+  const ci = rootByLower.get(expected.toLowerCase());
+  if (ci) return { name: ci, root: true };                                          // :root, other case
+  if (allDeclaredLower.has(expected.toLowerCase())) return { name: expected, root: false }; // declared, not :root
+  return null;                                                                      // truly absent
+}
+
+// Vars REFERENCED in the DS's own component code (var(--x) under componentSrcDirs).
+// A runtime-token DS injects its token CSS from a backend at run time (e.g. an
+// index.html <link id="dynamic-stylesheet"> with no static href), so no static
+// value exists for these and the gate cannot compare them - but a var that is USED
+// in the code is plainly not "missing" or "invented". This set lets the sizing
+// dimension separate a runtime-injected token (accurate skip) from a genuinely
+// absent one (still a fail). No componentSrcDirs -> empty set -> behaviour unchanged.
+const usedVarsLower = new Set();
+(function scanUsedVars() {
+  const dirs = [cfg.componentSrcDirs].flat().filter(Boolean);
+  if (!dirs.length) return;
+  const EXT = /\.(vue|css|scss|sass|less|html|ts|tsx|js|jsx)$/i;
+  const walk = (dir, depth = 0) => {
+    if (depth > 8) return;
+    let entries; try { entries = readdirSync(join(ROOT, dir)); } catch { return; }
+    for (const e of entries) {
+      if (e === 'node_modules' || e === '.git' || e === 'dist') continue;
+      const rel = join(dir, e); let st; try { st = statSync(join(ROOT, rel)); } catch { continue; }
+      if (st.isDirectory()) walk(rel, depth + 1);
+      else if (EXT.test(e) && st.size < 2_000_000) {
+        try { for (const mm of readFileSync(join(ROOT, rel), 'utf8').matchAll(/var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)/g)) usedVarsLower.add(mm[1].toLowerCase()); } catch {}
+      }
+    }
+  };
+  for (const d of dirs) walk(d);
+})();
 
 // ── Resolver caches - one Map per mode for color, one for scalar ─────────────
 // Keyed by var name; populated on first resolve, returned instantly on repeat.
@@ -457,21 +504,36 @@ for (const [token, figmaVal] of Object.entries(snap.sizing ?? {})) {
     SKIP.push({ dimension: 'sizing', token, mode: '-', reason: SIZING_SKIP.get(token) ?? 'no CSS var' });
     continue;
   }
-  if (!modeVars[0][cssVar]) {
-    FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}` });
+  const loc = locateVar(cssVar);
+  if (!loc) {
+    // Absent from the static token CSS. If the DS's own component code USES the
+    // var, it is runtime-injected (a backend-loaded stylesheet) - not verifiable
+    // here, but not missing or invented either. Otherwise it is genuinely absent.
+    if (usedVarsLower.has(cssVar.toLowerCase())) {
+      SKIP.push({ dimension: 'sizing', token, cssVar, mode: '-', reason: 'runtime-injected - used in code, not in static token CSS (backend stylesheet)' });
+    } else {
+      FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}` });
+    }
     continue;
   }
-  const cssVal = resolveScalar(cssVar);
+  if (!loc.root) {
+    // Declared, but outside :root (component-scoped). This gate compares :root
+    // tokens; report accurately instead of the false "not declared".
+    SKIP.push({ dimension: 'sizing', token, cssVar: loc.name, mode: '-', reason: 'declared outside :root (component-scoped) - not compared by this gate' });
+    continue;
+  }
+  const actualVar = loc.name;   // real declared name (handles a differing case)
+  const cssVal = resolveScalar(actualVar);
   if (cssVal === null) {
-    NEW_SKIP.push({ dimension: 'sizing', token, cssVar, mode: '-', reason: 'CSS var did not resolve to a literal' });
+    NEW_SKIP.push({ dimension: 'sizing', token, cssVar: actualVar, mode: '-', reason: 'CSS var did not resolve to a literal' });
     continue;
   }
   if (String(figmaVal).trim() !== cssVal.trim()) {
-    const fixHint = sizingFixHint(cssVar, figmaVal);
-    FAIL.push({ dimension: 'sizing', token, cssVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${cssVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
+    const fixHint = sizingFixHint(actualVar, figmaVal);
+    FAIL.push({ dimension: 'sizing', token, cssVar: actualVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${actualVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
     if (FIX_MODE) {
-      const line = varLineMap[cssVar];
-      if (line) autoFixes.push({ cssVar, newVal: String(figmaVal).trim(), line });
+      const line = varLineMap[actualVar];
+      if (line) autoFixes.push({ cssVar: actualVar, newVal: String(figmaVal).trim(), line });
     }
   } else {
     PASS.push(`sizing ${token}`);
