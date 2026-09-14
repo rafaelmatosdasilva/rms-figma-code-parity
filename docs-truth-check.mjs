@@ -82,6 +82,7 @@ try {
 
 // ── Scan each surface ─────────────────────────────────────────────────────────
 const findings = [];
+const advisories = [];
 for (const surface of SURFACES) {
   const doc = readLocal(surface);
   if (doc == null) { console.log(`⚠️  [docs-truth] surface not found, skipped: ${surface}`); continue; }
@@ -116,24 +117,65 @@ for (const surface of SURFACES) {
       if (!tokenKeys.has(path)) findings.push({ surface, kind: 'token-path', ref: path });
     }
   }
+
+  // 3. Icons — a doc must reuse DS icons, not invent or hand-draw them.
+  //    (a) every <use href="#id"> must resolve to a <symbol id="id"> defined in
+  //        the doc's own DS icon sheet (or the pluginCSS/HTML surfaces). A dangling
+  //        icon reference is an invented/typo'd icon → FAIL.
+  //    (b) an inline <svg> that DRAWS an icon (its own path/circle/… ) outside a
+  //        <symbol>/<defs> is a hand-drawn icon → ADVISORY (heuristic, never fails,
+  //        but surfaced so the DS icon can replace it).
+  const symbolIds = new Set();
+  { const re = /<symbol\b[^>]*\bid=["']([^"']+)["']/g; let m;
+    while ((m = re.exec(doc))) symbolIds.add(m[1]);
+    for (const p of PLUGIN_CSS) { const c = readLocal(p); if (c) { let n; const r2 = /<symbol\b[^>]*\bid=["']([^"']+)["']/g; while ((n = r2.exec(c))) symbolIds.add(n[1]); } }
+  }
+  { const re = /<use\b[^>]*?(?:xlink:)?href=["']#([^"']+)["']/g; let m; const seen = new Set();
+    while ((m = re.exec(usable))) {
+      const id = m[1]; if (seen.has(id)) continue; seen.add(id);
+      if (!symbolIds.has(id)) findings.push({ surface, kind: 'icon-ref', ref: '#' + id });
+    }
+  }
+  // Advisory hand-drawn detection: strip the symbol sheet + all <symbol> blocks,
+  // then any remaining <svg> that contains a drawing primitive is drawing its own
+  // icon rather than <use>-ing a DS one.
+  { const stripped = usable.replace(/<symbol\b[\s\S]*?<\/symbol>/g, ' ');
+    const svgs = stripped.match(/<svg\b[\s\S]*?<\/svg>/g) || [];
+    let handDrawn = 0;
+    for (const svg of svgs) {
+      if (/<use\b/.test(svg)) continue;                       // references a symbol — fine
+      if (/<(path|circle|rect|line|polyline|polygon|ellipse)\b/.test(svg)) handDrawn++;
+    }
+    if (handDrawn) advisories.push({ surface, kind: 'hand-drawn-icon', count: handDrawn });
+  }
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
+function printAdvisories() {
+  for (const a of advisories) {
+    if (a.kind === 'hand-drawn-icon')
+      console.log(`  ⚠️  ${a.surface}: ${a.count} inline <svg> icon${a.count > 1 ? 's' : ''} drawn in the doc — reuse a DS icon (<use href="#…">) instead of hand-drawing (advisory)`);
+  }
+}
+
 if (!findings.length) {
   console.log(`✅ [docs-truth] every DS reference resolves (${SURFACES.length} surface${SURFACES.length > 1 ? 's' : ''})`);
+  printAdvisories();
   process.exit(0);
 }
 
+const MSG = {
+  'css-var': (r) => `var(${r}) — used but declared nowhere in theme.css / pluginCSS / the doc`,
+  'token-path': (r) => `${r} — not a token in the DS snapshot`,
+  'icon-ref': (r) => `<use href="${r}"> — no such DS icon symbol (invented or typo'd icon)`,
+};
 console.log(`❌ [docs-truth] ${findings.length} invented / dangling DS reference${findings.length > 1 ? 's' : ''} — the doc names DS things that don't exist:`);
 const bySurface = {};
 for (const f of findings) (bySurface[f.surface] ??= []).push(f);
 for (const [surface, fs] of Object.entries(bySurface)) {
   console.log(`  ${surface}`);
-  for (const f of fs) {
-    console.log(f.kind === 'css-var'
-      ? `    • var(${f.ref}) — used but declared nowhere in theme.css / pluginCSS / the doc`
-      : `    • ${f.ref} — not a token in the DS snapshot`);
-  }
+  for (const f of fs) console.log(`    • ${(MSG[f.kind] || ((r) => r))(f.ref)}`);
 }
-console.log('  Fix: reference a real DS token/var, or remove the invented one. Never invent DS content in docs.');
+console.log('  Fix: reference a real DS token/var/icon, or remove the invented one. Never invent DS content in docs.');
+printAdvisories();
 process.exit(1);
