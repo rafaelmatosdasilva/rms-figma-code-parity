@@ -2824,6 +2824,17 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
     } catch (e) {
       console.log(C.yellow('\n⚠️  --docs: design-intent generation failed (never fails the audit): ' + e.message));
     }
+    // Living style guide — generated from the DS (opt-in: only when a showroom
+    // template is configured). It reads the design-intent just written above.
+    if (cfg.showroom && cfg.showroom.template) {
+      try {
+        const { generateShowroom } = await import('./showroom-gen.mjs');
+        const r = await generateShowroom(ROOT, cfg, {});
+        console.log(`🖼  Showroom → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · filled ${r.filled.join(', ')})`);
+      } catch (e) {
+        console.log(C.yellow('\n⚠️  --docs: showroom generation failed (never fails the audit): ' + e.message));
+      }
+    }
   }
 
   // Passive, throttled "you're behind" nudge - at most once/day, best-effort, never
