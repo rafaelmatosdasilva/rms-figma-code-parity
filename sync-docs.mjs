@@ -113,9 +113,8 @@ function generateExampleOutput() {
   for (const [num, risk] of Object.entries(gatePlanRisk)) {
     const plain = gatePlain[Number(num) - 1] ?? `Gate ${num}`;
     lines.push(`  [${num}] ${plain}`);
-    lines.push(`      Shown as ⏭ only when a snapshot is >24h old and the REST auto-refresh`);
-    lines.push(`      is not available on this plan. The Phase 1 Plugin API captures refresh`);
-    lines.push(`      every snapshot on any plan - commit them and the gate is ✅.`);
+    lines.push(`      Shown as ⏭ only when a snapshot is >24h old. The Phase 1 Plugin API capture`);
+    lines.push(`      refreshes every snapshot on any plan - commit them and the gate is ✅.`);
     lines.push(`      ${risk}`);
     lines.push('');
   }

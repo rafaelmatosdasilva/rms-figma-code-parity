@@ -163,7 +163,7 @@ if (process.argv.includes('--version') || process.argv.includes('--check-update'
 let _figmaAuthFailed = false;
 // The DS file's `version` id at the moment this run started, from
 // GET /v1/files/:key?depth=1 - the ONE Figma endpoint that reports "has this file
-// changed" on every plan, including the ones where variables/local 403s. Compared
+// changed" on every plan. Compared
 // against the `_figmaVersion` recorded in the vars snapshot, it answers the question
 // snapshot AGE cannot: a snapshot captured an hour ago is stale the moment the
 // designer touches the file, and until now nothing noticed until someone re-ran
@@ -193,7 +193,7 @@ async function fetchFigmaFileVersion(fileKey, token) {
 
 // Live DS component inventory - the set of COMPONENT_SET names plus standalone COMPONENT
 // names (variants of a set are excluded; the set name represents them). Both /component_sets
-// and /components work on every plan, unlike variables/local. Gate [1] diffs this against the
+// and /components work on every plan. Gate [1] diffs this against the
 // structure snapshot's component keys so a component ADDED to the DS (a new `loader`) or
 // REMOVED can never stay invisible just because the snapshot was captured with a partial
 // component list - the failure mode where a whole new component slips through unaudited.
@@ -289,114 +289,10 @@ if (SHOW_TREND) {
   process.exit(0);
 }
 
-// ── Figma collection analyser ─────────────────────────────────────────────────
-// Queries /variables/local, inspects every collection's variable types and naming
-// patterns, and returns the best mapping for ds-config.json without user input.
-async function analyseCollections(fileKey, token) {
-  try {
-    const res  = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
-      headers: { 'X-Figma-Token': token },
-    });
-    if (!res.ok) {
-      console.log(C.yellow(`  ⚠️  Figma API ${res.status} - collection auto-detect skipped`));
-      return null;
-    }
-    const { meta } = await res.json();
-    const vars  = Object.values(meta?.variables         ?? {});
-    const cols  = Object.values(meta?.variableCollections ?? {});
-    if (!cols.length) return null;
-
-    // Per-collection stats
-    const stats = cols.map(col => {
-      const colVars = vars.filter(v => v.variableCollectionId === col.id);
-      const byType  = {};
-      for (const v of colVars) byType[v.resolvedType] = (byType[v.resolvedType] ?? 0) + 1;
-
-      // Detect common top-level path prefix (e.g. "primitives/", "Base/", "Color/")
-      const names   = colVars.map(v => v.name);
-      const prefix  = (() => {
-        const segments = names.map(n => n.split('/')[0] + '/');
-        const counts   = {};
-        for (const s of segments) counts[s] = (counts[s] ?? 0) + 1;
-        const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-        return top && top[1] / names.length > 0.7 ? top[0] : null;
-      })();
-
-      return { name: col.name, total: colVars.length, byType, prefix, modeCount: col.modes.length };
-    });
-
-    console.log(C.dim(`\n  Figma collections detected (${stats.length}):`));
-    for (const s of stats) {
-      const types = Object.entries(s.byType).map(([t, n]) => `${n} ${t}`).join(', ');
-      console.log(C.dim(`    • ${s.name}  [${types}]  ${s.modeCount} mode(s)${s.prefix ? `  prefix: ${s.prefix}` : ''}`));
-    }
-
-    // Classify collections by what they contain
-    const sorted      = [...stats].sort((a, b) => (b.byType.COLOR ?? 0) - (a.byType.COLOR ?? 0));
-    const colorCol    = sorted[0]; // collection with most COLOR vars - kept for backward compat
-
-    // Sizing collection: most FLOAT vars, single mode, not a breakpoint/animation collection
-    const sizingCol   = stats
-      .filter(s => s.name !== colorCol.name && (s.byType.FLOAT ?? 0) > 0 && s.modeCount === 1
-                && !((s.byType.EASING ?? 0) + (s.byType.TIMING ?? 0) > 0))
-      .sort((a, b) => (b.byType.FLOAT ?? 0) - (a.byType.FLOAT ?? 0))[0] ?? null;
-
-    // Breakpoint collection: FLOAT/BOOLEAN only, 3+ modes - responsive sizing
-    const breakpointCol = stats.find(s =>
-      s.name !== colorCol.name &&
-      s.modeCount >= 3 &&
-      (s.byType.FLOAT ?? 0) + (s.byType.BOOLEAN ?? 0) === s.total
-    ) ?? null;
-
-    // Animation collection: contains EASING or TIMING vars
-    const animationCol = stats.find(s =>
-      (s.byType.EASING ?? 0) + (s.byType.TIMING ?? 0) > 0
-    ) ?? null;
-
-    // i18n / Language collections: STRING-only with locale-looking mode names (e.g. pt-PT, en-US)
-    const localeRe = /^[a-z]{2}(-[A-Z]{2})?$/;
-    const i18nCols = stats.filter(s => {
-      const total = s.total;
-      if (!total) return false;
-      const stringOnly = (s.byType.STRING ?? 0) === total;
-      const col = cols.find(c => c.name === s.name);
-      const modeNames = col?.modes.map(m => m.name) ?? [];
-      const localeNames = modeNames.filter(n => localeRe.test(n));
-      return stringOnly && localeNames.length > 0;
-    }).map(s => s.name);
-
-    // Primitive prefix: single-mode collection with dominant path prefix + COLOR vars
-    const primitiveCol = stats.find(s =>
-      s.name !== colorCol.name &&
-      s.modeCount === 1 &&
-      s.prefix &&
-      (s.byType.COLOR ?? 0) > 0
-    ) ?? null;
-
-    const primitivePrefix = primitiveCol
-      ? primitiveCol.prefix
-      : (colorCol.prefix ?? 'primitives/');
-
-    console.log(C.dim(`\n  → Semantic color collection: "${colorCol.name}" (kept for scope; type-routing is default)`));
-    if (sizingCol)      console.log(C.dim(`  → Sizing collection:         "${sizingCol.name}"`));
-    if (breakpointCol)  console.log(C.dim(`  → Breakpoint collection:     "${breakpointCol.name}" (${breakpointCol.modeCount} modes)`));
-    if (animationCol)   console.log(C.dim(`  → Animation collection:      "${animationCol.name}"`));
-    if (i18nCols.length) console.log(C.dim(`  → i18n collections (skip):  ${i18nCols.map(n => `"${n}"`).join(', ')}`));
-    if (primitiveCol)   console.log(C.dim(`  → Primitive prefix:          "${primitivePrefix}" (from "${primitiveCol.name}")`));
-    console.log('');
-
-    return {
-      colorCollection:      colorCol.name,
-      sizingCollection:     sizingCol?.name ?? null,
-      breakpointCollection: breakpointCol?.name ?? null,
-      animationCollection:  animationCol?.name ?? null,
-      excludeCollections:   i18nCols,
-      primitivePrefix,
-    };
-  } catch (e) {
-    console.log(C.yellow(`  ⚠️  Collection auto-detect failed (${e.message}) - using defaults`));
-    return null;
-  }
+// Collection auto-detect is disabled. ds-config's collection fields come from the config, or are
+// set manually. Returns null so config generation falls back to sensible defaults.
+async function analyseCollections() {
+  return null;
 }
 
 // ── Refresh component-property definitions from Figma REST API ───────────────
@@ -474,47 +370,8 @@ async function refreshComponentProps(fileKey, token, outPath) {
 // FIGMA_TOKEN + frames are configured. Writes the same format consumed by
 // bound-check.mjs and state-check.mjs: { "Token/Path": true, ... }.
 
-function collectBound(node, idToName, tokenSet) {
-  for (const ref of Object.values(node?.boundVariables ?? {})) {
-    const refs = Array.isArray(ref) ? ref : [ref];
-    for (const r of refs) if (r?.id && idToName[r.id]) tokenSet.add(idToName[r.id]);
-  }
-  for (const child of node?.children ?? []) collectBound(child, idToName, tokenSet);
-}
 
-// Visibility-aware variant of collectBound (Hard Rule 7). Tracks, per token, whether
-// it is ever bound on a VISIBLE node. A token whose every binding sits on a hidden
-// node (visible=false, itself or via a hidden ancestor) is not a hard requirement in
-// THIS project - the element is switched off here and may be toggled on elsewhere.
-// `toggleSet` additionally marks hidden bindings that sit under a visibility boolean
-// (`boundVariables.visible`), so the report can say "off in this project" vs "static".
-function collectBoundVis(node, idToName, allSet, visibleSet, toggleSet, hidden = false, gated = false) {
-  if (!node || typeof node !== 'object') return;
-  const isHidden = hidden || node.visible === false;
-  const isGated  = gated  || node.boundVariables?.visible != null;
-  for (const ref of Object.values(node.boundVariables ?? {})) {
-    const refs = Array.isArray(ref) ? ref : [ref];
-    for (const r of refs) {
-      const name = r?.id && idToName[r.id];
-      if (!name) continue;
-      allSet.add(name);
-      if (!isHidden) visibleSet.add(name);
-      else if (isGated) toggleSet.add(name);
-    }
-  }
-  for (const child of node.children ?? []) collectBoundVis(child, idToName, allSet, visibleSet, toggleSet, isHidden, isGated);
-}
 
-// The variable id→name map used to come from GET /variables/local — but that endpoint is
-// Enterprise-only, and parity is plan-agnostic: it never calls a plan-gated endpoint (see the
-// INVARIANT). The bound-token and state snapshots that need this map are produced by the Phase 1
-// Plugin API capture (works on any plan) and committed to the repo; the Node audit reads those
-// committed snapshots as-is. So the REST refreshers below no longer run — buildVarIdMap rejects
-// and each caller's try/catch keeps the committed snapshot. Staleness is flagged by the age check
-// in Gate [1] (advisory, or a hard fail past maxSnapshotAgeDays), not by attempting a refresh here.
-function buildVarIdMap() {
-  return Promise.reject(new Error('variables/local is Enterprise-only and not used — bound/state snapshots come from the Phase 1 Plugin API capture (works on any plan)'));
-}
 
 // Shared /nodes cache. Several Phase-1 refreshers fetch the SAME frame node trees
 // (bound tokens and frame geometry request identical `/nodes?ids=<frame>` URLs), so
@@ -563,31 +420,12 @@ async function runPool(tasks, limit) {
   return results;
 }
 
-async function refreshBoundTokens(fileKey, frames, token, outPath) {
-  if (!frames?.length) return false;
-  try {
-    const idToName = await buildVarIdMap(fileKey, token);
-    const tokenSet = new Set();
-    for (const frame of frames) {
-      const nd = await fetchNodeDoc(fileKey, frame.nodeId, token);
-      if (!nd.ok) { console.log(C.yellow(`  ⚠️  /nodes ${frame.nodeId} → ${nd.status}`)); continue; }
-      for (const data of Object.values(nd.nodes)) collectBound(data?.document, idToName, tokenSet);
-    }
-    const result = { _updated: new Date().toISOString(), ...Object.fromEntries([...tokenSet].map(t => [t, true])) };
-    writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
-    console.log(C.dim(`  ✅ Bound tokens: ${tokenSet.size} token(s) across ${frames.length} frame(s)`));
-    return true;
-  } catch (e) {
-    console.log(C.yellow(`  ⚠️  Bound tokens refresh failed: ${e.message}`));
-    return false;
-  }
-}
 
 // ── Auto-refresh figma-frame-geometry.snapshot.json via REST /nodes ──────────
 // Captures every FRAME/INSTANCE/COMPONENT's box (h, pad[t,r,b,l], gap) from the DS
 // layout frame(s), keyed by node name (array + _path when a name repeats). Consumed
 // by RENDERED_ASSERTIONS `frameGeom` sourcing (Gate [16]). Uses the /nodes endpoint -
-// available on any plan, unlike variables/local - so it is NOT plan-limited.
+// available on any plan.
 async function refreshFrameGeometry(fileKey, frames, token, outPath) {
   if (!frames?.length) return false;
   try {
@@ -716,98 +554,7 @@ function collectBindingsFromNode(node, idToName, result, maxDepth = 1, depth = 0
   }
 }
 
-async function refreshStateBindings(fileKey, token, outPath) {
-  try {
-    const idToName = await buildVarIdMap(fileKey, token);
-    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
-      headers: { 'X-Figma-Token': token },
-    });
-    if (!csRes.ok) return false;
-    const { meta: csMeta } = await csRes.json();
-    const sets   = csMeta?.component_sets ?? {};
-    const setIds = Object.keys(sets);
-    if (!setIds.length) return false;
 
-    const result = {};
-    const BATCH  = 50;
-    for (let i = 0; i < setIds.length; i += BATCH) {
-      const batch = setIds.slice(i, i + BATCH);
-      const nRes  = await figmaFetch(
-        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
-        { headers: { 'X-Figma-Token': token } },
-      );
-      if (!nRes.ok) continue;
-      const { nodes } = await nRes.json();
-      for (const [setId, data] of Object.entries(nodes ?? {})) {
-        const setName = sets[setId]?.name ?? data?.document?.name ?? setId;
-        const setNode = data?.document;
-        if (!setNode) continue;
-        const variants = {};
-        for (const variant of setNode.children ?? []) {
-          if (variant.type !== 'COMPONENT') continue;
-          const props = {};
-          for (const part of (variant.name ?? '').split(',')) {
-            const eq = part.indexOf('=');
-            if (eq === -1) continue;
-            props[part.slice(0, eq).trim().toLowerCase()] = part.slice(eq + 1).trim().toLowerCase();
-          }
-          const bindings = [];
-          collectBindingsFromNode(variant, idToName, bindings, 1, 0);
-          if (bindings.length) variants[variant.name] = { props, bindings };
-        }
-        if (Object.keys(variants).length) result[setName] = variants;
-      }
-    }
-
-    writeFileSync(outPath, JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2) + '\n');
-    console.log(C.dim(`  ✅ State bindings: ${Object.keys(result).length} component set(s) indexed`));
-    return true;
-  } catch (e) {
-    console.log(C.yellow(`  ⚠️  State bindings refresh failed: ${e.message}`));
-    return false;
-  }
-}
-
-async function refreshStateTokens(fileKey, token, outPath) {
-  try {
-    const idToName = await buildVarIdMap(fileKey, token);
-    const csRes = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/component_sets`, {
-      headers: { 'X-Figma-Token': token },
-    });
-    if (!csRes.ok) { console.log(C.yellow(`  ⚠️  /component_sets → ${csRes.status}`)); return false; }
-    const { meta: csMeta } = await csRes.json();
-    const setIds = Object.keys(csMeta?.component_sets ?? {});
-    if (!setIds.length) return false;
-    const allSet = new Set(), visibleSet = new Set(), toggleSet = new Set();
-    const BATCH = 50;
-    for (let i = 0; i < setIds.length; i += BATCH) {
-      const batch = setIds.slice(i, i + BATCH);
-      const nRes = await figmaFetch(
-        `https://api.figma.com/v1/files/${fileKey}/nodes?ids=${batch.join(',')}`,
-        { headers: { 'X-Figma-Token': token } },
-      );
-      if (!nRes.ok) continue;
-      const { nodes } = await nRes.json();
-      for (const data of Object.values(nodes ?? {})) collectBoundVis(data?.document, idToName, allSet, visibleSet, toggleSet);
-    }
-    // Hard Rule 7: a token bound only on hidden nodes is not a hard requirement here.
-    const hiddenOnly       = [...allSet].filter(t => !visibleSet.has(t));
-    const hiddenToggleable = hiddenOnly.filter(t => toggleSet.has(t));
-    const result = {
-      _updated: new Date().toISOString(),
-      _hiddenOnly: hiddenOnly.sort(),
-      _hiddenToggleable: hiddenToggleable.sort(),
-      ...Object.fromEntries([...allSet].map(t => [t, true])),
-    };
-    writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n');
-    console.log(C.dim(`  ✅ State tokens: ${allSet.size} token(s) across ${setIds.length} set(s)` +
-      (hiddenOnly.length ? ` (${hiddenOnly.length} hidden-only, not required)` : '')));
-    return true;
-  } catch (e) {
-    console.log(C.yellow(`  ⚠️  State tokens refresh failed: ${e.message}`));
-    return false;
-  }
-}
 
 // ── Per-component raw-value sweep (Gate [8] parity scoping) ──────────────────
 // Walks EVERY node of a component (all variants, all descendants, hidden included)
@@ -1559,7 +1306,7 @@ function reportFull(label, items, shown) {
 
     // Snapshots refreshed by the Phase 1 Plugin API capture (works on ANY plan). Staleness is an
     // advisory here; a hard fail comes only from the maxSnapshotAgeDays ceiling below. Parity never
-    // depends on a plan-gated endpoint, so there is no "plan-limited" special case.
+    // so there is no plan-specific special case - the refresh path is the same everywhere.
     if (vars === null) {
       lines.push(C.red(`${SNAP_VARS} missing - run /rms-parity Phase 1`)); warn = true;
     } else if (vars > 24) {
@@ -2294,8 +2041,7 @@ function reportFull(label, items, shown) {
   if (figmaToken && figmaFileKey) {
     // These refreshers write independent files via REST /nodes and /components - endpoints that
     // work on ANY plan. Bound-token and state snapshots are deliberately NOT refreshed here: they
-    // come from the Phase 1 Plugin API capture (the only source that needs variables/local, which
-    // is Enterprise-only - and parity never calls a plan-gated endpoint). Run with BOUNDED
+    // come from the Phase 1 Plugin API capture (works on any plan) and are committed. Run with BOUNDED
     // concurrency (not all-at-once Promise.all): capping the peak in-flight count keeps Phase 1
     // from bursting the Figma API into a 429 storm. Tune with FIGMA_REFRESH_CONCURRENCY.
     const FIGMA_REFRESH_CONCURRENCY = Math.max(1, parseInt(process.env.FIGMA_REFRESH_CONCURRENCY, 10) || 3);

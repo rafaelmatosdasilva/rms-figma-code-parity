@@ -13,18 +13,17 @@ the design; it only answers "does the code agree with Figma?". The gates cover:
 
 > ## ⛔ INVARIANT — parity runs on ANY Figma plan (non-negotiable)
 >
-> **No gate, refresh, or capture may hard-depend on a plan-gated API** (the Variables REST API,
-> or "Enterprise"). The **Plugin-API capture (Phase 1, Step 1c) is the canonical, plan-agnostic way
-> to refresh EVERY snapshot** — it works on Free / Pro / Org / Enterprise alike and needs no token.
-> The REST refresh is only an **optimization** used when available; when it is not (403 /
-> non-Enterprise) the refresh path is the Plugin API, **never a manual dead end and never a plan
-> excuse**. A run that cannot refresh via REST must refresh via the Plugin API and **still go green**;
-> if it cannot, that is a capture bug to fix - not a plan limitation to accept.
+> **No gate or refresh may call a plan-gated Figma endpoint.** Every snapshot the audit needs is
+> produced by the **Plugin-API capture (Phase 1, Step 1c)** — which works on every plan and needs no
+> special access — and committed to the repo. The Node audit only reads those committed snapshots and
+> refreshes the few it can via endpoints that work on any plan; it never depends on a plan-specific
+> API. A run that finds a stale snapshot must refresh it with the Plugin-API capture and **still go
+> green**; if it cannot, that is a capture bug to fix — not a plan to blame.
 >
-> **Forbidden "fixes" (they re-introduce the dependency this rule exists to kill):** raising or
-> removing `maxSnapshotAgeDays` to get past a stale snapshot; skipping/downgrading a gate because an
-> API is unavailable; committing with a bypass; or documenting Enterprise as a prerequisite. If you
-> ever feel the need to do one of these, the correct action is to run the Plugin-API capture instead.
+> **Forbidden "fixes" (they re-introduce a plan dependency this rule exists to kill):** raising or
+> removing `maxSnapshotAgeDays` to get past a stale snapshot; skipping/downgrading a gate because a
+> refresh could not run; or committing with a bypass. If you ever feel the need to do one of these,
+> the correct action is to run the Plugin-API capture instead.
 > Do not weaken this rule in a later edit — it is the whole reason the engine is plan-agnostic.
 
 **Report in the chat, in plain English.** By default the audit prints a gate summary to the
@@ -297,7 +296,7 @@ Then auto-detect and write `ds-config.json`:
 - `snapshotVars` / `snapshotStructure` → sibling files next to theme CSS
 - `pluginCSS` → scan `apps/*/ui.src.html` and `src/ui.src.html`
 - `plugins` → derived from pluginCSS paths
-- `figma.colorCollection` / `sizingCollection` / `primitivePrefix` → **queried from Figma API** if token available. Calls `GET /v1/files/:key/variables/local`, inspects every collection's variable types (`COLOR`, `FLOAT`, etc.), variable count, naming patterns, and mode count. The collection with the most `COLOR` vars becomes `colorCollection`; the collection with the most `FLOAT` vars (if distinct) becomes `sizingCollection`; single-mode collections with a dominant path prefix become `primitivePrefix`. Falls back to `"Color"` / `null` / `"primitives/"` only when the token is absent or the call fails.
+- `figma.colorCollection` / `sizingCollection` / `primitivePrefix` → the DS variable collections parity reads. Set them in `ds-config.json`: the collection holding your colour tokens, the one holding your sizing tokens, and the path prefix of primitive variables. Defaults: `"Color"` / `null` / `"primitives/"`.
 - `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default - edit if your DS has more modes)
 - `frames` → `[]` (add frame node IDs manually after setup)
 
@@ -388,7 +387,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 | `figma-vars.snapshot.json` | color (all modes), sizing, typography, `modeVariants` (per-collection, per-mode non-colour maps) | `paths.snapshotVars` |
 | `figma-structure.snapshot.json` | per-component State=Default structure | `paths.snapshotStructure` |
 
-Both are machine-generated - never hand-edit. `component-state-tokens.json` and `bound-tokens.json` are auto-refreshed via REST on every `pnpm parity` run when `FIGMA_TOKEN` is set. When the REST API returns 403 (non-Enterprise plans), refresh both via the Plugin API walks and **commit them** - each carries an `_updated` stamp, Gate [1] tracks their freshness, and the consuming gates ([4], [10]) always run at full strength against the committed data.
+Both are machine-generated - never hand-edit. `component-state-tokens.json` and `bound-tokens.json` are produced by the Phase 1 Plugin API walks (which work on any plan) and **committed** - each carries an `_updated` stamp, Gate [1] tracks their freshness, and the consuming gates ([4], [10]) always run at full strength against the committed data.
 
 **A 403 has two very different causes and Gate [1] separates them.** If Figma's response
 says the token is invalid or expired, Gate [1] fails with `FIGMA_TOKEN rejected by Figma`
@@ -695,8 +694,8 @@ return {motion:motionOut,effects:effectsOut};
 > variant changes are *orthogonal* to colour and live **only** in `figma-structure.snapshot.json`.
 > "The tokens didn't move" is never evidence that "the components didn't move" (the exact miss:
 > vars unchanged while a divider's top spacing and a panel's slot gap had drifted). When the
-> Variables REST API is unavailable (403 / non-Enterprise), the engine cannot refresh either
-> snapshot for you, so **you** must run the Step 1c Plugin API walk (works on any plan) alongside
+> The engine never refreshes these snapshots for you, so **you** run the Step 1c Plugin API walk
+> (works on any plan) alongside
 > the vars capture — refreshing one and not the other is the failure this rule exists to stop.
 > **Set `maxSnapshotAgeDays` in `ds-config.json`** so Gate [1] *hard-fails* on a stale snapshot
 > instead of passing green with an advisory — that turns "always refresh" from a discipline you can
@@ -847,7 +846,7 @@ auto-updates if the DS resizes.
 *own* box but miss *context* - spacing between elements, container padding. `figma-frame-geometry.snapshot.json`
 (`{ node: { h, pad:[t,r,b,l], gap } }`, keyed by node name, array + `_path` when a name repeats)
 is **auto-refreshed every run** via `refreshFrameGeometry` (REST `/nodes` - works on any plan,
-unlike `variables/local`) and Gate [1] tracks its freshness. A rendered assertion tagged
+on any plan) and Gate [1] tracks its freshness. A rendered assertion tagged
 `frameGeom: { node, path? }` sources its expected padding/gap/height from that node, so
 container-spacing checks track the live frame - the class that missed the 7px `.mode-toggle-row`
 bottom padding above the first divider.
@@ -1207,8 +1206,7 @@ Write fresh live data to both files. **Always stamp `_updated` to today's date o
 > "✓ updated today" while the designer has since added tokens, and every downstream gate
 > then verifies the code against a DS that no longer exists, passing green the whole way.
 > Gate [1] compares the two and fails when they diverge. The endpoint works on **every
-> plan**, including those where `variables/local` returns 403, so this is the one reliable
-> DS-drift signal available without Enterprise. Stamp it only after confirming the capture
+> plan**, on every plan, so this is a reliable DS-drift signal on any plan. Stamp it only after confirming the capture
 > matches the file - stamping a version you did not actually capture asserts a freshness
 > that is not there. **Stamp BOTH the vars and the structure snapshot, and read the version
 > as the LAST step of Phase 1 (via REST), *after* all Plugin-API page navigations.** A
@@ -1303,7 +1301,7 @@ Print tokens changed/added/removed per section, which CSS vars need updating, co
 
 ## Phase 2 - Bound token walk
 
-`bound-tokens.json` is a **committed snapshot** - works on any Figma plan, no token, including CI. There is **no Enterprise requirement**: capture it once (either way below), commit it, and everyone runs against it with nothing installed.
+`bound-tokens.json` is a **committed snapshot** - works on any Figma plan, no token, including CI. It needs no special plan access: capture it once (either way below), commit it, and everyone runs against it with nothing installed.
 
 ### Standard: Plugin API capture (any plan, no token)
 
@@ -1358,7 +1356,7 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. The
 
 ### Optional convenience: auto-refresh with a token
 
-If `FIGMA_TOKEN` is set, `audit.mjs` regenerates this file on every run via REST (`/v1/files/{key}/variables/local` for the id→name map, then `/nodes` per frame), so you don't re-run the plugin capture by hand. This is only a convenience: the Variables endpoint is Enterprise-only, so on other plans it 403s and the committed plugin capture above is used - parity still runs at full strength. **No token and no Enterprise plan are ever required.**
+This file is produced by the Phase 1 Plugin API walk (works on any plan, no special access) and committed; `audit.mjs` reads it as-is. **No token and no special plan access are ever required.**
 
 **If `bound-tokens.json` is missing entirely:** Gate [4] hard-fails. Generate it via the plugin capture above (any plan, no token).
 
@@ -1465,13 +1463,13 @@ Every Figma annotation attached to a component node is a design specification. T
 
 ### How it works
 
-1. **`audit.mjs` refresh** - `refreshComponentProps()` fetches `doc.annotations[]` alongside `componentPropertyDefinitions` for every component node. Nodes with either properties **or** annotations are included in the snapshot. (REST `/nodes` works on any plan with a token; it is NOT the Enterprise-only Variables endpoint.)
+1. **`audit.mjs` refresh** - `refreshComponentProps()` fetches `doc.annotations[]` alongside `componentPropertyDefinitions` for every component node. Nodes with either properties **or** annotations are included in the snapshot. (`/nodes` works on any plan with a token.)
 2. **Gate [10g] check** - for every component in the snapshot that has annotations, `structure-check.mjs` looks up `CONTRACT[key].annotations` and verifies each annotation label is present. Missing label → `FAIL`. If a CSS selector is provided, it must exist in the CSS - not found → `FAIL`.
 3. **`anyFail`** - annotation failures count the same as property failures; the gate exits non-zero.
 
 ### Plugin API capture (no token, any plan)
 
-No token? Generate the same file inside Figma via `use_figma` / the plugin console, then save it as `figma-component-props.snapshot.json` at project root and commit it. `componentPropertyDefinitions` is readable on a COMPONENT_SET (or a standalone COMPONENT), so this needs no REST and no Enterprise plan - it feeds Gate [12] (component prop parity) and Gate [10g] at full strength:
+No token? Generate the same file inside Figma via `use_figma` / the plugin console, then save it as `figma-component-props.snapshot.json` at project root and commit it. `componentPropertyDefinitions` is readable on a COMPONENT_SET (or a standalone COMPONENT), so this needs no token or special plan access - it feeds Gate [12] (component prop parity) and Gate [10g] at full strength:
 
 ```js
 const result = {};
@@ -1663,7 +1661,7 @@ This is a warning, not a failure - it does not block the audit. Its purpose: sur
 
 **Hard Rule 7 - visibility gating (three states).** Visible token → hard requirement (`❌ UNCOVERED` fails when the CSS var is missing). Hidden + visibility boolean → can be toggled on later, so the code must permit it: missing var ⇒ `⚠️ UNCOVERED-TOGGLEABLE`, an advisory that is surfaced but does **not** fail the gate. Hidden with no boolean → `⏭ HIDDEN-STATIC`, ignored. The refresh records `_hiddenOnly` (all hidden-only tokens) and `_hiddenToggleable` (the subset gated by a `boundVariables.visible` boolean) so `state-check.mjs` can separate the advisory case from the ignored one.
 
-**If the auto-refresh fails** (no `FIGMA_TOKEN` or REST 403): Gate [10] uses whatever exists. If missing, Gate [10] hard-fails (exit 2).
+**If the auto-refresh fails** (no `FIGMA_TOKEN` or the fetch fails): Gate [10] uses whatever exists. If missing, Gate [10] hard-fails (exit 2).
 
 > `_`-prefixed keys are metadata and ignored by every consumer - the refresh writes an `_updated` stamp so Gate [1] can track the file's freshness, plus `_hiddenOnly`/`_hiddenToggleable` for Hard Rule 7.
 
@@ -1728,7 +1726,7 @@ Coverage:
 
 Manual `CSS_BASE_RULE_VARS` entries always override auto-derived for the same `selector+prop`. Use them for edge cases: shorthand combiners, deeply-nested selectors, or explicit exception overrides.
 
-**If the auto-refresh fails** (REST API 403 / no `FIGMA_TOKEN`): Gate [3c] falls back to manual `CSS_BASE_RULE_VARS` only. No gate noise - the count just shows `(N manual)` instead of `(N auto-derived · M manual)`.
+**If the auto-refresh fails** (no `FIGMA_TOKEN` or the fetch fails): Gate [3c] falls back to manual `CSS_BASE_RULE_VARS` only. No gate noise - the count just shows `(N manual)` instead of `(N auto-derived · M manual)`.
 
 **Plugin API capture (any plan, no token)** - run this in Figma (via `use_figma` or Plugin console), save the output as `component-state-bindings.json` at project root (gitignored):
 
@@ -2065,7 +2063,7 @@ jobs:
 - `FIGMA_TOKEN` must be added to GitHub Secrets.
 - `FIGMA_FILE_KEY` can optionally be set as a GitHub Variable (used for logging context; `ds-config.json` is the actual source).
 
-With `FIGMA_TOKEN` set, `pnpm parity` is fully self-contained: it auto-refreshes all snapshots, bound tokens, and state tokens via the Figma REST API. No Plugin API / MCP step needed.
+With `FIGMA_TOKEN` set, `pnpm parity` is fully self-contained: it auto-refreshes the snapshots it can via any-plan endpoints. The bound-token and state snapshots come from the Phase 1 Plugin API walk and are committed.
 
 ---
 
