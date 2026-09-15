@@ -80,3 +80,11 @@ test('a non-retryable status (403) returns immediately', async () => {
   assert.equal(res.status, 403);
   assert.equal(calls, 1);
 });
+
+test('clamps a large Retry-After to the backoff cap (bounded wait invariant)', async () => {
+  let calls = 0; const slept = [];
+  const fetchImpl = async () => (++calls === 1 ? { status: 429, headers: headers({ 'retry-after': '3600' }) } : { ok: true, status: 200 });
+  const figmaFetch = makeFigmaFetch(fetchImpl, 1000, { backoffCapMs: 5000, sleep: async (ms) => { slept.push(ms); } });
+  await figmaFetch('https://api.figma.com/x');
+  assert.deepEqual(slept, [5000]);   // 3600s requested, clamped to the 5s cap
+});

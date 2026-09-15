@@ -560,6 +560,25 @@ async function fetchNodeDoc(fileKey, nodeId, token) {
   return p;
 }
 
+// Bounded-concurrency runner: run every task to completion but at most `limit` in
+// flight at once. Phase-1 fires many independent refreshers; launching them all via
+// Promise.all bursts the Figma API into a 429 storm. Capping the peak in-flight count
+// keeps FULL depth (all tasks still run) while cutting the burst - pairs with
+// figmaFetch's 429 backoff (survive a throttle) and fetchNodeDoc (dedupe identical
+// /nodes). `tasks` are thunks (() => Promise); results preserve input order.
+async function runPool(tasks, limit) {
+  const results = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await tasks[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, tasks.length)) }, worker));
+  return results;
+}
+
 async function refreshBoundTokens(fileKey, frames, token, outPath) {
   if (!frames?.length) return false;
   try {
@@ -2312,21 +2331,24 @@ function reportFull(label, items, shown) {
   const figmaFileKey = cfg.figmaFileKey;
   if (figmaToken && figmaFileKey) {
     // These refreshers write independent files and only share the memoized buildVarIdMap
-    // fetch - run them concurrently instead of serially (they were ~7s of a 12s audit).
-    await Promise.all([
-      fetchFigmaFileVersion(figmaFileKey, figmaToken),
-      fetchComponentInventory(figmaFileKey, figmaToken, cfg.figma?.componentsPage ?? cfg.componentsPage),
-      refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
-      refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
-      refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
-      refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json')),
-      refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
-      (cfg.iconLibraryFileKey || cfg.icons?.libraryFileKey)
+    // fetch. Run them with BOUNDED concurrency (not all-at-once Promise.all): each still
+    // runs to completion, but capping the peak in-flight count keeps Phase 1 from
+    // bursting the Figma API into a 429 storm. Tune with FIGMA_REFRESH_CONCURRENCY.
+    const FIGMA_REFRESH_CONCURRENCY = Math.max(1, parseInt(process.env.FIGMA_REFRESH_CONCURRENCY, 10) || 3);
+    await runPool([
+      () => fetchFigmaFileVersion(figmaFileKey, figmaToken),
+      () => fetchComponentInventory(figmaFileKey, figmaToken, cfg.figma?.componentsPage ?? cfg.componentsPage),
+      () => refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
+      () => refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
+      () => refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
+      () => refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json')),
+      () => refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
+      () => (cfg.iconLibraryFileKey || cfg.icons?.libraryFileKey)
         ? refreshIcons(cfg.iconLibraryFileKey ?? cfg.icons.libraryFileKey, figmaToken, join(ROOT, 'figma-icons.snapshot.json'), cfg.icons ?? {})
         : Promise.resolve(),
-      SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
-      refreshScreenElements(figmaFileKey, cfg.screens ?? cfg.frames ?? [], figmaToken, join(ROOT, 'figma-screens.snapshot.json')),
-    ]);
+      () => SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
+      () => refreshScreenElements(figmaFileKey, cfg.screens ?? cfg.frames ?? [], figmaToken, join(ROOT, 'figma-screens.snapshot.json')),
+    ], FIGMA_REFRESH_CONCURRENCY);
   }
 
   // ── Run gates ─────────────────────────────────────────────────────────────────
