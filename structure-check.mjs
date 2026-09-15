@@ -314,17 +314,27 @@ const CONTRACTED_FIGMA_NAMES = new Set([
   ...Object.keys(CONTRACT),
   ...Object.values(CONTRACT).map(e => e.figmaName).filter(Boolean),
 ]);
+const UNCONTRACTED_SET = new Set();
+function noteUncontracted(name) {
+  if (name.startsWith('_')) return;
+  if (CONTRACTED_FIGMA_NAMES.has(name) || UNIMPLEMENTED_SET.has(name)) return;
+  if (UNCONTRACTED_SET.has(name)) return;
+  UNCONTRACTED_SET.add(name);
+  UNCONTRACTED.push(name);
+}
 const COMP_PROPS_PATH = cfg.paths?.compPropsSnapshot;
 if (COMP_PROPS_PATH) {
   try {
     const compProps = JSON.parse(readFileSync(join(ROOT, COMP_PROPS_PATH), 'utf8'));
-    for (const name of Object.keys(compProps)) {
-      if (name.startsWith('_')) continue;
-      if (CONTRACTED_FIGMA_NAMES.has(name) || UNIMPLEMENTED_SET.has(name)) continue;
-      UNCONTRACTED.push(name);
-    }
+    for (const name of Object.keys(compProps)) noteUncontracted(name);
   } catch { /* optional */ }
 }
+// The component-props snapshot only lists components that HAVE variant/boolean properties, so a
+// propertyless component (a single-variant COMPONENT like `loader`, or a set whose props didn't
+// register) never appears there and slipped through unverified. The STRUCTURE snapshot is the
+// fuller list — every component captured with real structural facts. Treat it as authoritative too:
+// anything captured there but absent from the contract is unverified and must be flagged.
+for (const name of Object.keys(components)) noteUncontracted(name);
 
 const SCALAR_FIELDS = ['h', 'gapVar', 'fontSizeVar', 'fontWeightVar', 'fillStructure', 'innerRadiusVar', 'strokeOnDefault'];
 
