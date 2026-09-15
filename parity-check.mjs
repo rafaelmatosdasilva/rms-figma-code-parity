@@ -179,15 +179,20 @@ for (let i = 0; i < rawLines.length; i++) {
 // still fails). A :root match (exact or case-insensitive) is value-checked exactly
 // as before - a wrong value still FAILS. A var found only outside :root is reported
 // as an accurate, non-failing status (this gate only ever verified :root tokens).
-const rootByLower = new Map(Object.keys(modeVars[0]).map(n => [n.toLowerCase(), n]));
+// Per-mode case-insensitive index: modeByLower[0] = base :root, modeByLower[i>0] =
+// mode i's override block. A colour var may live in the base OR a mode override, so
+// locateVar takes the mode index; sizing/typography/strings call it with the default 0.
+const modeByLower = modeVars.map(mv => new Map(Object.keys(mv).map(n => [n.toLowerCase(), n])));
 const allDeclaredLower = new Set();
 for (const mm of css.matchAll(/(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) allDeclaredLower.add(mm[1].toLowerCase());
-function locateVar(expected) {
-  if (modeVars[0][expected]) return { name: expected, root: true };                 // exact :root
-  const ci = rootByLower.get(expected.toLowerCase());
-  if (ci) return { name: ci, root: true };                                          // :root, other case
-  if (allDeclaredLower.has(expected.toLowerCase())) return { name: expected, root: false }; // declared, not :root
-  return null;                                                                      // truly absent
+function locateVar(expected, modeIdx = 0) {
+  if (modeVars[0][expected]) return { name: expected, root: true };                            // exact base
+  if (modeIdx > 0 && modeVars[modeIdx]?.[expected]) return { name: expected, root: true };     // exact override
+  const ciBase = modeByLower[0].get(expected.toLowerCase());
+  if (ciBase) return { name: ciBase, root: true };                                             // base, other case
+  if (modeIdx > 0) { const ciOv = modeByLower[modeIdx]?.get(expected.toLowerCase()); if (ciOv) return { name: ciOv, root: true }; } // override, other case
+  if (allDeclaredLower.has(expected.toLowerCase())) return { name: expected, root: false };    // declared, not :root
+  return null;                                                                                 // truly absent
 }
 
 // Vars REFERENCED in the DS's own component code (var(--x) under componentSrcDirs).
@@ -419,15 +424,25 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
         NEW_SKIP.push({ dimension: 'color', token, mode: modeMeta.name, reason: 'Figma value is NEW null - add to KNOWN_NULL in parity-map.mjs' });
       continue;
     }
-    const inBase     = !!modeVars[0][cssVar];
-    const inOverride = modeIdx > 0 && !!modeVars[modeIdx]?.[cssVar];
-    if (!inBase && !inOverride) {
-      FAIL.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, issue: `CSS var not declared in token CSS`, fixHint: `Add ${cssVar} to ${THEME_LABEL}` });
+    const loc = locateVar(cssVar, modeIdx);
+    if (!loc) {
+      // Absent from the static token CSS (base and mode override). Used in the
+      // component code -> runtime-injected (backend stylesheet), not missing.
+      if (usedVarsLower.has(cssVar.toLowerCase())) {
+        SKIP.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, reason: 'runtime-injected - used in code, not in static token CSS (backend stylesheet)' });
+      } else {
+        FAIL.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, issue: `CSS var not declared in token CSS`, fixHint: `Add ${cssVar} to ${THEME_LABEL}` });
+      }
       continue;
     }
-    const cssHex = resolve(cssVar, modeIdx);
+    if (!loc.root) {
+      SKIP.push({ dimension: 'color', token, cssVar: loc.name, mode: modeMeta.name, reason: 'declared outside :root (component-scoped) - not compared by this gate' });
+      continue;
+    }
+    const actualVar = loc.name;   // real declared name (handles a differing case)
+    const cssHex = resolve(actualVar, modeIdx);
     if (cssHex === null) {
-      NEW_SKIP.push({ dimension: 'color', token, cssVar, mode: modeMeta.name, reason: 'CSS resolves to non-hex - add to SKIP_TOKENS in parity-map.mjs if intentional' });
+      NEW_SKIP.push({ dimension: 'color', token, cssVar: actualVar, mode: modeMeta.name, reason: 'CSS resolves to non-hex - add to SKIP_TOKENS in parity-map.mjs if intentional' });
       continue;
     }
     if (figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
@@ -436,13 +451,13 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
       const sourceHex = sourceSnap?.[modeMeta.snapshotKey]?.[tokenKey]
                      ?? sourceSnap?.[modeMeta.snapshotKey]?.[token] ?? null;
       if (sourceHex && sourceHex.toLowerCase() === cssHex.toLowerCase()) {
-        PENDING_FIGMA_SYNC.push({ token, cssVar, mode: modeMeta.name, consumerFigma: figmaHex, css: cssHex });
+        PENDING_FIGMA_SYNC.push({ token, cssVar: actualVar, mode: modeMeta.name, consumerFigma: figmaHex, css: cssHex });
       } else {
         FAIL.push({
-          dimension: 'color', token, cssVar, mode: modeMeta.name,
+          dimension: 'color', token, cssVar: actualVar, mode: modeMeta.name,
           figma: figmaHex, css: cssHex,
-          hint:    `CSS resolves ${cssVar} → ${cssHex} but Figma says ${figmaHex}`,
-          fixHint: colorFixHint(cssVar, figmaHex, modeIdx),
+          hint:    `CSS resolves ${actualVar} → ${cssHex} but Figma says ${figmaHex}`,
+          fixHint: colorFixHint(actualVar, figmaHex, modeIdx),
         });
       }
     } else {
@@ -460,7 +475,7 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
         // Only check when Figma chain ends in a known primitive
         if (rawHops[rawHops.length - 1].startsWith(PRIMITIVE_PREFIX)) {
           const cssChain = [];
-          let cur = cssVar;
+          let cur = actualVar;
           for (let i = 0; i < 10; i++) {
             const next = resolveCSSAlias(cur, modeIdx);
             if (!next) break;
@@ -472,7 +487,7 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
 
           // Final primitive must match
           if (lastCSSHop !== lastFigmaHop) {
-            ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain, cssChain,
+            ALIAS_FAIL.push({ token, cssVar: actualVar, mode: modeMeta.name, figmaChain, cssChain,
               mismatchAt: cssChain.length - 1,
               expected: lastFigmaHop, actual: lastCSSHop ?? '(no alias chain - hardcoded hex)' });
           } else {
@@ -484,7 +499,7 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
               if (csshop === undefined) break; // CSS chain is shorter - skip remaining
               if (csshop === lastFigmaHop) break; // CSS arrived at primitive directly - OK
               if (csshop !== figmaChain[i]) {
-                ALIAS_FAIL.push({ token, cssVar, mode: modeMeta.name, figmaChain, cssChain,
+                ALIAS_FAIL.push({ token, cssVar: actualVar, mode: modeMeta.name, figmaChain, cssChain,
                   mismatchAt: i,
                   expected: figmaChain[i], actual: csshop });
                 break;
@@ -548,21 +563,31 @@ if (snap.typography && Object.keys(TYPO).length) {
       SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, mode: '-', reason: 'no Figma value in snapshot' });
       continue;
     }
-    if (!modeVars[0][cssVar]) {
-      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}` });
+    const loc = locateVar(cssVar);
+    if (!loc) {
+      if (usedVarsLower.has(cssVar.toLowerCase())) {
+        SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', reason: 'runtime-injected - used in code, not in static token CSS (backend stylesheet)' });
+      } else {
+        FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}` });
+      }
       continue;
     }
-    const cssVal = resolveScalar(cssVar);
+    if (!loc.root) {
+      SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar: loc.name, mode: '-', reason: 'declared outside :root (component-scoped) - not compared by this gate' });
+      continue;
+    }
+    const actualVar = loc.name;
+    const cssVal = resolveScalar(actualVar);
     if (cssVal === null) {
-      NEW_SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', reason: 'CSS var did not resolve' });
+      NEW_SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar: actualVar, mode: '-', reason: 'CSS var did not resolve' });
       continue;
     }
     if (String(figmaVal).trim() !== cssVal.trim()) {
-      const fixHint = sizingFixHint(cssVar, figmaVal);
-      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${cssVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
+      const fixHint = sizingFixHint(actualVar, figmaVal);
+      FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar: actualVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${actualVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
       if (FIX_MODE) {
-        const line = varLineMap[cssVar];
-        if (line) autoFixes.push({ cssVar, newVal: String(figmaVal).trim(), line });
+        const line = varLineMap[actualVar];
+        if (line) autoFixes.push({ cssVar: actualVar, newVal: String(figmaVal).trim(), line });
       }
     } else {
       PASS.push(`typography ${scale}/${prop}`);
@@ -614,14 +639,24 @@ for (const [tokenName, expected] of Object.entries(strSnap)) {
     SKIP.push({ dimension: 'strings', token: tokenName, mode: '-', reason: 'excluded in SIZING_SKIP' });
     continue;
   }
-  const raw = modeVars[0][cssVar];
-  if (!raw) {
-    FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${expected} to ${THEME_PATH}` });
+  const loc = locateVar(cssVar);
+  if (!loc) {
+    if (usedVarsLower.has(cssVar.toLowerCase())) {
+      SKIP.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', reason: 'runtime-injected - used in code, not in static token CSS (backend stylesheet)' });
+    } else {
+      FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${expected} to ${THEME_PATH}` });
+    }
     continue;
   }
+  if (!loc.root) {
+    SKIP.push({ dimension: 'strings', token: tokenName, cssVar: loc.name, mode: '-', reason: 'declared outside :root (component-scoped) - not compared by this gate' });
+    continue;
+  }
+  const actualVar = loc.name;
+  const raw = modeVars[0][actualVar];
   const norm = s => String(s).replace(/^["']|["']$/g, '').trim().toLowerCase();
   if (norm(raw) !== norm(expected)) {
-    FAIL.push({ dimension: 'strings', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} - change ${cssVar}: ${raw} → ${expected}` });
+    FAIL.push({ dimension: 'strings', token: tokenName, cssVar: actualVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${actualVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} - change ${actualVar}: ${raw} → ${expected}` });
   } else {
     PASS.push(`strings ${tokenName}`);
   }
