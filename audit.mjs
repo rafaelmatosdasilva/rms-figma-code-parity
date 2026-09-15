@@ -157,10 +157,6 @@ if (process.argv.includes('--update'))                                      { up
 if (process.argv.includes('--link-command'))                                { process.exit(linkCommand() ? 0 : 1); }
 if (process.argv.includes('--version') || process.argv.includes('--check-update')) { process.exit(checkForUpdate({ quiet: false }) === null ? 1 : 0); }
 
-// Set to true when variables/local returns 403 (Figma Enterprise plan required).
-// Gates that depend on live variable refresh use planLimited state instead of
-// pass/fail - they don't block the audit but clearly explain what couldn't run.
-let _figmaApiLimited = false;
 // Set when Figma rejects the credential itself (expired/revoked token), as opposed to
 // the plan or scope gating an endpoint. Kept separate so the audit prescribes the right
 // fix: a stale snapshot blamed on the plan hides a token that just needs reissuing.
@@ -509,31 +505,15 @@ function collectBoundVis(node, idToName, allSet, visibleSet, toggleSet, hidden =
   for (const child of node.children ?? []) collectBoundVis(child, idToName, allSet, visibleSet, toggleSet, isHidden, isGated);
 }
 
-// variables/local is hit by three refreshers (bound tokens, state tokens, state bindings).
-// Memoize the in-flight promise so the fetch happens once even when they run concurrently
-// (and a 403 on a non-Enterprise plan is only paid once, not three times).
-let _varIdMapPromise = null;
-function buildVarIdMap(fileKey, token) {
-  return (_varIdMapPromise ??= (async () => {
-    const res = await figmaFetch(`https://api.figma.com/v1/files/${fileKey}/variables/local`, {
-      headers: { 'X-Figma-Token': token },
-    });
-    if (!res.ok) {
-      // A 403 means either "this plan/scope can't reach the endpoint" or "your token is
-      // no longer valid". They need opposite fixes - run the Plugin API capture vs.
-      // reissue FIGMA_TOKEN - so never collapse them into one message.
-      if (res.status === 403) {
-        const body = await res.text().catch(() => '');
-        if (/invalid token|token.*expired|expired.*token/i.test(body)) _figmaAuthFailed = true;
-        else                                                          _figmaApiLimited = true;
-      }
-      throw new Error(`variables/local returned ${res.status}`);
-    }
-    const { meta } = await res.json();
-    const idToName = {};
-    for (const [id, v] of Object.entries(meta?.variables ?? {})) idToName[id] = v.name;
-    return idToName;
-  })());
+// The variable id→name map used to come from GET /variables/local — but that endpoint is
+// Enterprise-only, and parity is plan-agnostic: it never calls a plan-gated endpoint (see the
+// INVARIANT). The bound-token and state snapshots that need this map are produced by the Phase 1
+// Plugin API capture (works on any plan) and committed to the repo; the Node audit reads those
+// committed snapshots as-is. So the REST refreshers below no longer run — buildVarIdMap rejects
+// and each caller's try/catch keeps the committed snapshot. Staleness is flagged by the age check
+// in Gate [1] (advisory, or a hard fail past maxSnapshotAgeDays), not by attempting a refresh here.
+function buildVarIdMap() {
+  return Promise.reject(new Error('variables/local is Enterprise-only and not used — bound/state snapshots come from the Phase 1 Plugin API capture (works on any plan)'));
 }
 
 // Shared /nodes cache. Several Phase-1 refreshers fetch the SAME frame node trees
@@ -1409,22 +1389,19 @@ function reportFull(label, items, shown) {
         pass: false,
         lines: [
           C.red('❌ HARD FAIL - bound-tokens.json missing (frames[] are configured).'),
-          _figmaApiLimited
-            ? C.red('   Variables REST API requires Enterprise plan - generate via Plugin API and commit.')
-            : C.red('   Set FIGMA_TOKEN so the configured frames[] auto-generate it.'),
+          C.red('   Generate it with the Phase 1 Plugin API bound walk (works on any plan) and commit it.'),
         ],
       };
     }
-    // Coverage always runs fully against bound-tokens.json regardless of plan -
-    // the file is refreshed via REST when available, or via the Phase 1 Plugin API
-    // walk otherwise. Staleness of the file itself is Gate [1]'s job, not this gate's.
+    // Coverage always runs fully against bound-tokens.json - the file is produced by the Phase 1
+    // Plugin API walk (any plan) and committed. Staleness of the file itself is Gate [1]'s job.
     const pass       = r.status === 0;
     const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
     const boundAge   = snapshotAge('bound-tokens.json');
     const provenance = boundAge === null
       ? C.dim('coverage source: bound-tokens.json (no _updated stamp - age tracked by Gate [1] once refreshed)')
-      : C.dim(`coverage source: bound-tokens.json (updated ${boundAge}h ago via ${_figmaApiLimited ? 'Plugin API' : 'REST'})`);
+      : C.dim(`coverage source: bound-tokens.json (updated ${boundAge}h ago via the Phase 1 Plugin API capture)`);
     return { pass, lines: [provenance, ...summary, ...failDetails] };
   }
 
@@ -1580,27 +1557,21 @@ function reportFull(label, items, shown) {
       lines.push(C.dim('component inventory not checked (component list not fetched)'));
     }
 
-    let varsPlanLimited = false;
+    // Snapshots refreshed by the Phase 1 Plugin API capture (works on ANY plan). Staleness is an
+    // advisory here; a hard fail comes only from the maxSnapshotAgeDays ceiling below. Parity never
+    // depends on a plan-gated endpoint, so there is no "plan-limited" special case.
     if (vars === null) {
       lines.push(C.red(`${SNAP_VARS} missing - run /rms-parity Phase 1`)); warn = true;
     } else if (vars > 24) {
-      lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old${_figmaApiLimited ? ' (Variables REST API not available on this plan)' : ''}`));
-      if (_figmaApiLimited) { varsPlanLimited = true; } else { warn = true; }
+      lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old - refresh with the Phase 1 Plugin API capture`));
     } else {
       lines.push(`${SNAP_VARS} ✓ (updated today)`);
     }
 
-    let structPlanLimited = false;
     if (struct === null) {
       lines.push(C.red(`${SNAP_STRUCT} missing - run /rms-parity Phase 1`)); warn = true;
     } else if (struct > 24) {
-      if (_figmaApiLimited) {
-        lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old - REST refresh not available on this plan; run the Phase 1 Step 1c Plugin API capture`));
-        structPlanLimited = true;
-      } else {
-        lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old`));
-        warn = true;
-      }
+      lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old - refresh with the Phase 1 Step 1c Plugin API capture`));
     } else {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
     }
@@ -1626,21 +1597,13 @@ function reportFull(label, items, shown) {
     // exemption-check). Refreshed via REST when available, or via the Phase 1 Plugin API
     // walks otherwise - either path stamps _updated. Staleness is flagged HERE so the
     // consuming gates can always run at full strength against the committed data.
-    let walksPlanLimited = false;
     for (const [file, phase] of [['bound-tokens.json', 'bound walk'], ['component-state-tokens.json', 'COMPONENT_SET state walk']]) {
       if (!existsSync(join(ROOT, file))) continue; // absence hard-fails in the consuming gate (exit 2)
       const age = snapshotAge(file);
       if (age === null) {
-        lines.push(C.yellow(`⚠️  ${file} has no _updated stamp - re-run the Phase 1 ${phase} to start tracking freshness`));
-        if (_figmaApiLimited) walksPlanLimited = true; else warn = true;
+        lines.push(C.yellow(`⚠️  ${file} has no _updated stamp - re-run the Phase 1 ${phase} (Plugin API) to start tracking freshness`));
       } else if (age > 24) {
-        if (_figmaApiLimited) {
-          lines.push(C.yellow(`⚠️  ${file} is ${age}h old - REST refresh not available on this plan; run the Phase 1 ${phase} (Plugin API)`));
-          walksPlanLimited = true;
-        } else {
-          lines.push(C.yellow(`⚠️  ${file} is ${age}h old`));
-          warn = true;
-        }
+        lines.push(C.yellow(`⚠️  ${file} is ${age}h old - refresh with the Phase 1 ${phase} (Plugin API)`));
       } else {
         lines.push(`${file} ✓ (updated today)`);
       }
@@ -1674,13 +1637,10 @@ function reportFull(label, items, shown) {
       }
     }
 
-    let anyPlanLimited = varsPlanLimited || structPlanLimited || walksPlanLimited;
-
     // ── Opt-in escalations (default off → byte-identical for projects that don't set them) ──
-    // A plan without REST refresh downgrades staleness to a non-failing advisory (above), which
-    // is right day-to-day but lets a snapshot drift indefinitely. `maxSnapshotAgeDays` is a hard
-    // ceiling: past it, the audit fails even when plan-limited - the Plugin API capture works on
-    // any plan, so "we literally never refreshed" is a real problem, not a plan excuse.
+    // Staleness above is a non-failing advisory (the Phase 1 Plugin API capture refreshes on ANY
+    // plan), which is right day-to-day but lets a snapshot drift indefinitely. `maxSnapshotAgeDays`
+    // is a hard ceiling: past it the audit fails - "we literally never refreshed" is a real problem.
     const maxDays = Number(cfg.maxSnapshotAgeDays);
     if (Number.isFinite(maxDays) && maxDays > 0) {
       const ceilingH = maxDays * 24;
@@ -1691,7 +1651,6 @@ function reportFull(label, items, shown) {
         lines.push(C.red(`❌ a snapshot is ~${Math.floor(worst / 24)}d old, past the ${maxDays}d ceiling (ds-config → maxSnapshotAgeDays)`));
         lines.push(C.red('   The Plugin API capture works on any plan - run Phase 1 and commit the refreshed snapshots.'));
         warn = true;
-        anyPlanLimited = false;   // the ceiling overrides the plan-limited downgrade
       }
     }
     // versionLockStrict promotes the whole-file version-mismatch advisory to a hard fail. Off by
@@ -1700,10 +1659,9 @@ function reportFull(label, items, shown) {
     if (cfg.versionLockStrict && versionMismatch) {
       lines.push(C.red('❌ versionLockStrict: DS file version differs from the snapshot - re-run Phase 1 to reconcile'));
       warn = true;
-      anyPlanLimited = false;
     }
 
-    return { pass: !warn && !anyPlanLimited, planLimited: !warn && anyPlanLimited, lines };
+    return { pass: !warn, planLimited: false, lines };
   }
 
   function computeGate5() {
@@ -2334,18 +2292,17 @@ function reportFull(label, items, shown) {
   const figmaToken   = process.env.FIGMA_TOKEN;
   const figmaFileKey = cfg.figmaFileKey;
   if (figmaToken && figmaFileKey) {
-    // These refreshers write independent files and only share the memoized buildVarIdMap
-    // fetch. Run them with BOUNDED concurrency (not all-at-once Promise.all): each still
-    // runs to completion, but capping the peak in-flight count keeps Phase 1 from
-    // bursting the Figma API into a 429 storm. Tune with FIGMA_REFRESH_CONCURRENCY.
+    // These refreshers write independent files via REST /nodes and /components - endpoints that
+    // work on ANY plan. Bound-token and state snapshots are deliberately NOT refreshed here: they
+    // come from the Phase 1 Plugin API capture (the only source that needs variables/local, which
+    // is Enterprise-only - and parity never calls a plan-gated endpoint). Run with BOUNDED
+    // concurrency (not all-at-once Promise.all): capping the peak in-flight count keeps Phase 1
+    // from bursting the Figma API into a 429 storm. Tune with FIGMA_REFRESH_CONCURRENCY.
     const FIGMA_REFRESH_CONCURRENCY = Math.max(1, parseInt(process.env.FIGMA_REFRESH_CONCURRENCY, 10) || 3);
     await runPool([
       () => fetchFigmaFileVersion(figmaFileKey, figmaToken),
       () => fetchComponentInventory(figmaFileKey, figmaToken, cfg.figma?.componentsPage ?? cfg.componentsPage),
       () => refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
-      () => refreshBoundTokens(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, 'bound-tokens.json')),
-      () => refreshStateTokens(figmaFileKey, figmaToken, join(ROOT, 'component-state-tokens.json')),
-      () => refreshStateBindings(figmaFileKey, figmaToken, join(ROOT, 'component-state-bindings.json')),
       () => refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
       () => (cfg.iconLibraryFileKey || cfg.icons?.libraryFileKey)
         ? refreshIcons(cfg.iconLibraryFileKey ?? cfg.icons.libraryFileKey, figmaToken, join(ROOT, 'figma-icons.snapshot.json'), cfg.icons ?? {})
