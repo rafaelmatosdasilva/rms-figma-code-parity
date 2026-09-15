@@ -707,8 +707,12 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
     if (contract.strokeSides === 'none') { BSIDES_PASS.push(`${comp}/stroke-sides (none - no own border)`); continue; }
     const selCfg = COMPONENT_CSS_SELECTORS[comp];
     if (!selCfg) continue;   // declared but no base selector to verify against (plugin-side border)
-    const mainBlock = findBlock(themeCSS, selCfg.main, themeIndex);
-    if (!mainBlock) { BSIDES_FAIL.push(`${comp}/stroke-sides: selector "${selCfg.main}" not found`); continue; }
+    // The border commonly lives on the same child element as the radius (a visual box inside the
+    // component root - e.g. a checkbox's `.checkbox-box`), not on `main`. Honour strokeSel, then
+    // radiusSel, then main, so a component whose border is on a child is still verified correctly.
+    const borderSel = selCfg.strokeSel ?? selCfg.radiusSel ?? selCfg.main;
+    const mainBlock = findBlock(themeCSS, borderSel, themeIndex);
+    if (!mainBlock) { BSIDES_FAIL.push(`${comp}/stroke-sides: selector "${borderSel}" not found`); continue; }
 
     // \bborder\s*: matches the bare "border:" shorthand but NOT "border-bottom:", "border-radius:", etc.
     const hasShorthand = /\bborder\s*:/.test(mainBlock);
