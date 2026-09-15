@@ -11,6 +11,22 @@ the design; it only answers "does the code agree with Figma?". The gates cover:
 | **Clean CSS** | No unused variables, no values that contradict Figma, no parent rule overriding a child component |
 | **What the audit covered** | Which DS components and states the audit actually reached - so gaps are visible, not silent |
 
+> ## ⛔ INVARIANT — parity runs on ANY Figma plan (non-negotiable)
+>
+> **No gate, refresh, or capture may hard-depend on a plan-gated API** (the Variables REST API,
+> or "Enterprise"). The **Plugin-API capture (Phase 1, Step 1c) is the canonical, plan-agnostic way
+> to refresh EVERY snapshot** — it works on Free / Pro / Org / Enterprise alike and needs no token.
+> The REST refresh is only an **optimization** used when available; when it is not (403 /
+> non-Enterprise) the refresh path is the Plugin API, **never a manual dead end and never a plan
+> excuse**. A run that cannot refresh via REST must refresh via the Plugin API and **still go green**;
+> if it cannot, that is a capture bug to fix - not a plan limitation to accept.
+>
+> **Forbidden "fixes" (they re-introduce the dependency this rule exists to kill):** raising or
+> removing `maxSnapshotAgeDays` to get past a stale snapshot; skipping/downgrading a gate because an
+> API is unavailable; committing with a bypass; or documenting Enterprise as a prerequisite. If you
+> ever feel the need to do one of these, the correct action is to run the Plugin-API capture instead.
+> Do not weaken this rule in a later edit — it is the whole reason the engine is plan-agnostic.
+
 **Report in the chat, in plain English.** By default the audit prints a gate summary to the
 console; relay those results to the user directly in the conversation, in plain language -
 which gates passed, which failed, and what each failure means. Do **not** generate any file,
