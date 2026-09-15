@@ -17,7 +17,7 @@
 //
 // Exit 0 = all exemptions valid.  Exit 1 = stale/broken entry found.
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadModes, buildResolver } from './mode-resolver.mjs';
 
@@ -88,6 +88,41 @@ for (const f of sources) {
   for (const m of txt.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);
 }
 
+// Case-insensitive index + component-code usage, so a mapped var declared under a
+// different case, or runtime-injected (its token CSS loaded from a backend at run
+// time, so absent from every static file), is not falsely reported "not declared".
+// Mirrors parity-check. `declared` already spans all scopes (whole-file scan), so
+// component-scoped mappings are covered here without extra work.
+const declaredLower = new Map([...declared].map(n => [n.toLowerCase(), n]));
+const usedVarsLower = new Set();
+(function scanUsedVars() {
+  const dirs = [cfg.componentSrcDirs].flat().filter(Boolean);
+  if (!dirs.length) return;
+  const EXT = /\.(vue|css|scss|sass|less|html|ts|tsx|js|jsx)$/i;
+  const walk = (dir, depth = 0) => {
+    if (depth > 8) return;
+    let entries; try { entries = readdirSync(join(ROOT, dir)); } catch { return; }
+    for (const e of entries) {
+      if (e === 'node_modules' || e === '.git' || e === 'dist') continue;
+      const rel = join(dir, e); let st; try { st = statSync(join(ROOT, rel)); } catch { continue; }
+      if (st.isDirectory()) walk(rel, depth + 1);
+      else if (EXT.test(e) && st.size < 2_000_000) {
+        try { for (const mm of readFileSync(join(ROOT, rel), 'utf8').matchAll(/var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)/g)) usedVarsLower.add(mm[1].toLowerCase()); } catch {}
+      }
+    }
+  };
+  for (const d of [cfg.componentSrcDirs].flat().filter(Boolean)) walk(d);
+})();
+// How a mapped var is declared: 'declared' (static, returns its real-case name),
+// 'runtime' (used in code but not static), or 'missing' (genuinely absent -> broken).
+function mappedVar(cssVar) {
+  if (declared.has(cssVar)) return { name: cssVar, status: 'declared' };
+  const ci = declaredLower.get(cssVar.toLowerCase());
+  if (ci) return { name: ci, status: 'declared' };
+  if (usedVarsLower.has(cssVar.toLowerCase())) return { name: cssVar, status: 'runtime' };
+  return { name: cssVar, status: 'missing' };
+}
+
 // ── CSS color resolver (shared, N-mode) ───────────────────────────────────────
 // Primitive scale + modes from parity-map.mjs / ds-config.json - no hardcoded light/dark.
 let map_; try { map_ = await import(join(ROOT, 'parity-map.mjs')); } catch {}
@@ -141,17 +176,20 @@ for (const [token, cssVar] of Object.entries(EXPLICIT)) {
     continue;
   }
   if (cssVar === null) { OK.push(`EXPLICIT [null-skip] ${token}`); continue; }
-  if (!declared.has(cssVar)) {
+  const mv = mappedVar(cssVar);
+  if (mv.status === 'missing') {
     BROKEN.push({ section: 'EXPLICIT', token, cssVar, reason: 'mapped CSS var not declared in theme.css' });
     continue;
   }
+  if (mv.status === 'runtime') { OK.push(`EXPLICIT [runtime-injected] ${token}`); continue; }
+  const actualVar = mv.name;   // real declared name (handles a differing case)
   for (const m of MODES) {
     const mode = m.snapshotKey;
     const figmaHex = snap.color?.[mode]?.[token] ?? snap.color?.[mode]?.[token + '/color'] ?? null;
     if (!figmaHex) continue;
-    const cssHex = resolve(cssVar, mode);
+    const cssHex = resolve(actualVar, mode);
     if (cssHex && _hex(figmaHex) !== _hex(cssHex)) {
-      BROKEN.push({ section: 'EXPLICIT', token, cssVar, mode, reason: `value mismatch - Figma: ${figmaHex}, CSS: ${cssHex}` });
+      BROKEN.push({ section: 'EXPLICIT', token, cssVar: actualVar, mode, reason: `value mismatch - Figma: ${figmaHex}, CSS: ${cssHex}` });
     }
   }
   OK.push(`EXPLICIT ${token}`);
@@ -188,14 +226,17 @@ for (const [token, cssVar] of Object.entries(EXPLICIT_SIZING)) {
     }
     continue;
   }
-  if (!declared.has(cssVar)) {
+  const mv = mappedVar(cssVar);
+  if (mv.status === 'missing') {
     BROKEN.push({ section: 'EXPLICIT_SIZING', token, cssVar, reason: 'mapped CSS var not declared' });
     continue;
   }
+  if (mv.status === 'runtime') { OK.push(`EXPLICIT_SIZING [runtime-injected] ${token}`); continue; }
+  const actualVar = mv.name;
   const figmaVal = snap.sizing[token];
-  const cssVal   = resolveScalar(cssVar);
+  const cssVal   = resolveScalar(actualVar);
   if (cssVal && String(figmaVal).trim() !== cssVal.trim()) {
-    BROKEN.push({ section: 'EXPLICIT_SIZING', token, cssVar, reason: `value mismatch - Figma: ${figmaVal}, CSS: ${cssVal}` });
+    BROKEN.push({ section: 'EXPLICIT_SIZING', token, cssVar: actualVar, reason: `value mismatch - Figma: ${figmaVal}, CSS: ${cssVal}` });
   } else {
     OK.push(`EXPLICIT_SIZING ${token}`);
   }
