@@ -16,7 +16,7 @@
 // Exit 1 = uncovered state token(s).
 // Exit 2 = component-state-tokens.json missing (gate did NOT run - never a pass).
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = process.cwd();
@@ -66,6 +66,31 @@ for (const f of sources) {
   const txt = readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   for (const m of txt.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);
 }
+// Case-insensitive index + component-code usage: a state token whose var is declared
+// under a different case, or runtime-injected (token CSS loaded from a backend, absent
+// from static files) but USED in the code, DOES have a CSS variable. A token neither
+// declared nor used stays UNCOVERED. Mirrors parity-check / bound-check.
+const declaredLower = new Set([...declared].map(n => n.toLowerCase()));
+const usedVarsLower = new Set();
+(function scanUsedVars() {
+  const dirs = [cfg.componentSrcDirs].flat().filter(Boolean);
+  if (!dirs.length) return;
+  const EXT = /\.(vue|css|scss|sass|less|html|ts|tsx|js|jsx)$/i;
+  const walk = (dir, depth = 0) => {
+    if (depth > 8) return;
+    let entries; try { entries = readdirSync(join(ROOT, dir)); } catch { return; }
+    for (const e of entries) {
+      if (e === 'node_modules' || e === '.git' || e === 'dist') continue;
+      const rel = join(dir, e); let st; try { st = statSync(join(ROOT, rel)); } catch { continue; }
+      if (st.isDirectory()) walk(rel, depth + 1);
+      else if (EXT.test(e) && st.size < 2_000_000) {
+        try { for (const mm of readFileSync(join(ROOT, rel), 'utf8').matchAll(/var\(\s*(--[a-zA-Z][a-zA-Z0-9-]*)/g)) usedVarsLower.add(mm[1].toLowerCase()); } catch {}
+      }
+    }
+  };
+  for (const d of dirs) walk(d);
+})();
+const hasVar = (v) => declared.has(v) || declaredLower.has(v.toLowerCase()) || usedVarsLower.has(v.toLowerCase());
 
 // ── Coverage check ────────────────────────────────────────────────────────────
 function normalize(token) { return token.replace(/\/color$/, ''); }
@@ -75,11 +100,11 @@ function isCovered(token) {
   if (t.startsWith('primitives/')) return true;
   if (COVERED.has(t)) return true;
   if (COVERED_PREFIX.some(p => t.startsWith(p))) return true;
-  if (EXPLICIT[t] && declared.has(EXPLICIT[t])) return true;
-  if (EXPLICIT_SIZING[t] && declared.has(EXPLICIT_SIZING[t])) return true;
+  if (EXPLICIT[t] && hasVar(EXPLICIT[t])) return true;
+  if (EXPLICIT_SIZING[t] && hasVar(EXPLICIT_SIZING[t])) return true;
   const v = '--' + t.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-');
-  if (declared.has(v)) return true;
-  if (declared.has('--' + t.replace(/\//g, '-'))) return true;
+  if (hasVar(v)) return true;
+  if (hasVar('--' + t.replace(/\//g, '-'))) return true;
   return false;
 }
 
