@@ -116,3 +116,28 @@ test('[showroom] deriveSizeCSS is a no-op when sizing was captured single-mode',
   assert.equal(deriveSizeCSS({}), '');
   assert.equal(deriveSizeCSS({ Sizing: { modes: [{ snapshotKey: 'desktop' }], vars: {} } }), '');
 });
+
+test('[showroom bugfix] a MID-FILE orphan brace is dropped at its position, not by trimming the tail', () => {
+  // A stray top-level `}` in the middle (after :root already closed). A naive
+  // trailing-strip would delete .card's real closing brace and corrupt it; the
+  // position-aware balancer drops the stray one and leaves everything else intact.
+  const MID = ':root { --neutral-100: #0a0a0a; --neutral-900: #f7f7f7; --bg: var(--neutral-900); }\n' +
+    '}\n' +                                                       // <- mid-file orphan
+    '.card { color: var(--neutral-100); background: var(--bg); }\n' +
+    '@media (prefers-color-scheme: dark) { :root { --neutral-900: #212121; } }\n';
+  const out = deriveModeCSS(MID);
+  // brace-balanced (string/comment-aware)
+  let d = 0, inC = false, inS = null;
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i], n = out[i + 1];
+    if (inC) { if (c === '*' && n === '/') { inC = false; i++; } continue; }
+    if (inS) { if (c === inS) inS = null; continue; }
+    if (c === '/' && n === '*') { inC = true; i++; continue; }
+    if (c === '"' || c === "'") { inS = c; continue; }
+    if (c === '{') d++; else if (c === '}') d--;
+  }
+  assert.equal(d, 0, 'must be balanced');
+  assert.match(out, /\.card \{ color: var\(--neutral-100\); background: var\(--bg\); \}/, 'the rule after the orphan must survive intact');
+  assert.match(out, /\[data-color="light"\] \{/);
+  assert.match(out, /\[data-color="dark"\] \{/);
+});

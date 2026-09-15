@@ -556,7 +556,11 @@ async function fetchNodeDoc(fileKey, nodeId, token) {
     const { nodes } = await res.json();
     return { ok: true, status: res.status, nodes: nodes ?? {} };
   })();
+  // Cache the in-flight promise so concurrent refreshers share ONE request, but EVICT
+  // it if the fetch failed (or threw) so a later refresher can retry that frame rather
+  // than inheriting a permanent failure - a cached failure would silently lose depth.
   _nodeDocCache.set(key, p);
+  p.then((r) => { if (!r.ok) _nodeDocCache.delete(key); }).catch(() => _nodeDocCache.delete(key));
   return p;
 }
 

@@ -52,19 +52,25 @@ function _declMap(body) {
   });
   return m;
 }
-function _netBraceDepth(s) {
-  // string- and comment-aware net brace depth (a DS token file may carry an
-  // orphan brace or a `content: "}"`; a naive count would be wrong).
-  let d = 0, inC = false, inS = null;
+function _balanceCSS(s) {
+  // Make CSS brace-balanced by DROPPING stray top-level `}` (a DS token file may
+  // carry an orphan brace) and closing any unclosed blocks. String- and comment-
+  // aware (a `content: "}"` or a brace in a comment must not count). Unlike a
+  // trailing-strip, this removes the stray close AT ITS POSITION, so a mid-file
+  // orphan does not cost a real closing brace of the last rule.
+  let out = '', depth = 0, inC = false, inS = null;
   for (let i = 0; i < s.length; i++) {
     const c = s[i], n = s[i + 1];
-    if (inC) { if (c === '*' && n === '/') { inC = false; i++; } continue; }
-    if (inS) { if (c === inS) inS = null; continue; }
-    if (c === '/' && n === '*') { inC = true; i++; continue; }
-    if (c === '"' || c === "'") { inS = c; continue; }
-    if (c === '{') d++; else if (c === '}') d--;
+    if (inC) { out += c; if (c === '*' && n === '/') { out += n; i++; inC = false; } continue; }
+    if (inS) { out += c; if (c === inS) inS = null; continue; }
+    if (c === '/' && n === '*') { out += c + n; i++; inC = true; continue; }
+    if (c === '"' || c === "'") { out += c; inS = c; continue; }
+    if (c === '{') { depth++; out += c; continue; }
+    if (c === '}') { if (depth === 0) continue; depth--; out += c; continue; } // drop stray top-level close
+    out += c;
   }
-  return d;
+  if (depth > 0) out += '\n' + '}'.repeat(depth);   // close any still-open blocks
+  return out;
 }
 function _mediaRules(inner) {
   const clean = inner.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -105,9 +111,7 @@ export function deriveModeCSS(raw) {
   // we append have to sit at the top level. A DS file can carry an orphan brace
   // (harmless standalone - the browser discards a stray top-level `}` - but when
   // content follows, an unmatched brace swallows the next rule). Normalise it.
-  const depth = _netBraceDepth(out);
-  if (depth < 0) { for (let k = 0; k < -depth; k++) out = out.replace(/\}\s*$/, ''); }
-  else if (depth > 0) { out += '\n' + '}'.repeat(depth); }
+  out = _balanceCSS(out);
 
   // transitive closure: dark-overridden primitives + everything referencing them
   const color = new Set(Object.keys(darkMap));
