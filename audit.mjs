@@ -499,6 +499,10 @@ async function refreshScreenElements(fileKey, screens, token, outPath) {
       const SEP = /divider|separator/i;
       (function rec(n) {
         if (!n) return;
+        // Skip hidden nodes and their whole subtree: a hidden view/tab (visible:false) is not a
+        // screen the code must build. Without this, an old checkbox-based panel parked in a hidden
+        // tab of the reference mock gets captured and flagged as "missing in code".
+        if (n.visible === false) return;
         if ((n.type === 'INSTANCE' || n.type === 'COMPONENT') && INTERACTIVE.test(n.name || '')) {
           const label = firstText(n);
           if (label) {
