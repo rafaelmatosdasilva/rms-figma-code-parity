@@ -499,10 +499,12 @@ async function refreshScreenElements(fileKey, screens, token, outPath) {
       const SEP = /divider|separator/i;
       (function rec(n) {
         if (!n) return;
-        // Skip hidden nodes and their whole subtree: a hidden view/tab (visible:false) is not a
-        // screen the code must build. Without this, an old checkbox-based panel parked in a hidden
-        // tab of the reference mock gets captured and flagged as "missing in code".
-        if (n.visible === false) return;
+        // Skip a node (and its subtree) only when it is STATICALLY hidden - visible:false with NO
+        // visibility variable. A node whose visibility is bound to a (boolean) variable is a real
+        // conditional / white-label control: off in this file but toggled ON in a consumer project,
+        // so it MUST still be captured. Only genuinely dead layers (an old panel parked in a hidden
+        // tab, no variable driving it) are ignored - which is what removed the phantom checkboxes.
+        if (n.visible === false && !(n.boundVariables && n.boundVariables.visible)) return;
         if ((n.type === 'INSTANCE' || n.type === 'COMPONENT') && INTERACTIVE.test(n.name || '')) {
           const label = firstText(n);
           if (label) {
