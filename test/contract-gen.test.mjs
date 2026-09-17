@@ -74,6 +74,25 @@ test('emits a DTCG dictionary + a schema-valid contract that references tokens b
   assert.ok(readFileSync(join(dirname(r.tokensOut), '.gitignore'), 'utf8').includes('*'), 'tokens dir must be gitignored');
 });
 
+test('by default emits a contract for EVERY component the scan found (no fixed pilot, project-agnostic)', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root{}\n',
+    'vars.json': { color: { light: { 'a/color': '#111' }, dark: { 'a/color': '#222' } }, sizing: { 'radii/x': '2px' }, typography: {} },
+    'struct.json': { components: {
+      widgetOne: { nodeId: '1:1', h: 10, paddingVar: { tb: null, lr: null }, innerRadiusVar: 'radii/x' },
+      widgetTwo: { nodeId: '2:2', h: 20, paddingVar: { tb: null, lr: null } },
+    } },
+    'props.json': { _updated: 'x', widgetOne: { nodeId: '1:1', properties: {}, annotations: [] }, widgetTwo: { nodeId: '2:2', properties: {}, annotations: [] } },
+    'structure-contract.mjs': 'export const CONTRACT = { widgetThree: { h:5, paddingVar:{tb:null,lr:null} } };\n',
+  });
+  // cfg with NO contracts.only / .pilot → default is "everything scanned"
+  const r = await generateContracts(dir, { paths: cfg.paths, figma: cfg.figma }, {});
+  assert.deepEqual([...r.components].sort(), ['widgetOne', 'widgetThree', 'widgetTwo']);
+  for (const n of ['widgetOne', 'widgetTwo', 'widgetThree']) {
+    assert.ok(readFileSync(join(r.outDir, `${n}.contract.json`), 'utf8').includes(`rms.${n}`), `${n} contract must be emitted`);
+  }
+});
+
 test('regeneration preserves authored fields and refreshes captured ones', async () => {
   const dir = fixture();
   const r1 = await generateContracts(dir, cfg, {});

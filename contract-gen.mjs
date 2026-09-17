@@ -306,11 +306,19 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const tokensOut = cc.tokensOut ? resolve(ROOT, cc.tokensOut) : join(ROOT, 'tokens', 'ds.tokens.json');
   const schemaOut = cc.schemaOut ? resolve(ROOT, cc.schemaOut) : join(outDir, 'contract.schema.json');
 
-  // Which components to emit. Phase A pilots one; cfg.contracts.pilot ("all" / ["*"] / [names]) widens it.
-  let pilot = cc.pilot ?? opts.pilot ?? ['buttonPrimary'];
-  if (pilot === 'all' || (Array.isArray(pilot) && pilot.includes('*'))) pilot = Object.keys({ ...structure, ...CONTRACT });
-  if (typeof pilot === 'string') pilot = [pilot];
-  pilot = pilot.filter((n) => structure[n] || CONTRACT[n] || props[n]);
+  // Which components to emit. Default: EVERY component the scan found — the union of the
+  // structure snapshot, the hand-authored contract, and the props snapshot. Nothing is
+  // hardcoded to a project or a component. Narrow to specific names with cfg.contracts.only:
+  // [names] (or the legacy cfg.contracts.pilot) when you deliberately want a subset.
+  const allNames = [...new Set([
+    ...Object.keys(structure),
+    ...Object.keys(CONTRACT),
+    ...Object.keys(props).filter((k) => !k.startsWith('_')),
+  ])];
+  let targets = cc.only ?? opts.only ?? cc.pilot ?? opts.pilot ?? 'all';
+  if (targets === 'all' || (Array.isArray(targets) && targets.includes('*'))) targets = allNames;
+  if (typeof targets === 'string') targets = [targets];
+  targets = targets.filter((n) => structure[n] || CONTRACT[n] || props[n]);
 
   // Keep the generated DS data LOCAL by default — the token file and contracts carry
   // real, project-specific token values (proprietary). Drop a .gitignore in each output
@@ -335,7 +343,7 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   ensureDir(outDir);
   const emitted = [];
   const invalid = [];
-  for (const name of pilot) {
+  for (const name of targets) {
     const file = join(outDir, name + '.contract.json');
     const prev = readJSON(file);
     const contract = buildContract(name, { contract: CONTRACT, structure, props, prev });
