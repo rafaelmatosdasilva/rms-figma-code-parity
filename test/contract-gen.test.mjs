@@ -93,6 +93,22 @@ test('by default emits a contract for EVERY component the scan found (no fixed p
   }
 });
 
+test('lints contract.authored.json: a malformed binding is surfaced, a valid one is not', async () => {
+  const dir = fixture();
+  writeFileSync(join(dir, 'contract.authored.json'), JSON.stringify({
+    components: { buttonPrimary: { bindings: {
+      disabled: { atribute: 'isDisabled' },   // typo: should be "attribute"
+      'label-content': { slot: true },          // valid
+    } } },
+  }, null, 2));
+  const r = await generateContracts(dir, cfg, {});
+  assert.ok(
+    r.authoredIssues.some((i) => /disabled/.test(i) && /unknown key "atribute"/.test(i) && /did you mean "attribute"/.test(i)),
+    'expected a typo hint: ' + JSON.stringify(r.authoredIssues),
+  );
+  assert.ok(!r.authoredIssues.some((i) => /label-content/.test(i)), 'a valid binding must not be flagged');
+});
+
 test('authored decisions live in the committed contract.authored.json; regen reflects them and refreshes captured', async () => {
   const dir = fixture();
   const r1 = await generateContracts(dir, cfg, {});

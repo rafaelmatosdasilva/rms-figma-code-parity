@@ -283,6 +283,40 @@ function validateContract(c) {
   return errs;
 }
 
+// Lint the hand-edited contract.authored.json so a malformed binding is surfaced loudly
+// instead of being silently ignored (which would resurface the false positive it was meant
+// to fix). Non-failing — returns a list of human-readable issue strings. Only shape checks:
+// bindings must be { attribute: string|true } and/or { slot: string|true }; unknown keys
+// (typos like "atribute") are flagged with a hint.
+function lintAuthored(doc) {
+  const issues = [];
+  const comps = doc?.components;
+  if (!comps || typeof comps !== 'object') return issues;
+  for (const [name, entry] of Object.entries(comps)) {
+    if (!entry || typeof entry !== 'object') { issues.push(`${name}: entry must be an object`); continue; }
+    const b = entry.bindings;
+    if (b === undefined) continue;
+    if (typeof b !== 'object' || Array.isArray(b)) { issues.push(`${name}.bindings must be an object`); continue; }
+    for (const [prop, bind] of Object.entries(b)) {
+      if (!bind || typeof bind !== 'object' || Array.isArray(bind)) {
+        issues.push(`${name}.bindings.${prop} must be like { attribute: "codeName" } or { slot: "slotName" }`); continue;
+      }
+      for (const k of Object.keys(bind)) {
+        if (k === 'attribute' || k === 'slot') continue;
+        const lk = k.toLowerCase();
+        const hint = (lk.startsWith('at') || lk.includes('trib')) ? ' (did you mean "attribute"?)'
+                   : lk.startsWith('sl') ? ' (did you mean "slot"?)'
+                   : ' (expected "attribute" or "slot")';
+        issues.push(`${name}.bindings.${prop}: unknown key "${k}"${hint}`);
+      }
+      if (!('attribute' in bind) && !('slot' in bind)) issues.push(`${name}.bindings.${prop}: needs "attribute" or "slot"`);
+      if ('attribute' in bind && !(typeof bind.attribute === 'string' || bind.attribute === true)) issues.push(`${name}.bindings.${prop}.attribute must be a string or true`);
+      if ('slot' in bind && !(typeof bind.slot === 'string' || bind.slot === true)) issues.push(`${name}.bindings.${prop}.slot must be a string or true`);
+    }
+  }
+  return issues;
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 export async function generateContracts(ROOT, cfg, opts = {}) {
   const paths = cfg.paths || {};
@@ -333,6 +367,7 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
     };
     try { writeFileSync(authoredPath, JSON.stringify(authoredDoc, null, 2) + '\n'); } catch { /* best-effort */ }
   }
+  const authoredIssues = lintAuthored(authoredDoc);   // malformed bindings → surfaced, never silently ignored
 
   // Keep the generated DS data LOCAL by default — the token file and contracts carry
   // real, project-specific token values (proprietary). Drop a .gitignore in each output
@@ -366,5 +401,5 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
     if (errs.length) invalid.push({ name, errs });
   }
 
-  return { tokensOut, schemaOut, outDir, authoredPath, tokenCount: countLeaves(tokens), components: emitted, invalid };
+  return { tokensOut, schemaOut, outDir, authoredPath, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues };
 }

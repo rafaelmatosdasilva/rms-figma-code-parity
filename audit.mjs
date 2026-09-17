@@ -2607,6 +2607,10 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
       const r = await generateContracts(ROOT, cfg, {});
       const issues = r.invalid.length ? ` · ⚠️ ${r.invalid.length} schema issue(s)` : '';
       console.log(`\n📐 Contracts → ${r.outDir.replace(ROOT + '/', '')}  (${r.components.length} component${r.components.length === 1 ? '' : 's'} · ${r.tokenCount} DTCG tokens${issues})`);
+      if (r.authoredIssues?.length) {
+        console.log(C.yellow(`⚠️  contract.authored.json has ${r.authoredIssues.length} issue(s) — the malformed binding(s) below are ignored until fixed:`));
+        for (const i of r.authoredIssues.slice(0, 20)) console.log(C.yellow(`     · ${i}`));
+      }
     } catch (e) {
       console.log(C.yellow('\n⚠️  contracts: generation failed (never fails the audit): ' + e.message));
     }

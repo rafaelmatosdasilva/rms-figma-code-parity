@@ -277,7 +277,8 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
 The generator reads `contract.authored.json` + the snapshots and merges them into the local views (the
 authored decisions win). Nothing generates a surface from any of it. **Gate 14** reads the authored
 `bindings` to resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap
-— it still fails); no other gate reads the contract. Override paths with
+— it still fails); no other gate reads the contract. A malformed `bindings` entry (a typo'd key) is
+flagged in the run output, never silently ignored. Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut}`; the engine ships only the generator.
 
 ---
