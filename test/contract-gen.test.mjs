@@ -93,6 +93,36 @@ test('by default emits a contract for EVERY component the scan found (no fixed p
   }
 });
 
+test('emits token $description/$deprecated (tokenMeta), captured component description, and authored prop descriptions', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root{}\n',
+    'vars.json': {
+      color: { light: { 'buttonPrimary/background/color': '#111' }, dark: { 'buttonPrimary/background/color': '#222' } },
+      sizing: { 'radii/button': '24px', 'radii/legacy': '8px' },
+      typography: {},
+      tokenMeta: {
+        'radii/button': { description: 'Corner radius for buttons.' },
+        'radii/legacy': { deprecated: true },
+      },
+    },
+    'struct.json': { components: { buttonPrimary: { nodeId: '1:1', h: 24, paddingVar: { tb: null, lr: null }, innerRadiusVar: 'radii/button' } } },
+    'props.json': { buttonPrimary: { nodeId: '1:1', description: 'Primary call to action.', properties: { disabled: { type: 'VARIANT', defaultValue: 'false', variantOptions: ['false', 'true'] } }, annotations: [] } },
+    'structure-contract.mjs': "export const CONTRACT = { buttonPrimary: { h:24, paddingVar:{tb:null,lr:null}, innerRadiusVar:'radii/button' } };\n",
+  });
+  // prop descriptions are authored (Figma property defs carry none)
+  writeFileSync(join(dir, 'contract.authored.json'), JSON.stringify({ components: { buttonPrimary: { propDescriptions: { disabled: 'Whether the button is disabled.' } } } }, null, 2));
+
+  const r = await generateContracts(dir, { paths: cfg.paths, figma: cfg.figma }, {});
+  const tokens = JSON.parse(readFileSync(r.tokensOut, 'utf8'));
+  assert.equal(tokens.radii.button.$description, 'Corner radius for buttons.');   // captured from tokenMeta
+  assert.equal(tokens.radii.button.$deprecated, false);
+  assert.equal(tokens.radii.legacy.$deprecated, true);                            // captured deprecation
+
+  const c = JSON.parse(readFileSync(join(r.outDir, 'buttonPrimary.contract.json'), 'utf8'));
+  assert.equal(c.description, 'Primary call to action.');                          // captured Figma component description
+  assert.equal(c.props.find((p) => p.name === 'disabled').description, 'Whether the button is disabled.');  // authored
+});
+
 test('lints contract.authored.json: a malformed binding is surfaced, a valid one is not', async () => {
   const dir = fixture();
   writeFileSync(join(dir, 'contract.authored.json'), JSON.stringify({

@@ -153,6 +153,15 @@ Full parity workflow in one command: Phase 1 (live Figma refresh) runs before Ph
 > for (const m of coll.modes) { /* v.valuesByMode[m.modeId] - recurse on VARIABLE_ALIAS */ }
 > ```
 >
+> **Capture the metadata too, when you refresh.** Record each variable's own `description` into an
+> optional `tokenMeta` sidecar in `figma-vars.snapshot.json` — `tokenMeta["<slashed/name>"] =
+> { description, deprecated }`, with `deprecated: true` when the description carries a `@deprecated`
+> marker — and the component's `description` into the component-props snapshot. The contract emitter
+> surfaces these as DTCG `$description` / `$deprecated` and the component `description`; when they are
+> absent it falls back cleanly, never inventing them. (Figma component-property definitions carry no
+> per-prop description, so a prop's `description` is authored in `contract.authored.json` under
+> `components[name].propDescriptions`.)
+>
 > Real case (2026-07-30): `node/icon/hover/color` read from a dark frame returned
 > `#b8b8b8`. It actually aliases `node/icon/selected/color`, which resolves to
 > Neutral 300 in dark but Neutral **400** (`#595959`) in light. Patching from the
@@ -265,7 +274,7 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
 
 - **`contract.authored.json`** (project root, **committed**) — the AUTHORED hub: per component,
   `bindings` (Figma prop → `{ attribute: "codeName" }` for a rename, `{ slot: "slotName" }` for a slot),
-  plus optional `semantics`, `notes`, `version`, `description`. Decisions only, no captured values, so
+  plus optional `semantics`, `notes`, `version`, `description`, `propDescriptions`. Decisions only, no captured values, so
   it is safe to commit and applies in CI. Scaffolded once (empty bindings), then hand-owned; the
   generator never rewrites it.
 - **`contracts/`** (**local, gitignored**) — the generated CAPTURED views, refreshed every run:

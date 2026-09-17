@@ -67,6 +67,18 @@ function buildTokens(vars, modes) {
   };
   const lightKey = modes?.[0]?.snapshotKey || 'light';
   const darkKey  = modes?.[1]?.snapshotKey || null;
+  // Optional per-token metadata sidecar { "<name>": { description?, deprecated? } }, captured from
+  // each Figma variable's own description (deprecated via a "@deprecated" marker). Additive: absent
+  // leaves the DTCG defaults ($deprecated:false, no $description).
+  const meta = vars.tokenMeta || {};
+  const applyMeta = (leaf, name) => {
+    const m = meta[name];
+    if (m && typeof m === 'object') {
+      if (typeof m.description === 'string' && m.description.trim()) leaf.$description = m.description.trim();
+      if (m.deprecated === true) leaf.$deprecated = true;
+    }
+    return leaf;
+  };
 
   // color — resolved per mode; base $value is the first mode, other modes under $extensions.
   const cLight = vars.color?.[lightKey] || {};
@@ -76,25 +88,25 @@ function buildTokens(vars, modes) {
     if (cDark && cDark[name] !== undefined && cDark[name] !== cLight[name]) {
       leaf.$extensions = { 'com.rms.parity': { modes: { [lightKey]: cLight[name], [darkKey]: cDark[name] } } };
     }
-    setDeep(out, tokenPath(name), leaf);
+    setDeep(out, tokenPath(name), applyMeta(leaf, name));
   }
   // sizing — mode-agnostic dimensions (px).
   for (const [name, val] of Object.entries(vars.sizing || {})) {
-    setDeep(out, tokenPath(name), { $type: 'dimension', $value: String(val), $deprecated: false });
+    setDeep(out, tokenPath(name), applyMeta({ $type: 'dimension', $value: String(val), $deprecated: false }, name));
   }
   // typography — DTCG composite type.
   for (const [name, val] of Object.entries(vars.typography || {})) {
     if (val && typeof val === 'object') {
-      setDeep(out, ['typography', name], {
+      setDeep(out, ['typography', name], applyMeta({
         $type: 'typography',
         $value: { fontSize: val.size, fontWeight: String(val.weight), lineHeight: val.lh },
         $deprecated: false,
-      });
+      }, name));
     }
   }
   // breakpoints — dimensions, when present.
   for (const [name, val] of Object.entries(vars.breakpoints || {})) {
-    setDeep(out, ['breakpoint', name], { $type: 'dimension', $value: String(val), $deprecated: false });
+    setDeep(out, ['breakpoint', name], applyMeta({ $type: 'dimension', $value: String(val), $deprecated: false }, name));
   }
   return out;
 }
@@ -102,7 +114,7 @@ function buildTokens(vars, modes) {
 // ── Component contract pieces ─────────────────────────────────────────────────
 const FIGMA_KIND_TO_TYPE = { VARIANT: 'enum', BOOLEAN: 'boolean', TEXT: 'text', INSTANCE_SWAP: 'instance' };
 
-function buildProps(props) {
+function buildProps(props, propDescriptions = {}) {
   const properties = props?.properties || {};
   const out = [];
   for (const [key, def] of Object.entries(properties)) {
@@ -116,6 +128,10 @@ function buildProps(props) {
         code: null,                                   // AUTHORED — filled by hand, preserved
       },
     };
+    // Figma component-property definitions carry no per-prop description, so this is authored
+    // (contract.authored.json → components[name].propDescriptions), with a forward-compat capture path.
+    const desc = def.description ?? propDescriptions[name];
+    if (typeof desc === 'string' && desc.trim()) p.description = desc.trim();
     if (Array.isArray(def.variantOptions)) p.options = def.variantOptions;
     out.push(p);
   }
@@ -198,10 +214,12 @@ function buildContract(name, { contract, structure, props, authored }) {
     $schema: './contract.schema.json',
     id: 'rms.' + name,
     version: a.version || '0.1.0',                                                  // AUTHORED (from contract.authored.json)
-    description: a.description || (c?._note ? String(c._note).slice(0, 300)         // AUTHORED
-                 : `${name} — captured from Figma by rms-parity.`),
+    description: a.description                                                       // AUTHORED, else CAPTURED Figma component description
+                 || (p?.description ? String(p.description).slice(0, 300)
+                 : (c?._note ? String(c._note).slice(0, 300)
+                 : `${name} — captured from Figma by rms-parity.`)),
     figmaNodeId: p?.nodeId || s?.nodeId || null,                                    // CAPTURED
-    props: buildProps(p),                                                           // CAPTURED (+ bindings.code from authored)
+    props: buildProps(p, a.propDescriptions),                                        // CAPTURED (+ bindings.code + authored descriptions)
     anatomy: buildAnatomy(c, s),                                                     // CAPTURED
     states,                                                                          // CAPTURED
     variants,                                                                        // CAPTURED
