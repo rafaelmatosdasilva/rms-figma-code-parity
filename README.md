@@ -186,19 +186,23 @@ rms-figma-code-parity --init                     # first-time setup for a projec
 rms-figma-code-parity --component ButtonPrimary  # check one component (or a few: A,B)
 rms-figma-code-parity --trend                    # show the last runs
 rms-figma-code-parity --report-html report.html  # save a report as a web page
-rms-figma-code-parity --contracts                # emit a machine-readable contract + tokens (stays on your machine)
+rms-figma-code-parity --no-contracts             # skip the machine-readable contract this run (it is emitted by default)
 ```
 
-## Machine-readable contract (stays local)
+## Machine-readable contract (automatic, stays local)
 
-Add `--contracts` (or `--docs`) and, after the checks run, the tool also writes a machine-readable
-description of your design system in the standard format teams and AI tools understand: a **W3C DTCG**
-token file (`tokens/ds.tokens.json`) and one **contract file per component** (`contracts/<name>.contract.json`,
-with its props, Figma-to-code bindings, anatomy, states and tokens) validated by a schema.
+**Every run**, after the checks, the tool also writes a machine-readable description of your design
+system in the standard format teams and AI tools understand: a **W3C DTCG** token file
+(`tokens/ds.tokens.json`) and one **contract file per component** (`contracts/<name>.contract.json`,
+with its props, Figma-to-code bindings, anatomy, states and tokens) validated by a schema. It is on by
+default so it never goes stale, always describing exactly what the run just audited.
 
-It is documentation only - **no check reads it, so it can never change a pass or fail**. It also stays
-**on your machine**: the files carry your DS's real colors, sizes and structure, so a `.gitignore` is
-dropped next to them and they are never pushed. The public tool ships only the generator, never your data.
+It is documentation only - **no check reads it, so it can never change a pass or fail**. It stays **on
+your machine**: the files carry your DS's real colors, sizes and structure, so a `.gitignore` is dropped
+next to them and they are never pushed. The public tool ships only the generator, never your data.
+
+Turn it off for one run with `--no-contracts`, or for a whole project with `contracts.auto: false` in
+`ds-config.json`.
 
 ---
 
