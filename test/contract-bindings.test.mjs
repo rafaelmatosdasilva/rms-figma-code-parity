@@ -26,13 +26,15 @@ const BASE = {
     '</script>\n<template><div class="widget"><slot name="end"></slot></div></template>\n',
 };
 
+// Authored bindings live in the COMMITTED contract.authored.json (the hub), not the local views.
 const contractFile = (attr, slot) => ({
-  'contracts/Widget.contract.json': {
-    id: 'rms.Widget', version: '0.1.0', anatomy: { root: {} },
-    props: [
-      { name: 'labelContent', type: 'text', bindings: { figma: { kind: 'TEXT', property: 'labelContent' }, code: { attribute: attr } } },
-      { name: 'trailingIcon', type: 'instance', bindings: { figma: { kind: 'INSTANCE_SWAP', property: 'trailingIcon' }, code: { slot } } },
-    ],
+  'contract.authored.json': {
+    components: {
+      Widget: { bindings: {
+        labelContent: { attribute: attr },
+        trailingIcon: { slot },
+      } },
+    },
   },
 });
 

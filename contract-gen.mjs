@@ -1,20 +1,22 @@
-// ── Standard contract emitter (Phase A) ──────────────────────────────────────
-// Emits the design-system contract in the STANDARD format the project follows:
-//   • tokens  → one W3C DTCG dictionary (ds.tokens.json): $type/$value, nested by
-//               dot-path, per-mode values under $extensions. From figma-vars snapshot.
-//   • components → one Equinor-shaped *.contract.json each: id / version /
+// ── Standard contract emitter ────────────────────────────────────────────────
+// Emits the design-system contract in the STANDARD format the project follows, into ONE
+// local (gitignored) contracts/ folder:
+//   • tokens  → one W3C DTCG dictionary (tokens.json): $type/$value, nested by dot-path,
+//               per-mode values under $extensions. From the figma-vars snapshot.
+//   • components → one Equinor-shaped <name>.contract.json each: id / version /
 //               description / props[] (bindings.figma + bindings.code) / anatomy /
 //               states / variants / semantics. Tokens are referenced by {family.token},
 //               never copied in.
 //   • schema  → contract.schema.json validates every emitted contract.
 //
-// It is an AUDITOR output, not a generator: nothing here produces CSS or Figma, and
-// NO gate reads these files — they cannot change any pass/fail (zero behavior change).
-// CAPTURED fields (id, figmaNodeId, props types/defaults/options + bindings.figma,
-// anatomy, states, variants) are auto-refreshed from the snapshots every run. AUTHORED
-// fields (version, description, notes, semantics, props[].bindings.code) are PRESERVED
-// across regenerations — same merge-aware guarantee as intent-gen.mjs. See the plan:
-// temporal-baking-hippo.md (Phase A).
+// It is an AUDITOR output, not a generator: nothing here produces CSS or Figma.
+//
+// CAPTURED vs AUTHORED are split by file so decisions can be committed while values stay
+// local. CAPTURED fields (id, figmaNodeId, props types/defaults/options + bindings.figma,
+// anatomy, states, variants, tokens) are refreshed from the snapshots every run into the
+// local views. AUTHORED fields (version, description, notes, semantics, props[].bindings.code)
+// live in a SINGLE committed file, contract.authored.json (project root), which the generator
+// reads (and scaffolds once if missing) and Gate 14 also reads — so bindings apply in CI.
 //
 // Generic: no project names, tokens, or components are hardcoded.
 
@@ -185,39 +187,38 @@ function buildStatesVariants(contract, props) {
   return { states, variants };
 }
 
-function buildContract(name, { contract, structure, props, prev }) {
+function buildContract(name, { contract, structure, props, authored }) {
   const c = contract?.[name];
   const s = structure?.[name];
   const p = props?.[name];
+  const a = authored || {};
   const { states, variants } = buildStatesVariants(c, p);
 
   const out = {
     $schema: './contract.schema.json',
     id: 'rms.' + name,
-    version: prev?.version || '0.1.0',                                              // AUTHORED (preserved)
-    description: prev?.description || (c?._note ? String(c._note).slice(0, 300)     // AUTHORED (preserved once set)
+    version: a.version || '0.1.0',                                                  // AUTHORED (from contract.authored.json)
+    description: a.description || (c?._note ? String(c._note).slice(0, 300)         // AUTHORED
                  : `${name} — captured from Figma by rms-parity.`),
     figmaNodeId: p?.nodeId || s?.nodeId || null,                                    // CAPTURED
-    props: buildProps(p),                                                           // CAPTURED (+ bindings.code authored)
+    props: buildProps(p),                                                           // CAPTURED (+ bindings.code from authored)
     anatomy: buildAnatomy(c, s),                                                     // CAPTURED
     states,                                                                          // CAPTURED
     variants,                                                                        // CAPTURED
-    semantics: prev?.semantics || { element: null, aria: {} },                      // AUTHORED (preserved)
-    notes: prev?.notes || '',                                                        // AUTHORED (preserved)
+    semantics: a.semantics || { element: null, aria: {} },                          // AUTHORED
+    notes: a.notes || '',                                                            // AUTHORED
     'x-parity': {
-      note: 'Auditor contract (rms-parity). CAPTURED fields (id, figmaNodeId, props types/defaults/options + bindings.figma, anatomy, states, variants) are auto-refreshed from the Figma snapshots each run — do not hand-edit. AUTHORED fields (version, description, notes, semantics, props[].bindings.code) are preserved across regenerations — edit these. No gate reads this file.',
+      note: 'Generated LOCAL view (rms-parity). CAPTURED fields refresh from the Figma snapshots each run; AUTHORED fields (version, description, notes, semantics, props[].bindings.code) come from the committed contract.authored.json — edit them THERE, not here. This file is gitignored; do not hand-edit.',
       generated: new Date().toISOString(),
-      sources: 'figma-vars / figma-structure / figma-component-props snapshots + structure-contract.mjs',
+      sources: 'figma-vars / figma-structure / figma-component-props snapshots + structure-contract.mjs + contract.authored.json',
     },
   };
 
-  // Merge-aware: preserve authored props[].bindings.code by prop name.
-  if (Array.isArray(prev?.props)) {
-    const prevByName = new Map(prev.props.map((pp) => [pp.name, pp]));
-    for (const pp of out.props) {
-      const old = prevByName.get(pp.name);
-      if (old?.bindings?.code != null) pp.bindings.code = old.bindings.code;
-    }
+  // AUTHORED bindings come from the committed contract.authored.json, keyed by Figma prop name.
+  const bindings = a.bindings || {};
+  for (const pp of out.props) {
+    const b = bindings[pp.name];
+    if (b && typeof b === 'object') pp.bindings.code = b;   // { attribute } | { slot } | { attribute: true } ...
   }
   return out;
 }
@@ -304,6 +305,9 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const outDir    = cc.out       ? resolve(ROOT, cc.out)       : join(ROOT, 'contracts');
   const tokensOut = cc.tokensOut ? resolve(ROOT, cc.tokensOut) : join(outDir, 'tokens.json');
   const schemaOut = cc.schemaOut ? resolve(ROOT, cc.schemaOut) : join(outDir, 'contract.schema.json');
+  // The AUTHORED layer is a SINGLE committed file at the project root (decisions only, no captured
+  // values), so it is safe to share and applies in CI — unlike the local, gitignored generated views.
+  const authoredPath = cc.authored ? resolve(ROOT, cc.authored) : join(ROOT, 'contract.authored.json');
 
   // Which components to emit. Default: EVERY component the scan found — the union of the
   // structure snapshot, the hand-authored contract, and the props snapshot. Nothing is
@@ -318,6 +322,17 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   if (targets === 'all' || (Array.isArray(targets) && targets.includes('*'))) targets = allNames;
   if (typeof targets === 'string') targets = [targets];
   targets = targets.filter((n) => structure[n] || CONTRACT[n] || props[n]);
+
+  // Load the committed AUTHORED layer. Scaffold it once if missing (empty bindings per component);
+  // never rewrite it afterwards, so it stays user-owned with clean git diffs.
+  let authoredDoc = readJSON(authoredPath);
+  if (!authoredDoc) {
+    authoredDoc = {
+      _note: 'Hand-authored contract layer (rms-parity) — COMMIT this file. It holds decisions only (Figma->code bindings, semantics, notes), never captured DS values, so it is safe to share and applies in CI. The generated contracts/ + tokens.json are local, gitignored views built from this + the Figma snapshots. Resolve a prop rename or slot by adding, under a component: "bindings": { "<figmaProp>": { "attribute": "codeName" } }  or  { "slot": "slotName" }.',
+      components: Object.fromEntries(allNames.map((n) => [n, { bindings: {} }])),
+    };
+    try { writeFileSync(authoredPath, JSON.stringify(authoredDoc, null, 2) + '\n'); } catch { /* best-effort */ }
+  }
 
   // Keep the generated DS data LOCAL by default — the token file and contracts carry
   // real, project-specific token values (proprietary). Drop a .gitignore in each output
@@ -344,13 +359,12 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const invalid = [];
   for (const name of targets) {
     const file = join(outDir, name + '.contract.json');
-    const prev = readJSON(file);
-    const contract = buildContract(name, { contract: CONTRACT, structure, props, prev });
+    const contract = buildContract(name, { contract: CONTRACT, structure, props, authored: authoredDoc.components?.[name] });
     const errs = validateContract(contract);
     writeFileSync(file, JSON.stringify(contract, null, 2) + '\n');
     emitted.push(name);
     if (errs.length) invalid.push({ name, errs });
   }
 
-  return { tokensOut, schemaOut, outDir, tokenCount: countLeaves(tokens), components: emitted, invalid };
+  return { tokensOut, schemaOut, outDir, authoredPath, tokenCount: countLeaves(tokens), components: emitted, invalid };
 }

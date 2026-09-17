@@ -189,16 +189,21 @@ rms-figma-code-parity --report-html report.html  # save a report as a web page
 rms-figma-code-parity --no-contracts             # skip the machine-readable contract this run (it is emitted by default)
 ```
 
-## Machine-readable contract (automatic, stays local)
+## Machine-readable contract
 
-Every run also writes a standard, machine-readable description of your design system into one local
-`contracts/` folder: a **W3C DTCG** token file plus one **contract per component** (props, Figma-to-code
-bindings, anatomy, states), validated by a schema. On by default, so it never goes stale.
+Every run also writes a standard, machine-readable description of your design system, in two parts:
 
-Use it as an always-current spec for docs, AI/codegen, or token pipelines. One part feeds back into the
-audit: if you fill in a component's `bindings.code`, Gate 14 uses it to resolve a prop rename or slot
-instead of guessing (a wrong binding never masks a real gap). It stays **local** - the files hold your
-DS's real values, so a `.gitignore` keeps them off GitHub; the public tool ships only the generator.
+- **`contract.authored.json`** (project root, **committed**): your decisions - Figma-to-code bindings,
+  semantics, notes. It holds no DS values, so it is safe to share and applies in CI. Scaffolded once,
+  then it is yours to edit.
+- **`contracts/`** (local, **gitignored**): the generated views built from your decisions + the Figma
+  snapshots - a **W3C DTCG** token file plus one **contract per component** (props, bindings, anatomy,
+  states), validated by a schema. These carry your DS's real values, so they stay on your machine.
+
+On by default so it never goes stale. Use the views as an always-current spec for docs, AI/codegen or
+token pipelines. Fill in a binding under a component in `contract.authored.json` and Gate 14 uses it to
+resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap - it still
+fails). The public tool ships only the generator, never your data.
 
 Off for one run with `--no-contracts`, or per project with `contracts.auto: false` in `ds-config.json`.
 

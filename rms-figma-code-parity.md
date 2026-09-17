@@ -261,24 +261,24 @@ privately (it carries your DS's render patterns). The engine ships only the gene
 **Every run** (after the gates, whenever a vars snapshot exists) **also emits a machine-readable
 contract** in the standard, interoperable format (mirrors Equinor `component-contracts` + W3C DTCG
 tokens). On by default so it never goes stale; opt out per-run with `--no-contracts` or per-project
-with `ds-config.json → contracts.auto: false`. It all lands in one local `contracts/` folder:
+with `ds-config.json → contracts.auto: false`. It splits captured from authored by file:
 
-- **tokens** ← `tokens.json`, a **W3C DTCG** dictionary: every token once (`$type` / `$value`, per-mode
-  values under `$extensions`), referenced from contracts by `{family.token}`.
-- **components** ← one **Equinor-shaped** `<name>.contract.json` each: `id`, `version`, `props[]` with
-  `bindings.figma` / `bindings.code`, `anatomy`, `states`, `variants`, `semantics`.
-- **schema** ← `contract.schema.json` validates every emitted contract.
+- **`contract.authored.json`** (project root, **committed**) — the AUTHORED hub: per component,
+  `bindings` (Figma prop → `{ attribute: "codeName" }` for a rename, `{ slot: "slotName" }` for a slot),
+  plus optional `semantics`, `notes`, `version`, `description`. Decisions only, no captured values, so
+  it is safe to commit and applies in CI. Scaffolded once (empty bindings), then hand-owned; the
+  generator never rewrites it.
+- **`contracts/`** (**local, gitignored**) — the generated CAPTURED views, refreshed every run:
+  `tokens.json` (W3C DTCG: `$type`/`$value`, per-mode under `$extensions`, referenced by
+  `{family.token}`), one **Equinor-shaped** `<name>.contract.json` each (`id`, `version`, `props[]` with
+  `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`), and
+  `contract.schema.json`. They carry the DS's real values, so a single `.gitignore` keeps them local.
 
-**Merge-aware, like the design-intent:** captured fields (props, anatomy, states, tokens) refresh from
-the snapshots each run; authored fields (`version`, `description`, `notes`, `semantics`,
-`props[].bindings.code`) are preserved. Nothing generates a surface from it. Gate 14 reads any
-`bindings.code` you author to resolve a prop rename or slot (a wrong binding never masks a real gap);
-otherwise no gate reads it.
-
-**Project-specific and private, like the design-intent:** the engine ships only the generic generator
-(`contract-gen.mjs`); the emitted files carry **your** DS's real values, so a single `.gitignore` in
-the folder keeps them **local and uncommitted**. Override the path with `ds-config.json →
-contracts.out`; opt out of the gitignore with `contracts.gitignore: false` only if the repo is private.
+The generator reads `contract.authored.json` + the snapshots and merges them into the local views (the
+authored decisions win). Nothing generates a surface from any of it. **Gate 14** reads the authored
+`bindings` to resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap
+— it still fails); no other gate reads the contract. Override paths with
+`ds-config.json → contracts.{authored,out,tokensOut,schemaOut}`; the engine ships only the generator.
 
 ---
 

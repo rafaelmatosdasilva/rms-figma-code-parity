@@ -5,7 +5,7 @@
 // props[].bindings.code) survive, captured fields refresh from the snapshots.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { makeFixture } from './helpers.mjs';
 import { generateContracts } from '../contract-gen.mjs';
@@ -93,29 +93,32 @@ test('by default emits a contract for EVERY component the scan found (no fixed p
   }
 });
 
-test('regeneration preserves authored fields and refreshes captured ones', async () => {
+test('authored decisions live in the committed contract.authored.json; regen reflects them and refreshes captured', async () => {
   const dir = fixture();
   const r1 = await generateContracts(dir, cfg, {});
-  const file = join(r1.outDir, 'buttonPrimary.contract.json');
+  // the committed authored file is scaffolded on first run
+  assert.ok(existsSync(r1.authoredPath), 'authored file scaffolded');
 
-  // Hand-author: pin a version, semantics, and a code binding.
-  const c1 = JSON.parse(readFileSync(file, 'utf8'));
-  c1.version = '1.2.0';
-  c1.semantics = { element: 'button', aria: { 'aria-disabled': 'reflects the disabled state' } };
-  c1.props.find((p) => p.name === 'disabled').bindings.code = { attribute: true };
-  writeFileSync(file, JSON.stringify(c1, null, 2));
+  // author a binding + semantics + version in the COMMITTED authored file (not the local view)
+  const authored = JSON.parse(readFileSync(r1.authoredPath, 'utf8'));
+  authored.components.buttonPrimary = {
+    version: '1.2.0',
+    semantics: { element: 'button', aria: { 'aria-disabled': 'reflects the disabled state' } },
+    bindings: { disabled: { attribute: 'isDisabled' } },
+  };
+  writeFileSync(r1.authoredPath, JSON.stringify(authored, null, 2));
 
-  // Change a captured input (token value) and regenerate.
+  // change a captured input (token value) and regenerate
   const vars = JSON.parse(readFileSync(join(dir, 'vars.json'), 'utf8'));
   vars.sizing['radii/button'] = '999px';
   writeFileSync(join(dir, 'vars.json'), JSON.stringify(vars));
   const r2 = await generateContracts(dir, cfg, {});
 
-  const c2 = JSON.parse(readFileSync(file, 'utf8'));
-  // authored survived
+  const c2 = JSON.parse(readFileSync(join(r2.outDir, 'buttonPrimary.contract.json'), 'utf8'));
+  // authored reflected FROM the committed file
   assert.equal(c2.version, '1.2.0');
   assert.equal(c2.semantics.element, 'button');
-  assert.deepEqual(c2.props.find((p) => p.name === 'disabled').bindings.code, { attribute: true });
+  assert.deepEqual(c2.props.find((p) => p.name === 'disabled').bindings.code, { attribute: 'isDisabled' });
   // captured refreshed: the token dictionary picked up the new value; the contract still refs by name
   const tokens = JSON.parse(readFileSync(r2.tokensOut, 'utf8'));
   assert.equal(tokens.radii.button.$value, '999px');

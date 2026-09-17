@@ -67,23 +67,25 @@ const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 // e.g. { "buttonPrimary": { "size": "buttonSize", "labelContent": "label" } }
 const PROP_ALIASES = cfg.componentPropAliases ?? {};
 
-// Phase B: read authored Figma->code prop bindings from the emitted contract (the hub), so a
-// rename or a slot can live in <name>.contract.json (props[].bindings.code) instead of only in
-// ds-config.json. bindings.code.attribute = "codeName" is a rename; bindings.code.slot =
-// true|"slotName" declares a slot. Best-effort and additive: a missing/unauthored binding - or a
-// fresh checkout with no local contracts/ dir - simply falls back to today's inference + aliases.
-const CONTRACTS_DIR = cfg.contracts?.out ? resolve(ROOT, cfg.contracts.out) : join(ROOT, 'contracts');
+// Phase B: read authored Figma->code prop bindings from the COMMITTED contract.authored.json (the
+// hub of decisions), so a rename or a slot can live there instead of only in ds-config.json. That
+// file holds decisions only (no captured DS values), so it is committed and applies in CI - unlike
+// the local, gitignored contracts/ views. Per component: bindings.<figmaProp> = { attribute:
+// "codeName" } (rename) | { slot: "slotName" } | { attribute:true } | { slot:true }. Read once here;
+// additive - a missing file/binding simply falls back to today's inference + componentPropAliases.
+const AUTHORED_PATH = cfg.contracts?.authored ? resolve(ROOT, cfg.contracts.authored) : join(ROOT, 'contract.authored.json');
+let AUTHORED_DOC = null;
+try { AUTHORED_DOC = JSON.parse(readFileSync(AUTHORED_PATH, 'utf8')); } catch { /* absent -> inference only */ }
 function contractBindings(figmaName) {
   const attr = {}, slot = {};
-  let doc;
-  try { doc = JSON.parse(readFileSync(join(CONTRACTS_DIR, `${figmaName}.contract.json`), 'utf8')); }
-  catch { return { attr, slot }; }
-  for (const p of (Array.isArray(doc?.props) ? doc.props : [])) {
-    const code = p?.bindings?.code;
-    if (!p?.name || !code || typeof code !== 'object') continue;
-    if (typeof code.attribute === 'string') attr[p.name] = code.attribute;   // Figma prop -> renamed code attribute
-    if (code.slot === true) slot[p.name] = true;                             // -> default slot
-    else if (typeof code.slot === 'string') slot[p.name] = code.slot;        // -> named code slot
+  const bindings = AUTHORED_DOC?.components?.[figmaName]?.bindings;
+  if (bindings && typeof bindings === 'object') {
+    for (const [fp, b] of Object.entries(bindings)) {
+      if (!b || typeof b !== 'object') continue;
+      if (typeof b.attribute === 'string') attr[fp] = b.attribute;   // Figma prop -> renamed code attribute
+      if (b.slot === true) slot[fp] = true;                          // -> default slot
+      else if (typeof b.slot === 'string') slot[fp] = b.slot;        // -> named code slot
+    }
   }
   return { attr, slot };
 }
