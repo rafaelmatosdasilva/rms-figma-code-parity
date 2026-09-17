@@ -268,8 +268,8 @@ privately (it carries your DS's render patterns). The engine ships only the gene
 #### The standard contract layer (emitted automatically each run)
 
 **Every run** (after the gates, whenever a vars snapshot exists) **also emits a machine-readable
-contract** in the standard, interoperable format (mirrors Equinor `component-contracts` + W3C DTCG
-tokens). On by default so it never goes stale; opt out per-run with `--no-contracts` or per-project
+contract** in a standard, interoperable format (a per-component JSON contract + W3C DTCG tokens). On
+by default so it never goes stale; opt out per-run with `--no-contracts` or per-project
 with `ds-config.json → contracts.auto: false`. It splits captured from authored by file:
 
 - **`contract.authored.json`** (project root, **committed**) — the AUTHORED hub: per component,
@@ -279,7 +279,7 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
   generator never rewrites it.
 - **`contracts/`** (**local, gitignored**) — the generated CAPTURED views, refreshed every run:
   `tokens.json` (W3C DTCG: `$type`/`$value`, per-mode under `$extensions`, referenced by
-  `{family.token}`), one **Equinor-shaped** `<name>.contract.json` each (`id`, `version`, `props[]` with
+  `{family.token}`), one **standard** `<name>.contract.json` each (`id`, `version`, `props[]` with
   `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`), and
   `contract.schema.json`. They carry the DS's real values, so a single `.gitignore` keeps them local.
 

@@ -1,5 +1,5 @@
 // contract-gen.mjs (Phase A) — the standard contract emitter.
-// Pins: (1) it emits a W3C DTCG token dictionary + a schema-valid Equinor-shaped
+// Pins: (1) it emits a W3C DTCG token dictionary + a schema-valid per-component
 // contract whose anatomy references tokens by {family.token} and never copies token
 // VALUES in; (2) regeneration is merge-aware — authored fields (version, semantics,
 // props[].bindings.code) survive, captured fields refresh from the snapshots.

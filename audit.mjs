@@ -2592,7 +2592,7 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
   }
 
   // ── Standard contract artifacts (auto OUTPUT, not a gate) ────────────────────
-  // Emits the DTCG token dictionary + per-component *.contract.json (Equinor schema)
+  // Emits the DTCG token dictionary + per-component *.contract.json (standard schema)
   // + contract.schema.json from the just-audited snapshots. Captured fields refresh
   // each run; authored fields are preserved (merge-aware). NO gate reads these — they
   // never affect pass/fail, and the files stay LOCAL (a .gitignore is dropped beside

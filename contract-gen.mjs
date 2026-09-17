@@ -3,7 +3,7 @@
 // local (gitignored) contracts/ folder:
 //   • tokens  → one W3C DTCG dictionary (tokens.json): $type/$value, nested by dot-path,
 //               per-mode values under $extensions. From the figma-vars snapshot.
-//   • components → one Equinor-shaped <name>.contract.json each: id / version /
+//   • components → one standard <name>.contract.json each: id / version /
 //               description / props[] (bindings.figma + bindings.code) / anatomy /
 //               states / variants / semantics. Tokens are referenced by {family.token},
 //               never copied in.
@@ -350,7 +350,7 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   }
 
   // Output: ONE local directory holding the standard triple — per-component contracts, the
-  // DTCG token dictionary, and the schema (Equinor's shape, without the extra folders). Kept
+  // DTCG token dictionary, and the schema (the standard per-component shape, without extra folders). Kept
   // local by default (a single .gitignore below) since it carries the DS's real values.
   // Override any path via cfg.contracts.{out,tokensOut,schemaOut}.
   const cc = cfg.contracts || {};
