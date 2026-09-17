@@ -280,15 +280,19 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
 - **`contracts/`** (**local, gitignored**) — the generated CAPTURED views, refreshed every run:
   `tokens.json` (W3C DTCG: `$type`/`$value`, per-mode under `$extensions`, referenced by
   `{family.token}`), one **standard** `<name>.contract.json` each (`id`, `version`, `props[]` with
-  `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`), and
-  `contract.schema.json`. They carry the DS's real values, so a single `.gitignore` keeps them local.
+  `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`),
+  `contract.schema.json`, and an `llms.txt` AI index. They carry the DS's real values, so a single
+  `.gitignore` keeps them local.
 
 The generator reads `contract.authored.json` + the snapshots and merges them into the local views (the
 authored decisions win). Nothing generates a surface from any of it. **Gate 14** reads the authored
 `bindings` to resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap
 — it still fails); no other gate reads the contract. A malformed `bindings` entry (a typo'd key) is
-flagged in the run output, never silently ignored. Override paths with
-`ds-config.json → contracts.{authored,out,tokensOut,schemaOut}`; the engine ships only the generator.
+flagged in the run output, never silently ignored. Each run also reports **advisory** signals (never
+pass/fail): breaking vs additive contract changes since the last run, newly-deprecated tokens, token
+references that resolve to nothing (a silent-failure risk), and tokens used where a different `$type`
+is expected. Override paths with
+`ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
 ---
 

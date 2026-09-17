@@ -2611,6 +2611,28 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
         console.log(C.yellow(`⚠️  contract.authored.json has ${r.authoredIssues.length} issue(s) — the malformed binding(s) below are ignored until fixed:`));
         for (const i of r.authoredIssues.slice(0, 20)) console.log(C.yellow(`     · ${i}`));
       }
+      // Change detection (advisory, never fails the audit): breaking vs additive contract
+      // changes since the last run, newly-deprecated tokens, and undefined token references.
+      const breaks  = (r.breaking || []).filter((c) => c.level === 'breaking');
+      const deprecs = (r.breaking || []).filter((c) => c.level === 'deprecation');
+      const additiveN = (r.breaking || []).filter((c) => c.level === 'additive').length;
+      if (breaks.length) {
+        console.log(C.yellow(`⚠️  ${breaks.length} breaking contract change(s) since the last run:`));
+        for (const c of breaks.slice(0, 20)) console.log(C.yellow(`     · ${c.msg}`));
+      }
+      if (deprecs.length) {
+        console.log(C.yellow(`⚠️  ${deprecs.length} token(s) newly deprecated:`));
+        for (const c of deprecs.slice(0, 12)) console.log(C.yellow(`     · ${c.msg}`));
+      }
+      if (additiveN) console.log(`   +${additiveN} additive change(s)`);
+      if (r.undefinedRefs?.length) {
+        console.log(C.yellow(`⚠️  ${r.undefinedRefs.length} undefined token reference(s) — used in a contract but defined nowhere (silent-failure risk):`));
+        for (const u of r.undefinedRefs.slice(0, 20)) console.log(C.yellow(`     · ${u}`));
+      }
+      if (r.typeMismatches?.length) {
+        console.log(C.yellow(`⚠️  ${r.typeMismatches.length} token type mismatch(es) — a token used where a different type is expected:`));
+        for (const t of r.typeMismatches.slice(0, 20)) console.log(C.yellow(`     · ${t}`));
+      }
     } catch (e) {
       console.log(C.yellow('\n⚠️  contracts: generation failed (never fails the audit): ' + e.message));
     }

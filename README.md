@@ -205,6 +205,11 @@ token pipelines. Fill in a binding under a component in `contract.authored.json`
 resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap - it still
 fails). The public tool ships only the generator, never your data.
 
+Each run also warns (never failing) when a contract change since your last run is **breaking** (a prop,
+option, state or token removed, a default changed), when a token is newly deprecated or referenced but
+undefined, or when a token is used where a different type is expected - and it writes an `llms.txt`
+index for AI tools.
+
 Off for one run with `--no-contracts`, or per project with `contracts.auto: false` in `ds-config.json`.
 
 ---

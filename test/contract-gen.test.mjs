@@ -170,3 +170,64 @@ test('authored decisions live in the committed contract.authored.json; regen ref
   assert.equal(tokens.radii.button.$value, '999px');
   assert.equal(c2.anatomy.root.radiusToken, '{radii.button}');
 });
+
+test('detects breaking vs additive contract changes and token removals between runs', async () => {
+  const files = {
+    'theme.css': ':root{}\n',
+    'vars.json': { color: { light: {}, dark: {} }, sizing: { 'radii/button': '24px', 'radii/legacy': '8px' }, typography: {} },
+    'struct.json': { components: { widget: { nodeId: '1:1', h: 10, paddingVar: { tb: null, lr: null }, innerRadiusVar: 'radii/button' } } },
+    'props.json': { widget: { nodeId: '1:1', properties: { variant: { type: 'VARIANT', defaultValue: 'a', variantOptions: ['a', 'b'] } }, annotations: [] } },
+    'structure-contract.mjs': "export const CONTRACT = { widget: { h:10, paddingVar:{tb:null,lr:null}, innerRadiusVar:'radii/button' } };\n",
+  };
+  const dir = makeFixture(files);
+  const cfgLocal = { paths: cfg.paths, figma: cfg.figma };
+  await generateContracts(dir, cfgLocal, {});   // baseline
+
+  // Break the shape: remove option "b", change the default, remove a token, add a token.
+  writeFileSync(join(dir, 'props.json'), JSON.stringify({ widget: { nodeId: '1:1', properties: { variant: { type: 'VARIANT', defaultValue: 'z', variantOptions: ['a'] } }, annotations: [] } }));
+  writeFileSync(join(dir, 'vars.json'), JSON.stringify({ color: { light: {}, dark: {} }, sizing: { 'radii/button': '24px', 'radii/new': '2px' }, typography: {} }));
+  const r = await generateContracts(dir, cfgLocal, {});
+
+  assert.ok(r.breaking.some((c) => c.level === 'breaking' && /removed option\(s\) b/.test(c.msg)), 'option removal is breaking: ' + JSON.stringify(r.breaking));
+  assert.ok(r.breaking.some((c) => c.level === 'breaking' && /default changed/.test(c.msg)), 'default change is breaking');
+  assert.ok(r.breaking.some((c) => c.level === 'breaking' && /token "radii\.legacy" removed/.test(c.msg)), 'token removal is breaking');
+  assert.ok(r.breaking.some((c) => c.level === 'additive' && /token "radii\.new" added/.test(c.msg)), 'token addition is additive');
+  assert.ok(r.breaking.some((c) => /bump the major/.test(c.msg)), 'version-bump note present when version unchanged');
+});
+
+test('flags a contract that references a token defined nowhere (silent-failure risk)', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root{}\n',
+    'vars.json': { color: { light: {}, dark: {} }, sizing: { 'radii/button': '24px' }, typography: {} },
+    'struct.json': { components: { widget: { nodeId: '1:1', h: 10, paddingVar: { tb: null, lr: null }, innerRadiusVar: 'radii/ghost' } } },
+    'props.json': { widget: { nodeId: '1:1', properties: {}, annotations: [] } },
+    'structure-contract.mjs': "export const CONTRACT = { widget: { h:10, paddingVar:{tb:null,lr:null}, innerRadiusVar:'radii/ghost' } };\n",
+  });
+  const r = await generateContracts(dir, { paths: cfg.paths, figma: cfg.figma }, {});
+  assert.ok(r.undefinedRefs.some((u) => /widget/.test(u) && /radii\.ghost/.test(u)), 'undefined ref flagged: ' + JSON.stringify(r.undefinedRefs));
+});
+
+test('flags a semantic type mismatch (a color token used where a dimension is expected)', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root{}\n',
+    'vars.json': { color: { light: { 'brand/color': '#111' }, dark: { 'brand/color': '#222' } }, sizing: { 'radii/button': '24px' }, typography: {} },
+    'struct.json': { components: { widget: { nodeId: '1:1', h: 10, paddingVar: { tb: null, lr: null }, innerRadiusVar: 'brand/color' } } },
+    'props.json': { widget: { nodeId: '1:1', properties: {}, annotations: [] } },
+    'structure-contract.mjs': "export const CONTRACT = { widget: { h:10, paddingVar:{tb:null,lr:null}, innerRadiusVar:'brand/color' } };\n",
+  });
+  const r = await generateContracts(dir, { paths: cfg.paths, figma: cfg.figma }, {});
+  assert.ok(
+    r.typeMismatches.some((t) => /widget/.test(t) && /brand\.color/.test(t) && /color/.test(t) && /dimension/.test(t)),
+    'type mismatch flagged: ' + JSON.stringify(r.typeMismatches),
+  );
+  assert.equal(r.undefinedRefs.length, 0, 'the token exists, so it is not undefined — only mistyped');
+});
+
+test('emits an llms.txt AI index listing components and the token dictionary', async () => {
+  const dir = fixture();
+  const r = await generateContracts(dir, cfg, {});
+  const llms = readFileSync(r.llmsOut, 'utf8');
+  assert.match(llms, /# Design system/);
+  assert.match(llms, /buttonPrimary\]\(\.\/buttonPrimary\.contract\.json\)/);
+  assert.match(llms, /tokens\.json/);
+});
