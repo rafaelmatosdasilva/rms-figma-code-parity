@@ -24,7 +24,7 @@
 //          it should be committed; run the audit with FIGMA_TOKEN to generate it.
 
 import { readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
-import { join, extname, basename, relative } from 'path';
+import { join, extname, basename, relative, resolve } from 'path';
 
 const ROOT = process.cwd();
 
@@ -66,6 +66,27 @@ const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 // Documented intentional renames: Figma property name -> code prop name, per component.
 // e.g. { "buttonPrimary": { "size": "buttonSize", "labelContent": "label" } }
 const PROP_ALIASES = cfg.componentPropAliases ?? {};
+
+// Phase B: read authored Figma->code prop bindings from the emitted contract (the hub), so a
+// rename or a slot can live in <name>.contract.json (props[].bindings.code) instead of only in
+// ds-config.json. bindings.code.attribute = "codeName" is a rename; bindings.code.slot =
+// true|"slotName" declares a slot. Best-effort and additive: a missing/unauthored binding - or a
+// fresh checkout with no local contracts/ dir - simply falls back to today's inference + aliases.
+const CONTRACTS_DIR = cfg.contracts?.out ? resolve(ROOT, cfg.contracts.out) : join(ROOT, 'contracts');
+function contractBindings(figmaName) {
+  const attr = {}, slot = {};
+  let doc;
+  try { doc = JSON.parse(readFileSync(join(CONTRACTS_DIR, `${figmaName}.contract.json`), 'utf8')); }
+  catch { return { attr, slot }; }
+  for (const p of (Array.isArray(doc?.props) ? doc.props : [])) {
+    const code = p?.bindings?.code;
+    if (!p?.name || !code || typeof code !== 'object') continue;
+    if (typeof code.attribute === 'string') attr[p.name] = code.attribute;   // Figma prop -> renamed code attribute
+    if (code.slot === true) slot[p.name] = true;                             // -> default slot
+    else if (typeof code.slot === 'string') slot[p.name] = code.slot;        // -> named code slot
+  }
+  return { attr, slot };
+}
 
 const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 // Figma property keys carry a node-id suffix: "Show Label#958:0" -> "Show Label".
@@ -322,7 +343,8 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
   const codeNorm     = new Map([...extractProps(file)].map(p => [norm(p), p]));   // normName -> original
   const codeDefaults = extractDefaults(text);                                     // normName -> default literal
   const codeOptions  = extractOptions(text);                                      // normName -> Set(option norms)
-  const aliases  = PROP_ALIASES[figmaName] ?? {};
+  const cbind    = contractBindings(figmaName);                            // authored Figma->code bindings (the contract hub)
+  const aliases  = { ...(PROP_ALIASES[figmaName] ?? {}), ...cbind.attr };  // a contract-declared rename wins over inference
   const rel = relative(ROOT, file);
 
   // #1/#3: for a matched prop, compare Figma's default value, variant options and type
@@ -378,6 +400,9 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
       if (aliasTo0 && codeNorm.has(aliasTo0)) { matchedCode.add(aliasTo0); OK.push(`${figmaName}/${fp} → ${aliases[fp]} (prop, alias)`); pushRow(aliases[fp], 'prop', 'match'); continue; }
       if (codeSlots.named.has(fn)) { OK.push(`${figmaName}/${fp} (slot)`); pushRow(fp, 'slot', 'match'); continue; }
       if (codeSlots.hasDefault)   { OK.push(`${figmaName}/${fp} (default slot)`); pushRow('(default slot)', 'slot', 'match'); continue; }
+      // A contract-authored slot binding resolves a slot whose code NAME differs from the Figma prop.
+      const sb = cbind.slot[fp];
+      if (typeof sb === 'string' && codeSlots.named.has(norm(sb))) { OK.push(`${figmaName}/${fp} → ${sb} (slot, contract)`); pushRow(sb, 'slot', 'match'); continue; }
       SLOT_FAIL.push(`${figmaName}: Figma instance-swap "${fp}" has no code prop or slot  (${rel})`);
       pushRow('not in code', '-', 'missing'); continue;
     }

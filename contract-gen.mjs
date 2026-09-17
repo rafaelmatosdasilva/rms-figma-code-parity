@@ -296,14 +296,13 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
     try { CONTRACT = (await import(pathToFileURL(contractPath).href)).CONTRACT || {}; } catch { /* keep going */ }
   }
 
-  // Output locations. Standard-aligned defaults: dedicated, discoverable, COMMITTED
-  // artifacts at the project root — contracts/ + tokens/ as siblings (mirrors Equinor's
-  // eds-contracts / eds-tokens packages), NOT buried in src. These are meant to be
-  // versioned and treated as an API (Southleft), the opposite of the private
-  // design-intent.json. Override any path via cfg.contracts.{out,tokensOut,schemaOut}.
+  // Output: ONE local directory holding the standard triple — per-component contracts, the
+  // DTCG token dictionary, and the schema (Equinor's shape, without the extra folders). Kept
+  // local by default (a single .gitignore below) since it carries the DS's real values.
+  // Override any path via cfg.contracts.{out,tokensOut,schemaOut}.
   const cc = cfg.contracts || {};
   const outDir    = cc.out       ? resolve(ROOT, cc.out)       : join(ROOT, 'contracts');
-  const tokensOut = cc.tokensOut ? resolve(ROOT, cc.tokensOut) : join(ROOT, 'tokens', 'ds.tokens.json');
+  const tokensOut = cc.tokensOut ? resolve(ROOT, cc.tokensOut) : join(outDir, 'tokens.json');
   const schemaOut = cc.schemaOut ? resolve(ROOT, cc.schemaOut) : join(outDir, 'contract.schema.json');
 
   // Which components to emit. Default: EVERY component the scan found — the union of the

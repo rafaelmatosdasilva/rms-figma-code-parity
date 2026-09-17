@@ -191,18 +191,16 @@ rms-figma-code-parity --no-contracts             # skip the machine-readable con
 
 ## Machine-readable contract (automatic, stays local)
 
-**Every run**, after the checks, the tool also writes a machine-readable description of your design
-system in the standard format teams and AI tools understand: a **W3C DTCG** token file
-(`tokens/ds.tokens.json`) and one **contract file per component** (`contracts/<name>.contract.json`,
-with its props, Figma-to-code bindings, anatomy, states and tokens) validated by a schema. It is on by
-default so it never goes stale, always describing exactly what the run just audited.
+Every run also writes a standard, machine-readable description of your design system into one local
+`contracts/` folder: a **W3C DTCG** token file plus one **contract per component** (props, Figma-to-code
+bindings, anatomy, states), validated by a schema. On by default, so it never goes stale.
 
-It is documentation only - **no check reads it, so it can never change a pass or fail**. It stays **on
-your machine**: the files carry your DS's real colors, sizes and structure, so a `.gitignore` is dropped
-next to them and they are never pushed. The public tool ships only the generator, never your data.
+Use it as an always-current spec for docs, AI/codegen, or token pipelines. One part feeds back into the
+audit: if you fill in a component's `bindings.code`, Gate 14 uses it to resolve a prop rename or slot
+instead of guessing (a wrong binding never masks a real gap). It stays **local** - the files hold your
+DS's real values, so a `.gitignore` keeps them off GitHub; the public tool ships only the generator.
 
-Turn it off for one run with `--no-contracts`, or for a whole project with `contracts.auto: false` in
-`ds-config.json`.
+Off for one run with `--no-contracts`, or per project with `contracts.auto: false` in `ds-config.json`.
 
 ---
 

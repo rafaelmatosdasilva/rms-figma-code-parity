@@ -259,30 +259,26 @@ privately (it carries your DS's render patterns). The engine ships only the gene
 #### The standard contract layer (emitted automatically each run)
 
 **Every run** (after the gates, whenever a vars snapshot exists) **also emits a machine-readable
-contract layer** in the standard, interoperable format (mirrors Equinor `component-contracts` + W3C
-DTCG tokens). Unlike the design-intent/showroom outputs above, this one is **on by default** so the
-contract never goes stale; opt out per-run with `--no-contracts` or per-project with
-`ds-config.json → contracts.auto: false`:
+contract** in the standard, interoperable format (mirrors Equinor `component-contracts` + W3C DTCG
+tokens). On by default so it never goes stale; opt out per-run with `--no-contracts` or per-project
+with `ds-config.json → contracts.auto: false`. It all lands in one local `contracts/` folder:
 
-- **tokens** ← one **W3C DTCG** dictionary, `tokens/ds.tokens.json` — every token once (`$type` /
-  `$value`, per-mode values under `$extensions`), referenced from contracts by `{family.token}`.
-- **components** ← one **Equinor-shaped** `contracts/<name>.contract.json` each — `id`, `version`,
-  `props[]` with `bindings.figma` / `bindings.code`, `anatomy`, `states`, `variants`, `semantics`.
-- **schema** ← `contracts/contract.schema.json` validates every emitted contract.
+- **tokens** ← `tokens.json`, a **W3C DTCG** dictionary: every token once (`$type` / `$value`, per-mode
+  values under `$extensions`), referenced from contracts by `{family.token}`.
+- **components** ← one **Equinor-shaped** `<name>.contract.json` each: `id`, `version`, `props[]` with
+  `bindings.figma` / `bindings.code`, `anatomy`, `states`, `variants`, `semantics`.
+- **schema** ← `contract.schema.json` validates every emitted contract.
 
-It reuses the design-intent's **merge-aware** discipline: **captured** fields (props, anatomy,
-states, tokens) auto-refresh from the snapshots each run; **authored** fields (`version`,
-`description`, `notes`, `semantics`, `props[].bindings.code`) are **preserved** across
-regenerations. It is an auditor output — nothing generates a surface from it, and **no gate reads
-these files**, so they never affect pass/fail.
+**Merge-aware, like the design-intent:** captured fields (props, anatomy, states, tokens) refresh from
+the snapshots each run; authored fields (`version`, `description`, `notes`, `semantics`,
+`props[].bindings.code`) are preserved. Nothing generates a surface from it. Gate 14 reads any
+`bindings.code` you author to resolve a prop rename or slot (a wrong binding never masks a real gap);
+otherwise no gate reads it.
 
-**It is project-specific and private, exactly like the design-intent.** The engine ships only the
-generic generator (`contract-gen.mjs`); the emitted files carry **your** DS's real token values and
-component structure. They are written into your project (default `contracts/` + `tokens/` at the
-project root; override via `ds-config.json → contracts.{out,tokensOut,schemaOut}`), and a
-`.gitignore` is dropped in each output dir so they stay **local and are never committed** — opt out
-with `contracts.gitignore: false` only if your DS repo is private and you want them versioned as an
-API.
+**Project-specific and private, like the design-intent:** the engine ships only the generic generator
+(`contract-gen.mjs`); the emitted files carry **your** DS's real values, so a single `.gitignore` in
+the folder keeps them **local and uncommitted**. Override the path with `ds-config.json →
+contracts.out`; opt out of the gitignore with `contracts.gitignore: false` only if the repo is private.
 
 ---
 
