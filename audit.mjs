@@ -2591,6 +2591,22 @@ ${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:
     }
   }
 
+  // ── Standard contract artifacts (Phase A · opt-in OUTPUT, not a gate) ────────
+  // Emits the DTCG token dictionary + per-component *.contract.json (Equinor schema)
+  // + contract.schema.json. Captured fields refresh from the snapshots; authored
+  // fields are preserved (merge-aware). NO gate reads these — they never affect
+  // pass/fail. Off by default; runs with --docs / --intent / --contracts.
+  if (process.argv.includes('--docs') || process.argv.includes('--intent') || process.argv.includes('--contracts')) {
+    try {
+      const { generateContracts } = await import('./contract-gen.mjs');
+      const r = await generateContracts(ROOT, cfg, {});
+      const issues = r.invalid.length ? ` · ⚠️ ${r.invalid.length} schema issue(s)` : '';
+      console.log(`\n📐 Contracts → ${r.outDir.replace(ROOT + '/', '')}  (${r.components.length} component${r.components.length === 1 ? '' : 's'} · ${r.tokenCount} DTCG tokens${issues})`);
+    } catch (e) {
+      console.log(C.yellow('\n⚠️  --docs: contract generation failed (never fails the audit): ' + e.message));
+    }
+  }
+
   // Passive, throttled "you're behind" nudge - at most once/day, best-effort, never
   // blocks or errors a run. Explicit checks: `node scripts/audit.mjs --version`.
   try {
