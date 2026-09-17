@@ -63,7 +63,7 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1. Get the latest from Figma** | Reads the current colors, sizes, fonts and component shapes from Figma and shows what changed since last time. |
-| **2. Check the code** | Runs 21 checks against your CSS and reports anything that doesn't match. |
+| **2. Check the code** | Runs up to 23 checks against your CSS and reports anything that doesn't match. |
 
 You always check against the latest design, so you can't accidentally compare against an old one.
 
@@ -71,7 +71,7 @@ You always check against the latest design, so you can't accidentally compare ag
 
 ## The 23 checks
 
-Each run checks 21 things and tells you which are off. In plain terms:
+Each run runs up to 23 checks (the last two run only when your DS defines motion or shadows) and tells you which are off. In plain terms:
 
 | # | What it checks |
 |---|---|
