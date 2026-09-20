@@ -185,7 +185,6 @@ Run these in the terminal, from inside your project:
 rms-figma-code-parity --init                     # first-time setup for a project
 rms-figma-code-parity --component ButtonPrimary  # check one component (or a few: A,B)
 rms-figma-code-parity --trend                    # show the last runs
-rms-figma-code-parity --report-html report.html  # save a report as a web page
 rms-figma-code-parity --no-contracts             # skip the machine-readable contract this run (it is emitted by default)
 ```
 

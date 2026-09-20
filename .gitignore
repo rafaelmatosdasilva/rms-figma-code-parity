@@ -4,7 +4,6 @@ structure-contract.mjs
 parity-history.json
 parity-check-result.json
 component-prop-result.json
-parity-report.html
 .parity-refs/
 node_modules/
 .DS_Store

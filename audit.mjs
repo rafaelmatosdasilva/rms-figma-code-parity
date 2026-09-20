@@ -25,7 +25,6 @@ import { existsSync, readdirSync, readFileSync, statSync,
          symlinkSync, unlinkSync }                               from 'fs';
 import { join, dirname, resolve, relative }                     from 'path';
 import { fileURLToPath }                                        from 'url';
-import { buildReport }                                          from './report-html.mjs';
 import { makeFigmaFetch }                                       from './figma-fetch.mjs';
 import { collectRawValues, COLLECT_NODE_BUDGET }                from './collect-raw-values.mjs';
 import { extractDynamicClassPrefixes }                          from './dynamic-class-prefixes.mjs';
@@ -2465,128 +2464,41 @@ function reportFull(label, items, shown) {
   if (hist.length > 100) hist = hist.slice(-100);
   try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
 
-  // ── HTML report ───────────────────────────────────────────────────────────────
-  const htmlArgIdx = process.argv.indexOf('--report-html');
-  if (htmlArgIdx !== -1 && process.argv[htmlArgIdx + 1]) {
-    const REPORT_HTML = process.argv[htmlArgIdx + 1];
-    let pcResult = { fail: [], aliasFail: [], newSkip: [], skip: [], passList: [], pendingFigmaSync: [] };
-    try { pcResult = JSON.parse(readFileSync(join(ROOT, 'parity-check-result.json'), 'utf8')); } catch {}
-
-    const allRows = [
-      ...pcResult.fail.map(f         => ({ ...f, status: 'FAIL'       })),
-      ...(pcResult.aliasFail || []).map(f => ({ ...f, status: 'ALIAS_FAIL' })),
-      ...(pcResult.newSkip   || []).map(f => ({ ...f, status: 'NEW_SKIP'   })),
-      ...(pcResult.skip      || []).map(f => ({ ...f, status: 'SKIP'       })),
-    ];
-
-    const dims     = ['color', 'sizing', 'typography'];
-    const dimLabel = { color: 'Color', sizing: 'Sizing', typography: 'Typography' };
-    const colStats = {};
-    for (const dim of dims) {
-      const rows = allRows.filter(r => r.dimension === dim);
-      colStats[dim] = {
-        ALL:        rows.length,
-        FAIL:       rows.filter(r => r.status === 'FAIL').length,
-        ALIAS_FAIL: rows.filter(r => r.status === 'ALIAS_FAIL').length,
-        NEW_SKIP:   rows.filter(r => r.status === 'NEW_SKIP').length,
-        SKIP:       rows.filter(r => r.status === 'SKIP').length,
-      };
-    }
-
-    const swatchCell = val => {
-      if (!val) return `<td class="empty">-</td>`;
-      return val.startsWith('#')
-        ? `<td class="val"><span class="sw" style="background:${val}"></span><code class="hex">${val}</code></td>`
-        : `<td class="val"><code class="noncolor">${val}</code></td>`;
-    };
-
-    let sections = '';
-    for (const dim of dims) {
-      const rows = allRows.filter(r => r.dimension === dim);
-      if (!rows.length) continue;
-      const counts = colStats[dim];
-      const theadHtml = `<thead><tr><th>Token</th><th>CSS Var</th><th>Mode</th><th>Figma</th><th>CSS / Issue</th><th>Status</th></tr></thead>`;
-      let tbody = '';
-      for (const r of rows) {
-        const badgeCls = r.status === 'FAIL' ? 'missing' : r.status === 'ALIAS_FAIL' ? 'alias-fail' : r.status === 'NEW_SKIP' ? 'new-skip' : '';
-        const badgeLabel = { FAIL: 'Fail', ALIAS_FAIL: 'Alias Fail', NEW_SKIP: 'New Skip', SKIP: 'Skip' }[r.status] ?? r.status;
-        const issueCell = r.css
-          ? swatchCell(r.css)
-          : `<td class="empty" style="font-size:10px;color:#888;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.issue||r.reason||'').replace(/"/g,'&quot;')}">${r.issue || r.reason || '-'}</td>`;
-        tbody += `<tr class="tr s-${r.status}" data-status="${r.status}">
-        <td class="tname"><code>${r.token ?? ''}</code></td>
-        <td class="tname" style="font-size:10px;color:#5b21b6"><code>${r.cssVar ?? '-'}</code></td>
-        <td style="font-size:10px;color:#6b7280">${r.mode ?? '-'}</td>
-        ${swatchCell(r.figma)}${issueCell}
-        <td class="tst"><span class="badge ${badgeCls}">${badgeLabel}</span></td>
-      </tr>`;
-      }
-      sections += `\n<div class="col-section" data-col="${dim}" data-counts="${encodeURIComponent(JSON.stringify(counts))}">
-  <div class="tw"><table>${theadHtml}<tbody>${tbody}</tbody></table></div>
-</div>`;
-    }
-
-    const firstDim = dims.find(d => (colStats[d]?.ALL ?? 0) > 0) ?? '';
-    const tabsHtml = dims.filter(d => (colStats[d]?.ALL ?? 0) > 0).map((d, i) =>
-      `<button class="tab${i===0?' active':''}" data-col="${d}" onclick="switchTab('${d}',this)">
-  <div class="tab-top"><span class="tab-name">${dimLabel[d]}</span><span class="tab-count">${colStats[d].ALL}</span></div>
-</button>`).join('');
-
-    const gateCardsHtml = `<div style="padding:12px 28px;display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid #e4e7ec;background:#fafafa">
-${gates.map((g, i) => `  <div style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:8px;font-size:11px;font-weight:600;background:${g.pass?'#dcfce7':'#fee2e2'};color:${g.pass?'#166534':'#991b1b'}" title="${(g.lines||[]).join('&#10;').replace(/"/g,'&quot;')}">${g.pass?'✅':'❌'} [${i+1}] ${g.label}</div>`).join('\n')}
-</div>`;
-
-    const nFail = pcResult.fail.length;
-    const nAlias = (pcResult.aliasFail || []).length;
-    const nNewSkip = (pcResult.newSkip || []).length;
-    const nPass = (pcResult.passList || []).length;
-    const html = buildReport({
-      title: `Code Parity - ${today}`,
-      metaHtml: `${nPass + nFail} tokens checked · ${today} · ${gates.filter(g => g.pass).length}/${gates.length} gates pass`,
-      statCards: [
-        { n: nPass,    label: 'Match',     desc: 'CSS matches Figma',     cls: 's'   },
-        { n: nFail,    label: 'Fail',      desc: 'Value divergence',      cls: 'st'  },
-        { n: nAlias,   label: 'Alias Fail', desc: 'Wrong primitive chain', cls: 'lo'  },
-        { n: nNewSkip, label: 'New Skip',  desc: 'Needs sign-off',        cls: 'p'   },
-      ],
-      filterDefs: [
-        { filter: 'ALL',        label: 'All',        dot: null, color: '#111'    },
-        { filter: 'FAIL',       label: 'Fail',       dot: 'st', color: '#dc2626' },
-        { filter: 'ALIAS_FAIL', label: 'Alias Fail', dot: 'lo', color: '#9333ea' },
-        { filter: 'NEW_SKIP',   label: 'New Skip',   dot: 'p',  color: '#ca8a04' },
-        { filter: 'SKIP',       label: 'Skip',       dot: null, color: '#6b7280' },
-      ],
-      tabsHtml,
-      sections,
-      firstCol: firstDim,
-      extraHeadHtml: gateCardsHtml,
-    });
-    const htmlPath = REPORT_HTML.startsWith('/') ? REPORT_HTML : join(ROOT, REPORT_HTML);
-    writeFileSync(htmlPath, html);
-    console.log(`\n🌐 HTML parity report → ${REPORT_HTML}`);
-  }
-
-  // ── Design-intent (opt-in OUTPUT, not a gate) ───────────────────────────────
+  // ── Design-intent (adopt-aware OUTPUT, not a gate) ──────────────────────────
   // Aggregates this project's Figma annotations + code notes + facts + usage into
-  // one private, merge-aware design-intent.json. Never affects pass/fail. Off by
-  // default; run with --docs. Project-specific + private (keep gitignored).
-  if (process.argv.includes('--docs') || process.argv.includes('--intent')) {
+  // one private, merge-aware design-intent.json. Never affects pass/fail. This is
+  // an AGNOSTIC engine, so the default adapts to the project instead of forcing a
+  // file on everyone: it auto-generates only when the project has ADOPTED the layer
+  // — an existing design-intent.json, a `docs.out` path, or `docs.auto: true` in
+  // ds-config.json — or when this run passes --docs/--intent. A zero-signal project
+  // gets no surprise private file. Force off with --no-docs or docs.auto: false.
+  // Once adopted it stays fresh every run (like the contracts). Private → gitignored.
+  const docsForced = process.argv.includes('--docs') || process.argv.includes('--intent');
+  const docsOff    = process.argv.includes('--no-docs') || cfg.docs?.auto === false;
+  const structSnap = join(ROOT, cfg.paths?.snapshotStructure || 'figma-structure.snapshot.json');
+  const themeCss0  = Array.isArray(cfg.paths?.themeCSS) ? cfg.paths.themeCSS[0] : cfg.paths?.themeCSS;
+  const intentOut  = cfg.docs?.out
+    ? join(ROOT, cfg.docs.out)
+    : join(themeCss0 ? dirname(join(ROOT, themeCss0)) : ROOT, 'design-intent.json');
+  const docsAdopted = docsForced || cfg.docs?.auto === true || !!cfg.docs?.out || existsSync(intentOut);
+  if (!docsOff && docsAdopted && existsSync(structSnap)) {
     try {
       const { generateIntent } = await import('./intent-gen.mjs');
       const r = await generateIntent(ROOT, cfg, {});
       console.log(`\n📓 Design intent → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · ${r.withDesign} w/ Figma notes · ${r.withCode} w/ code notes · ${r.authoredKept} authored kept)`);
     } catch (e) {
-      console.log(C.yellow('\n⚠️  --docs: design-intent generation failed (never fails the audit): ' + e.message));
+      console.log(C.yellow('\n⚠️  design-intent generation failed (never fails the audit): ' + e.message));
     }
-    // Living style guide — generated from the DS (opt-in: only when a showroom
-    // template is configured). It reads the design-intent just written above.
-    if (cfg.showroom && cfg.showroom.template) {
+    // Living style guide — heavier artifact, kept OPT-IN: only on explicit --docs
+    // (or ds-config.json → showroom.auto) AND when a showroom template is
+    // configured. It reads the design-intent just written above.
+    if ((docsForced || cfg.showroom?.auto) && cfg.showroom && cfg.showroom.template) {
       try {
         const { generateShowroom } = await import('./showroom-gen.mjs');
         const r = await generateShowroom(ROOT, cfg, {});
         console.log(`🖼  Showroom → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · filled ${r.filled.join(', ')})`);
       } catch (e) {
-        console.log(C.yellow('\n⚠️  --docs: showroom generation failed (never fails the audit): ' + e.message));
+        console.log(C.yellow('\n⚠️  showroom generation failed (never fails the audit): ' + e.message));
       }
     }
   }
