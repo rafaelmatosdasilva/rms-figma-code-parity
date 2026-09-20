@@ -2498,6 +2498,37 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // ── Token layering (agnostic, descriptive — never a gate) ───────────────────
+  // No tier model is imposed: DSes tier differently or not at all. We only measure THIS DS's own
+  // aliasing rate, and when references are clearly its norm (>=80% of color tokens alias), we
+  // surface the few tokens that hold a raw value instead — a likely missed reference. A DS that
+  // does not alias much is flagged nothing. Advisory only, never affects pass/fail.
+  {
+    const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
+    let vsnap = null; try { vsnap = JSON.parse(readFileSync(vPath, 'utf8')); } catch {}
+    if (vsnap && vsnap.color && typeof vsnap.color === 'object') {
+      const outlierSet = new Set();
+      let bestRate = 0;
+      for (const mode of Object.keys(vsnap.color)) {
+        const tokens = Object.keys(vsnap.color[mode] || {});
+        if (tokens.length < 8) continue;                              // too few to infer a norm
+        const aliases = vsnap.aliases?.[mode] || {};
+        const raw = tokens.filter((t) => !(t in aliases));            // references nothing → raw literal
+        const aliasRate = (tokens.length - raw.length) / tokens.length;
+        if (aliasRate >= 0.8 && raw.length && raw.length < tokens.length) {
+          bestRate = Math.max(bestRate, aliasRate);
+          for (const t of raw) outlierSet.add(t);
+        }
+      }
+      if (outlierSet.size) {
+        const all = [...outlierSet];
+        console.log(C.yellow(`\nℹ️  Token layering: this DS references tokens ${Math.round(bestRate * 100)}% of the time, but ${all.length} color token(s) hold a raw value instead — likely a missed reference (or a deliberate literal). Advisory only.`));
+        for (const t of all.slice(0, 20)) console.log(`     · ${t}`);
+        if (all.length > 20) console.log(`     … ${all.length - 20} more`);
+      }
+    }
+  }
+
   // ── Design-intent (adopt-aware OUTPUT, not a gate) ──────────────────────────
   // Aggregates this project's Figma annotations + code notes + facts + usage into
   // one private, merge-aware design-intent.json. Never affects pass/fail. This is

@@ -304,7 +304,10 @@ authored decisions win). Nothing generates a surface from any of it. **Gate 14**
 flagged in the run output, never silently ignored. Each run also reports **advisory** signals (never
 pass/fail): breaking vs additive contract changes since the last run, newly-deprecated tokens, token
 references that resolve to nothing (a silent-failure risk), and tokens used where a different `$type`
-is expected. Override paths with
+is expected; **exemption debt** (every escape-hatch surfaced for periodic review — totals each run,
+full list with `--exemption-debt`); and **token layering** (a structure-agnostic check: it imposes no
+tier model, only measures the DS's own aliasing rate and, when references are the DS's norm, surfaces
+the few tokens that hold a raw value instead). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
 ---
