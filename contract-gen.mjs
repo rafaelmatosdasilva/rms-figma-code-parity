@@ -203,7 +203,7 @@ function buildStatesVariants(contract, props) {
   return { states, variants };
 }
 
-function buildContract(name, { contract, structure, props, authored }) {
+function buildContract(name, { contract, structure, props, authored, composition, componentNames }) {
   const c = contract?.[name];
   const s = structure?.[name];
   const p = props?.[name];
@@ -231,6 +231,33 @@ function buildContract(name, { contract, structure, props, authored }) {
       sources: 'figma-vars / figma-structure / figma-component-props snapshots + structure-contract.mjs + contract.authored.json',
     },
   };
+
+  // AUTHORED agent guidance: when NOT to use this component, and what to use instead.
+  // Optional and additive — absent leaves the contract unchanged.
+  if (typeof a.whenNotToUse === 'string' && a.whenNotToUse.trim()) out.whenNotToUse = a.whenNotToUse.trim();
+  {
+    const ui = Array.isArray(a.useInstead)
+      ? a.useInstead.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim())
+      : (typeof a.useInstead === 'string' && a.useInstead.trim() ? [a.useInstead.trim()] : []);
+    if (ui.length) out.useInstead = ui;
+  }
+
+  // Relationships: composesWith is DERIVED from the composition snapshot (the real DS
+  // components this one nests — icons and raw selectors are excluded); neverCombineWith is
+  // AUTHORED (only the genuinely invalid pairings). Emitted only when non-empty.
+  {
+    const kids = Array.isArray(composition?.[name]) ? composition[name] : [];
+    const known = componentNames instanceof Set ? componentNames : new Set(componentNames || []);
+    const composesWith = [...new Set(kids.map(stripFigmaId).filter((k) => known.has(k) && k !== name))];
+    const neverCombineWith = Array.isArray(a.neverCombineWith)
+      ? [...new Set(a.neverCombineWith.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim()))]
+      : [];
+    if (composesWith.length || neverCombineWith.length) {
+      out.relationships = {};
+      if (composesWith.length) out.relationships.composesWith = composesWith;
+      if (neverCombineWith.length) out.relationships.neverCombineWith = neverCombineWith;
+    }
+  }
 
   // AUTHORED bindings come from the committed contract.authored.json, keyed by Figma prop name.
   const bindings = a.bindings || {};
@@ -277,6 +304,15 @@ const CONTRACT_SCHEMA = {
     states: { type: 'array' },
     variants: { type: 'array' },
     semantics: { type: 'object' },
+    whenNotToUse: { type: 'string' },
+    useInstead: { type: 'array', items: { type: 'string' } },
+    relationships: {
+      type: 'object',
+      properties: {
+        composesWith: { type: 'array', items: { type: 'string' } },
+        neverCombineWith: { type: 'array', items: { type: 'string' } },
+      },
+    },
   },
 };
 
@@ -312,6 +348,13 @@ function lintAuthored(doc) {
   if (!comps || typeof comps !== 'object') return issues;
   for (const [name, entry] of Object.entries(comps)) {
     if (!entry || typeof entry !== 'object') { issues.push(`${name}: entry must be an object`); continue; }
+    // Optional agent-guidance fields (checked even when there are no bindings).
+    if ('whenNotToUse' in entry && typeof entry.whenNotToUse !== 'string') issues.push(`${name}.whenNotToUse must be a string`);
+    if ('useInstead' in entry) {
+      const ok = typeof entry.useInstead === 'string' || (Array.isArray(entry.useInstead) && entry.useInstead.every((x) => typeof x === 'string'));
+      if (!ok) issues.push(`${name}.useInstead must be a string or a list of strings`);
+    }
+    if ('neverCombineWith' in entry && !(Array.isArray(entry.neverCombineWith) && entry.neverCombineWith.every((x) => typeof x === 'string'))) issues.push(`${name}.neverCombineWith must be a list of strings`);
     const b = entry.bindings;
     if (b === undefined) continue;
     if (typeof b !== 'object' || Array.isArray(b)) { issues.push(`${name}.bindings must be an object`); continue; }
@@ -411,6 +454,12 @@ function buildLlms(built, tokens, tokenCount) {
     const desc = String(contract.description || '').replace(/\s+/g, ' ').trim();
     const props = (contract.props || []).map((p) => p.name).join(', ');
     lines.push(`- [${name}](./${name}.contract.json): ${desc}${props ? `  · props: ${props}` : ''}`);
+    // Agent guidance + relationships, one sub-line each when present.
+    const rel = contract.relationships || {};
+    if (contract.whenNotToUse) lines.push(`    - avoid: ${String(contract.whenNotToUse).replace(/\s+/g, ' ').trim()}`);
+    if (Array.isArray(contract.useInstead) && contract.useInstead.length) lines.push(`    - use instead: ${contract.useInstead.join(', ')}`);
+    if (Array.isArray(rel.composesWith) && rel.composesWith.length) lines.push(`    - composes: ${rel.composesWith.join(', ')}`);
+    if (Array.isArray(rel.neverCombineWith) && rel.neverCombineWith.length) lines.push(`    - never with: ${rel.neverCombineWith.join(', ')}`);
   }
   lines.push('', '## Tokens', '', `- [tokens.json](./tokens.json) — W3C DTCG dictionary (${tokenCount} tokens; families: ${families.join(', ')}).`, '');
   return lines.join('\n');
@@ -423,6 +472,9 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   if (!vars) throw new Error(`vars snapshot not found (${paths.snapshotVars})`);
   const structure = readJSON(resolve(ROOT, paths.snapshotStructure || 'figma-structure.snapshot.json'))?.components || {};
   const props = readJSON(resolve(ROOT, paths.compPropsSnapshot || 'figma-component-props.snapshot.json')) || {};
+  // Optional composition snapshot ({ "<Component>": ["Child", ...] }) drives relationships.composesWith.
+  // Absent → relationships are simply omitted (additive, never an error).
+  const composition = readJSON(resolve(ROOT, paths.compositionSnapshot || 'component-composition.snapshot.json')) || {};
 
   let CONTRACT = {};
   const contractPath = resolve(ROOT, cfg.paths?.structureContract || 'structure-contract.mjs');
@@ -461,7 +513,7 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   let authoredDoc = readJSON(authoredPath);
   if (!authoredDoc) {
     authoredDoc = {
-      _note: 'Hand-authored contract layer (rms-parity) — COMMIT this file. It holds decisions only (Figma->code bindings, semantics, notes), never captured DS values, so it is safe to share and applies in CI. The generated contracts/ + tokens.json are local, gitignored views built from this + the Figma snapshots. Resolve a prop rename or slot by adding, under a component: "bindings": { "<figmaProp>": { "attribute": "codeName" } }  or  { "slot": "slotName" }.',
+      _note: 'Hand-authored contract layer (rms-parity) — COMMIT this file. It holds decisions only (Figma->code bindings, semantics, notes), never captured DS values, so it is safe to share and applies in CI. The generated contracts/ + tokens.json are local, gitignored views built from this + the Figma snapshots. Resolve a prop rename or slot by adding, under a component: "bindings": { "<figmaProp>": { "attribute": "codeName" } }  or  { "slot": "slotName" }. Optional agent guidance per component: "whenNotToUse" (string), "useInstead" (string or list), "neverCombineWith" (list of component names).',
       components: Object.fromEntries(allNames.map((n) => [n, { bindings: {} }])),
     };
     try { writeFileSync(authoredPath, JSON.stringify(authoredDoc, null, 2) + '\n'); } catch { /* best-effort */ }
@@ -498,10 +550,11 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const breaking = [...tokenChanges];
   const undefinedRefs = [];
   const typeMismatches = [];
+  const componentNames = new Set(allNames);   // real DS components, to filter composesWith
   for (const name of targets) {
     const file = join(outDir, name + '.contract.json');
     const prev = readJSON(file);                                              // previous emit (for the diff)
-    const contract = buildContract(name, { contract: CONTRACT, structure, props, authored: authoredDoc.components?.[name] });
+    const contract = buildContract(name, { contract: CONTRACT, structure, props, authored: authoredDoc.components?.[name], composition, componentNames });
     const errs = validateContract(contract);
     writeFileSync(file, JSON.stringify(contract, null, 2) + '\n');
     emitted.push(name);

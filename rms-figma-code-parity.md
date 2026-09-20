@@ -26,12 +26,11 @@ the design; it only answers "does the code agree with Figma?". The gates cover:
 > the correct action is to run the Plugin-API capture instead.
 > Do not weaken this rule in a later edit — it is the whole reason the engine is plan-agnostic.
 
-**Report in the chat, in plain English.** By default the audit prints a gate summary to the
+**Report in the chat, in plain English.** The audit prints a gate summary to the
 console; relay those results to the user directly in the conversation, in plain language -
-which gates passed, which failed, and what each failure means. Do **not** generate any file,
-document, or HTML report unless the user explicitly asks for one. Only when they do, run
-`rms-figma-code-parity --report-html <path>` (a per-dimension Color / Sizing / Typography
-table). Either way, fix anything red before declaring parity.
+which gates passed, which failed, and what each failure means. The parity output is
+**always the conversation** - the skill never produces a file, document, or HTML report as
+its result. Fix anything red before declaring parity.
 
 ## How to run this skill (read first)
 
@@ -206,20 +205,29 @@ rms-figma-code-parity --version                       # am I on the latest? comp
 rms-figma-code-parity --update                        # update to the latest - no re-download
 rms-figma-code-parity --link-command                  # (re)point the /rms-figma-code-parity command at the install via symlink
 rms-figma-code-parity --trend                         # show last 20 audit runs + pass/fail trend
-rms-figma-code-parity --report-html parity.html       # generate HTML report only (no Phase 1)
-rms-figma-code-parity --docs                          # ALSO write the design-intent layer (opt-in output; runs after the gates)
+rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
+rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
 node scripts/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
 node scripts/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
 ```
 
-### `--docs` — the design-intent layer (opt-in OUTPUT, never a gate)
+### The design-intent layer (auto OUTPUT, never a gate)
 
-`--docs` (alias `--intent`) is an **output**, not a verification — the same category as
-`--report-html`. It is **off by default**, runs as a post-step *after* the gates (so it reuses
-the fresh snapshots), and **never affects pass/fail**. It is deliberately NOT a gate: a gate
-answers "does the code match Figma?", and generating documentation is neither a check nor
-something to force on a project that already has its own showroom/gallery.
+The design-intent layer is an **output**, not a verification — the same category as the
+contracts. It runs as a post-step *after* the gates, reusing the fresh snapshots, and **never
+affects pass/fail**. Because this is an **agnostic** engine, the default **adapts to the
+project** instead of forcing a private file on everyone: it **auto-generates once the project
+has ADOPTED it** — an existing `design-intent.json`, a `docs.out` path, or `docs.auto: true` in
+`ds-config.json` — or when the run passes `--docs`/`--intent`. A **zero-signal project gets no
+surprise file**. Once adopted it stays fresh **every run** (like the contracts), so an AI agent
+(and the showroom) always read a **current** DS rather than a stale one. Force it off with
+**`--no-docs`** or `ds-config.json → docs.auto: false`. To guarantee it on a fresh clone (the
+file is gitignored, so absent after checkout), set `docs.auto: true`. It is deliberately NOT a
+gate: a gate answers "does the code match Figma?", and generating documentation is neither a
+check nor something that decides the verdict. The heavier **showroom HTML stays opt-in** — it
+builds only with an explicit `--docs` (alias `--intent`) or `ds-config.json → showroom.auto:
+true`, and only when a showroom template is configured.
 
 It writes **one** merge-aware file, `<theme-css dir>/design-intent.json` (override with
 `ds-config.json → docs.out`) — a project's **intent layer**, organised as
@@ -243,7 +251,7 @@ and regeneration never destroys your prose. Author higher-layer/system intent di
 is 100% derived from **your** Figma + code, on your machine. Keep the output **gitignored** (add
 `design-intent.json` to `.gitignore`) and back it up privately alongside the snapshots — never
 commit it to a public repo, since it carries your Figma's internal annotations and DS rationale.
-Any consumer (an optional showroom, the HTML report) reads this **one** JSON — single source, no
+Any consumer (an optional showroom) reads this **one** JSON — single source, no
 re-derivation.
 
 #### The living style guide (opt-in, generated by `--docs`)
