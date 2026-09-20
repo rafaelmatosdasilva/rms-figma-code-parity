@@ -204,6 +204,17 @@ token pipelines. Fill in a binding under a component in `contract.authored.json`
 resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap - it still
 fails). The public tool ships only the generator, never your data.
 
+You can also add optional **agent guidance** under a component in `contract.authored.json`, so an AI
+builds from real rules instead of guessing:
+
+- **`whenNotToUse`** (string) and **`useInstead`** (a name or a list) - when not to reach for this
+  component, and what to pick instead.
+- **`neverCombineWith`** (list) - pairings that are genuinely invalid.
+
+These, together with a **derived `composesWith`** (the DS components each one nests, read from the
+composition snapshot), are emitted into the per-component contract and the `llms.txt` index. All are
+optional and additive - absent, nothing changes.
+
 Each run also warns (never failing) when a contract change since your last run is **breaking** (a prop,
 option, state or token removed, a default changed), when a token is newly deprecated or referenced but
 undefined, or when a token is used where a different type is expected - and it writes an `llms.txt`

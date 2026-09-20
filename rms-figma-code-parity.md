@@ -282,14 +282,18 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
 
 - **`contract.authored.json`** (project root, **committed**) — the AUTHORED hub: per component,
   `bindings` (Figma prop → `{ attribute: "codeName" }` for a rename, `{ slot: "slotName" }` for a slot),
-  plus optional `semantics`, `notes`, `version`, `description`, `propDescriptions`. Decisions only, no captured values, so
-  it is safe to commit and applies in CI. Scaffolded once (empty bindings), then hand-owned; the
-  generator never rewrites it.
+  plus optional `semantics`, `notes`, `version`, `description`, `propDescriptions`, and optional
+  **agent guidance** — `whenNotToUse` (string), `useInstead` (a name or a list) and `neverCombineWith`
+  (a list) — so an AI knows when not to reach for a component and what pairings are invalid. Decisions
+  only, no captured values, so it is safe to commit and applies in CI. Scaffolded once (empty bindings),
+  then hand-owned; the generator never rewrites it.
 - **`contracts/`** (**local, gitignored**) — the generated CAPTURED views, refreshed every run:
   `tokens.json` (W3C DTCG: `$type`/`$value`, per-mode under `$extensions`, referenced by
   `{family.token}`), one **standard** `<name>.contract.json` each (`id`, `version`, `props[]` with
-  `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`),
-  `contract.schema.json`, and an `llms.txt` AI index. They carry the DS's real values, so a single
+  `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`, plus optional `whenNotToUse`/`useInstead` and
+  `relationships` — `composesWith` derived from the composition snapshot, `neverCombineWith` authored),
+  `contract.schema.json`, and an `llms.txt` AI index (which also lists each component's guidance and
+  composition). They carry the DS's real values, so a single
   `.gitignore` keeps them local.
 
 The generator reads `contract.authored.json` + the snapshots and merges them into the local views (the
