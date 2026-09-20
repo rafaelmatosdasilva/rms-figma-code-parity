@@ -72,6 +72,10 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
     try { CONTRACT = (await import(pathToFileURL(contractPath).href)).CONTRACT || {}; } catch { /* keep going */ }
   }
 
+  // Authored agent guidance (whenNotToUse / useInstead) lives in the committed contract.authored.json.
+  const authoredPath = cfg.contracts?.authored ? resolve(ROOT, cfg.contracts.authored) : join(ROOT, 'contract.authored.json');
+  const authoredComps = (readJSON(authoredPath) || {}).components || {};
+
   const sources = [];
   for (const p of (paths.pluginCSS || [])) {
     const abs = resolve(ROOT, p);
@@ -102,6 +106,11 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
     const pr = props[name] || {};
     const annotations = (pr.annotations || []).map(a => (a.label || a)).filter(Boolean);
     const variants = Object.keys(s.variantHeight || s.variantStroke || {});
+    const ag = authoredComps[name] || {};
+    const agUseInstead = Array.isArray(ag.useInstead)
+      ? ag.useInstead.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
+      : (typeof ag.useInstead === 'string' && ag.useInstead.trim() ? [ag.useInstead.trim()] : []);
+    const agWhenNot = typeof ag.whenNotToUse === 'string' && ag.whenNotToUse.trim() ? ag.whenNotToUse.trim() : null;
     intent.components[name] = {
       class: cls,
       authored: prev.components?.[name]?.authored ?? '',   // your own per-component intent, preserved
@@ -114,6 +123,8 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
         note: (s._note || CONTRACT[name]?._note || '').trim() || null,
         cssComment: cssNoteFor(cls, css) || null,
       },
+      guidance: (agWhenNot || agUseInstead.length)         // authored: when NOT to use, and what instead
+        ? { whenNotToUse: agWhenNot, useInstead: agUseInstead.length ? agUseInstead : null } : null,
       facts: {
         height: s.h ?? null,
         paddingVar: s.paddingVar || null,
