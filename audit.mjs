@@ -2464,6 +2464,40 @@ function reportFull(label, items, shown) {
   if (hist.length > 100) hist = hist.slice(-100);
   try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
 
+  // ── Exemption debt (advisory, never a gate) ─────────────────────────────────
+  // Every exemption / escape-hatch is a deliberate bypass — usually a missing token or a
+  // real gap, not a free pass. Surface them each run so they stay visible and trend down,
+  // never affecting pass/fail. Agnostic: any ds-config.json key matching /exempt|exception/i
+  // that holds an array counts as an exemption list. Quiet by default (totals only); pass
+  // --exemption-debt to list every entry.
+  {
+    const debtLists = [];
+    const walkDebt = (o, path) => {
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        const p = path ? `${path}.${k}` : k;
+        if (/exempt|exception/i.test(k) && Array.isArray(v)) { if (v.length) debtLists.push({ key: p, entries: v }); }
+        else if (v && typeof v === 'object' && !Array.isArray(v)) walkDebt(v, p);
+      }
+    };
+    walkDebt(cfg, '');
+    const debtTotal = debtLists.reduce((n, l) => n + l.entries.length, 0);
+    if (debtTotal) {
+      const detail = process.argv.includes('--exemption-debt');
+      console.log(C.yellow(`\n⚠️  Exemption debt: ${debtTotal} bypass(es) across ${debtLists.length} list(s) — each is a deliberate exception to review (a missing token or a real gap), not a silent pass.`));
+      for (const l of debtLists) {
+        console.log(C.yellow(`     ${l.key}: ${l.entries.length}`));
+        if (detail) {
+          for (const e of l.entries) console.log(`       · ${typeof e === 'string' ? e : JSON.stringify(e)}`);
+        }
+      }
+      console.log(detail
+        ? C.yellow('   Clear one by adding the missing token / building the control, or confirm it is a genuine, permanent exception.')
+        : '   Run with --exemption-debt to list them.');
+    }
+  }
+
   // ── Design-intent (adopt-aware OUTPUT, not a gate) ──────────────────────────
   // Aggregates this project's Figma annotations + code notes + facts + usage into
   // one private, merge-aware design-intent.json. Never affects pass/fail. This is

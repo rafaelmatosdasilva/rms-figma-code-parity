@@ -205,6 +205,7 @@ rms-figma-code-parity --version                       # am I on the latest? comp
 rms-figma-code-parity --update                        # update to the latest - no re-download
 rms-figma-code-parity --link-command                  # (re)point the /rms-figma-code-parity command at the install via symlink
 rms-figma-code-parity --trend                         # show last 20 audit runs + pass/fail trend
+rms-figma-code-parity --exemption-debt                # list every exemption/escape-hatch (debt report; a totals line shows on every run)
 rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
 rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
