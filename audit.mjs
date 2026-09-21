@@ -38,7 +38,13 @@ const envPath = join(ROOT, '.env');
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf8').split('\n')) {
     const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
+    if (m && !process.env[m[1]]) {
+      let v = m[2].trim();
+      const q = v[0];
+      if ((q === '"' || q === "'") && v.length >= 2 && v.endsWith(q)) v = v.slice(1, -1);        // strip a matching quote pair
+      else { const h = v.indexOf(' #'); if (h >= 0) v = v.slice(0, h).trim(); }                   // strip an inline comment on unquoted values
+      process.env[m[1]] = v;
+    }
   }
 }
 const today      = new Date().toISOString().slice(0, 10);
@@ -834,8 +840,9 @@ async function bootstrapConfig() {
   // ── Auto-detect Figma collections ─────────────────────────────────────────────
   let figmaCfg = { colorCollection: 'Color', sizingCollection: null, breakpointCollection: null, animationCollection: null, excludeCollections: [], primitivePrefix: 'primitives/' };
   if (figmaFileKey && figmaToken) {
-    console.log(C.dim('  Querying Figma for collection structure…'));
-    const detected = await analyseCollections(figmaFileKey, figmaToken);
+    // Collection auto-detect is disabled (analyseCollections returns null); kept as a forward hook.
+    // No log line here: an earlier "Querying Figma…" message claimed work that never happens.
+    const detected = await analyseCollections();
     if (detected) figmaCfg = { ...figmaCfg, ...detected };
   } else if (figmaFileKey && !figmaToken) {
     console.log(C.yellow('  ⚠️  No FIGMA_TOKEN - collection names defaulted to "Color" / null. Edit ds-config.json if needed.'));
@@ -2407,9 +2414,6 @@ function reportFull(label, items, shown) {
     'Rendered computed styles agree with the DS spec (headless Chrome)',
     'Coverage - which DS components/states the audit actually checks',
   ];
-  const GATE_PLAN_RISK = {
-    1: 'Risk: gates consuming a stale snapshot pass against outdated data - DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity - the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.',
-  };
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
     const icon = result === 'plan' ? C.yellow('⏭') : result ? C.green('✅') : C.red('❌');
@@ -2427,8 +2431,6 @@ function reportFull(label, items, shown) {
     console.log(tRow(i + 1, plainLabel, result));
     if (g.planLimited) {
       console.log(C.yellow(`         Data was not auto-refreshed from the Figma API; ran against the committed snapshots.`));
-      const risk = GATE_PLAN_RISK[i + 1];
-      if (risk) console.log(C.yellow(`         ${risk}`));
     }
   });
   console.log();
@@ -2440,20 +2442,9 @@ function reportFull(label, items, shown) {
     console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
   }
   if (planLimitedGates.length) {
-    const PLAN_NOTES = {
-      1: [
-        'One or more snapshots are older than 24h and were not auto-refreshed from the',
-        'Figma API this run. This is a FRESHNESS flag, not a capability gap: every',
-        'snapshot (figma-structure, bound-tokens, component-state-tokens) can be captured',
-        'on any plan, with no token, via /rms-figma-code-parity (the Figma plugin).',
-        'Run it, commit the refreshed files, and this gate goes fully green. Until then,',
-        'gates consuming these files run against the committed data - correct as of its',
-        '_updated stamp, blind to DS changes made after it.',
-      ],
-    };
     console.log(C.yellow('  ⏭  DATA NOT AUTO-REFRESHED - what this means:\n'));
     for (const n of planLimitedGates) {
-      const notes = PLAN_NOTES[n] ?? [`Gate [${n}] ran against committed data; the live auto-refresh from Figma was not available this run.`];
+      const notes = [`Gate [${n}] ran against committed data; the live auto-refresh from Figma was not available this run.`];
       console.log(C.yellow(`  [${n}] ${gates[n - 1].label}`));
       for (const line of notes) console.log(C.yellow(`      ${line}`));
       console.log();

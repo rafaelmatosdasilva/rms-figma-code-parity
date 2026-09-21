@@ -156,11 +156,6 @@ Each run runs up to 23 checks (the last two run only when your DS defines motion
 
   ⏭  STALE-SNAPSHOT MODE - when a gate shows ⏭ instead of ✅:
 
-  [1] Figma snapshots and build outputs are current
-      Shown as ⏭ only when a snapshot is >24h old. The Phase 1 Plugin API capture
-      refreshes every snapshot on any plan - commit them and the gate is ✅.
-      Risk: gates consuming a stale snapshot pass against outdated data - DS changes made after its _updated stamp are invisible. Fix: run /rms-figma-code-parity - the Phase 1 Plugin API captures refresh every snapshot on any plan; commit the refreshed files and this gate goes fully green.
-
 ────────────────────────────────────────────────────────────
 ```
 <!-- EXAMPLE-OUTPUT-END -->

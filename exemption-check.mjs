@@ -183,6 +183,7 @@ for (const [token, cssVar] of Object.entries(EXPLICIT)) {
   }
   if (mv.status === 'runtime') { OK.push(`EXPLICIT [runtime-injected] ${token}`); continue; }
   const actualVar = mv.name;   // real declared name (handles a differing case)
+  let broke = false;
   for (const m of MODES) {
     const mode = m.snapshotKey;
     const figmaHex = snap.color?.[mode]?.[token] ?? snap.color?.[mode]?.[token + '/color'] ?? null;
@@ -190,9 +191,10 @@ for (const [token, cssVar] of Object.entries(EXPLICIT)) {
     const cssHex = resolve(actualVar, mode);
     if (cssHex && _hex(figmaHex) !== _hex(cssHex)) {
       BROKEN.push({ section: 'EXPLICIT', token, cssVar: actualVar, mode, reason: `value mismatch - Figma: ${figmaHex}, CSS: ${cssHex}` });
+      broke = true;
     }
   }
-  OK.push(`EXPLICIT ${token}`);
+  if (!broke) OK.push(`EXPLICIT ${token}`);   // a mismatched token belongs only under BROKEN, not also VALID
 }
 
 // B - SKIP_TOKENS

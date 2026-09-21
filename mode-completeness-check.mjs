@@ -87,8 +87,9 @@ const CHECKABLE = [];
 // 1) The colour axis (legacy behaviour, unchanged) - every token is kind 'color'.
 {
   const modeTokens = Object.fromEntries(COLOR_MODES.map(m => [m.snapshotKey, snap.color?.[m.snapshotKey] ?? {}]));
-  const baseKey = COLOR_MODES[0].snapshotKey;
-  const tokens = [...new Set(Object.keys(modeTokens[baseKey]).map(k => k.replace(/\/color$/, '')))];
+  // Union token keys across EVERY colour mode (not just the base) so a token present only in a
+  // non-base mode is still checked for completeness.
+  const tokens = [...new Set(COLOR_MODES.flatMap(m => Object.keys(modeTokens[m.snapshotKey])).map(k => k.replace(/\/color$/, '')))];
   CHECKABLE.push({
     label: cfg.figma?.colorCollection || 'color',
     modes: COLOR_MODES,
