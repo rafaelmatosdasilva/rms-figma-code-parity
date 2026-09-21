@@ -475,6 +475,54 @@ async function refreshFrameGeometry(fileKey, frames, token, outPath) {
   }
 }
 
+// ── Per-template composition inventory (the template-composition gate) ─────────────────
+// Walks each registered TEMPLATE frame (cfg.templates) and records, in document order, the DS
+// components it composes - the top-level component INSTANCE names, WITHOUT descending into an
+// instance's own internals (those are the component's business, already covered by the
+// sub-component gate). Written to figma-templates.snapshot.json and consumed by
+// template-composition-check.mjs, which requires the template's code to use each composed
+// component. Opt-in: no cfg.templates → returns without writing (gate stays a no-op PASS).
+async function refreshTemplateComposition(fileKey, templates, token, outPath) {
+  if (!templates?.length) return false;
+  try {
+    const out = {};
+    for (const tpl of templates) {
+      if (!tpl?.name || !tpl?.nodeId) continue;
+      const nd = await fetchNodeDoc(fileKey, tpl.nodeId, token);
+      if (!nd.ok) { console.log(C.yellow(`  ⚠️  /nodes ${tpl.nodeId} → ${nd.status}`)); continue; }
+      const components = [];
+      const seen = new Set();
+      (function rec(n) {
+        if (!n) return;
+        // Skip statically-hidden subtrees (visible:false with no visibility variable) - a dead
+        // layer is not part of the composition. A visibility-bound node is a real conditional and
+        // IS captured (matches refreshScreenElements).
+        if (n.visible === false && !(n.boundVariables && n.boundVariables.visible)) return;
+        if (n.type === 'INSTANCE' || n.type === 'COMPONENT') {
+          const name = (n.name || '').trim();
+          if (name && !seen.has(name)) { seen.add(name); components.push(name); }
+          return;   // do NOT descend into the instance's internals - top-level composition only
+        }
+        for (const c of n.children ?? []) rec(c);
+      })(Object.values(nd.nodes ?? {})[0]?.document);
+      const id = String(tpl.nodeId).replace('-', ':');
+      out[tpl.name] = { name: tpl.name, nodeId: id, components };
+    }
+    const payload = {
+      _updated: new Date().toISOString(),
+      _note: 'Per-template inventory of the DS components each template frame composes (top-level instances, document order). Consumed by template-composition-check.mjs. Auto-generated - do not edit by hand.',
+      templates: out,
+    };
+    writeFileSync(outPath, JSON.stringify(payload, null, 1) + '\n');
+    const total = Object.values(out).reduce((a, t) => a + t.components.length, 0);
+    console.log(C.dim(`  ✅ Template composition: ${total} component instance(s) across ${templates.length} template(s)`));
+    return true;
+  } catch (e) {
+    console.log(C.yellow(`  ⚠️  Template composition refresh failed: ${e.message}`));
+    return false;
+  }
+}
+
 // ── Per-reference-screen element inventory (the Markup gate) ──────────────────────────
 // Walks each reference SCREEN (cfg.screens, falling back to cfg.frames) and records every
 // interactive DS control instance as { component, label } - the visible label being the control's
@@ -2070,6 +2118,7 @@ function reportFull(label, items, shown) {
         : Promise.resolve(),
       () => SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
       () => refreshScreenElements(figmaFileKey, cfg.screens ?? cfg.frames ?? [], figmaToken, join(ROOT, 'figma-screens.snapshot.json')),
+      () => refreshTemplateComposition(figmaFileKey, cfg.templates ?? [], figmaToken, join(ROOT, 'figma-templates.snapshot.json')),
     ], FIGMA_REFRESH_CONCURRENCY);
   }
 
@@ -2189,7 +2238,7 @@ function reportFull(label, items, shown) {
   const a11yArgs = [...SCOPE_COMPONENTS.flatMap((c) => ['--component', c]), ...(process.argv.includes('--a11y') ? ['--a11y'] : [])];
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rCase, rA11y] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rCase, rA11y] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2216,6 +2265,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('container-containment-check.mjs'),
     runScriptAsync('component-prop-check.mjs'),
     runScriptAsync('component-composition-check.mjs'),
+    runScriptAsync('template-composition-check.mjs'),
     runScriptAsync('state-opacity-check.mjs'),
     runScriptAsync('icon-inventory-check.mjs'),
     runScriptAsync('screen-element-check.mjs'),
@@ -2285,6 +2335,11 @@ function reportFull(label, items, shown) {
     (cfg.frameworkComponents === false && cfg.htmlRealization)
       ? parseGeneric(rCompose, /OK|MISSING|SKIP/)
       : parseComponentFrameworkGate(rCompose, /OK|MISSING|NO FILE|EXTRA/));
+  // Template / page composition: one level ABOVE the component - does each template frame's code
+  // compose the components Figma composes? Opt-in via ds-config.json → templates[]; a no-op PASS
+  // otherwise. MISSING is advisory unless templateCompositionStrict; NO FILE always fails.
+  addGate('Templates compose the right components  (each template/page uses the components Figma composes)',
+    parseGeneric(rTemplateCompose, /USES|MISSING|NO FILE|ORDER|skipped/));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references · every DS screen control is built)',
@@ -2407,6 +2462,7 @@ function reportFull(label, items, shown) {
     'All states are built',
     'Component props match Figma',
     'Sub-components match Figma',
+    'Templates compose the right components',
     // Markup
     'Markup matches',
     'Required pieces are in place',

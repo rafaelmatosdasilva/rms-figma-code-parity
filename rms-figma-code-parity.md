@@ -519,7 +519,7 @@ are far under the cap and are collected in full.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`rms-figma-code-parity`** | **All 23 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 24 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -1456,13 +1456,13 @@ This file is produced by the Phase 1 Plugin API walk (works on any plan, no spec
 
 ---
 
-## Phase 2 - Step 2: Run all 23 audit gates
+## Phase 2 - Step 2: Run all 24 audit gates
 
 ```bash
 rms-figma-code-parity
 ```
 
-All 23 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
+All 24 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1602,6 +1602,10 @@ for (const node of roots) {
 }
 return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2);
 ```
+
+### `figma-templates.snapshot.json` - auto-captured in Phase 1 (REST `/nodes`, any plan)
+
+Feeds Gate [11d] (Templates compose the right components). For each frame listed in `ds-config.json → templates[]`, records the ordered top-level DS component instances it composes - `{ templates: { "Consult": { name, nodeId, components: ["Filters", "SidePanel"] } } }`. Captured automatically by `refreshTemplateComposition` in `audit.mjs` whenever `FIGMA_TOKEN` + `templates[]` are set (walks each frame, records INSTANCE/COMPONENT names in document order, does **not** descend into an instance's internals). Auto-generated - do not edit by hand; the gate is inert (PASS) until it exists.
 
 ### `figma-icons.snapshot.json` - Plugin API capture (no token, any plan)
 
@@ -1911,7 +1915,7 @@ return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 23 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| All 24 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 
