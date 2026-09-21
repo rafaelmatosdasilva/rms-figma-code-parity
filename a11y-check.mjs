@@ -11,25 +11,33 @@
 // dev server; `--url` even runs with no ds-config.json at all. `a11y.waitFor` (a selector) delays
 // the sweep until an SPA has rendered.
 //
-// Per configured theme it checks:
-//   1. Contrast  — WCAG 2.1 AA ratio of each text leaf's computed color vs its EFFECTIVE
-//                  (composited) background; normal >= 4.5:1, large >= 3:1.
-//   2. Name/role — every interactive node in the accessibility tree has a non-empty
-//                  accessible name and a resolvable role (catches the icon-button-with-no-label).
-//   3. Focus     — every focusable element shows a computed style change when focused.
+// It checks:
+//   1. Contrast   — WCAG 2.1 AA ratio of each text leaf's computed color vs its EFFECTIVE
+//                   (composited) background; normal >= 4.5:1, large >= 3:1. Per theme.
+//   2. Name/role  — every interactive node in the accessibility tree has a non-empty accessible
+//                   name and a resolvable role (a component not exposing aria / an icon-button
+//                   with no label).
+//   3. Focus      — every focusable element shows a computed style change when focused.
+//   4. State expo — an element whose STATE is shown only by a CSS class (selected / checked /
+//                   expanded / disabled / invalid / pressed / …) but never through the matching
+//                   aria/native state, so assistive tech never hears it. State-class → aria map
+//                   is common-English by default; extend via ds-config.json → a11y.stateClasses.
+//   5. Keyboard   — an interactive control that cannot be reached by keyboard (an interactive
+//                   role on a non-focusable element, or a native control with tabindex=-1).
 //
 // Advisory by default (never fails the audit); `ds-config.json → a11yStrict: true` promotes
 // findings to a hard fail (exit 1). Skips cleanly (exit 0) when no browser is available — never
-// a false fail. `--component A,B` scopes the contrast/focus sweep to those components' subtrees.
+// a false fail. `--component A,B|.selector` scopes the sweep to those components' subtrees.
 //
 // No npm dependencies (Node >= 22 built-in WebSocket). Honors No-imposed-structure: findings
 // come from measured pixels and the accessibility tree, not from any presumed token/tier model.
 //
 // NOT yet (v2, by design):
-//   - Non-text / component contrast (WCAG 1.4.11, >= 3:1) — borders, icons, states.
-//   - Per-interaction-state a11y (real focus/hover/checked, reusing the state walk).
-//   - Keyboard order, skip links, landmarks — and anything the render cannot reveal: only when
-//     the project declares it in ds-config.json, never imposed (No-imposed-structure).
+//   - Non-text / component contrast (WCAG 1.4.11, >= 3:1) — borders, icons, focus-ring contrast.
+//   - Per-interaction-state a11y across live hover/checked states (the state-exposure check above
+//     reads the resting DOM; forcing each interaction state is the next step, reusing the state walk).
+//   - Reading order, skip links, landmark completeness — and anything the render cannot reveal:
+//     only when the project declares it in ds-config.json, never imposed (No-imposed-structure).
 
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
@@ -185,7 +193,7 @@ function findChrome() {
 
 // The in-page sweep: collect visible text leaves (with their computed color + background layer
 // stack + font) and focusable elements that show no focus-style change. Runs entirely in the page.
-function sweepExpression(roots, doFocus) {
+function sweepExpression(roots, doFocus, stateMap) {
   return `(() => {
     const roots = ${JSON.stringify(roots)};
     const rootEls = roots ? roots.flatMap(s => [...document.querySelectorAll(s)]) : [document.body];
@@ -218,18 +226,49 @@ function sweepExpression(roots, doFocus) {
         bgImage: !!(cs.backgroundImage && cs.backgroundImage !== 'none'),
       });
     }
-    let noFocus = [];
+    let noFocus = [], ariaState = [], notKeyboard = [];
     if (${doFocus ? 'true' : 'false'}) {
-      const focusables = scope.filter(el => vis(el) && !disabled(el) && el.matches('a[href],button,input:not([type=hidden]),select,textarea,[tabindex],[role=button],[role=link]'));
-      for (const el of focusables) {
-        const b = getComputedStyle(el); const before = b.outlineStyle+'|'+b.outlineWidth+'|'+b.boxShadow+'|'+b.borderColor+'|'+b.borderWidth;
-        try { el.focus(); } catch(e){}
-        const a = getComputedStyle(el); const after = a.outlineStyle+'|'+a.outlineWidth+'|'+a.boxShadow+'|'+a.borderColor+'|'+a.borderWidth;
-        try { el.blur(); } catch(e){}
-        if (before === after) noFocus.push((el.tagName.toLowerCase()+(el.id?('#'+el.id):'')).slice(0,60));
+      const STATE_MAP = ${JSON.stringify(stateMap || {})};
+      const stateWords = Object.keys(STATE_MAP);
+      const INTERACTIVE = 'a[href],button,input:not([type=hidden]),select,textarea,[tabindex],[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=option],[role=combobox],[role=slider]';
+      const NATIVE_FOCUSABLE = 'a[href],button,input:not([type=hidden]),select,textarea';
+      const IROLES = ['button','link','checkbox','radio','switch','tab','menuitem','option','combobox','slider'];
+      for (const el of scope) {
+        if (!vis(el)) continue;
+        const desc = (el.tagName.toLowerCase()+(el.id?('#'+el.id):'')).slice(0,60);
+        const role = el.getAttribute('role');
+        const isInteractive = el.matches(INTERACTIVE);
+        // 3. Visible focus — a native focusability style change.
+        if (!disabled(el) && el.matches('a[href],button,input:not([type=hidden]),select,textarea,[tabindex],[role=button],[role=link]')) {
+          const b = getComputedStyle(el); const before = b.outlineStyle+'|'+b.outlineWidth+'|'+b.boxShadow+'|'+b.borderColor+'|'+b.borderWidth;
+          try { el.focus(); } catch(e){}
+          const a = getComputedStyle(el); const after = a.outlineStyle+'|'+a.outlineWidth+'|'+a.boxShadow+'|'+a.borderColor+'|'+a.borderWidth;
+          try { el.blur(); } catch(e){}
+          if (before === after) noFocus.push(desc);
+        }
+        // 4. State communicated ONLY by a CSS class — a state word in the class list with no
+        //    matching aria/native state, so assistive tech never hears the state.
+        if (isInteractive || role) {
+          const tokens = ((el.className && typeof el.className==='string') ? el.className.toLowerCase() : '').split(/[\\s_-]+/).filter(Boolean);
+          for (const w of stateWords) {
+            if (!tokens.includes(w)) continue;
+            const spec = STATE_MAP[w];
+            const got = spec.attr==='disabled'
+              ? (el.disabled===true || el.getAttribute('aria-disabled')==='true')
+              : (el.getAttribute(spec.attr)===spec.val || (spec.val==='true' && el.getAttribute(spec.attr)==='true'));
+            if (!got) { ariaState.push((desc+' .'+w).slice(0,70)); break; }
+          }
+        }
+        // 5. Keyboard reachability — an interactive control that cannot be reached by keyboard.
+        const interactiveRole = role && IROLES.includes(role);
+        if ((interactiveRole || isInteractive) && !disabled(el)) {
+          const ti = el.getAttribute('tabindex');
+          const focusable = el.matches(NATIVE_FOCUSABLE) ? ti !== '-1' : (ti !== null && Number(ti) >= 0);
+          if (!focusable) notKeyboard.push((desc+(role?('[role='+role+']'):'')).slice(0,70));
+        }
       }
     }
-    return { textEls, noFocus };
+    return { textEls, noFocus, ariaState, notKeyboard };
   })()`;
 }
 
@@ -301,6 +340,22 @@ async function main() {
   if (!targets.length) skip('no render targets — start your dev server and pass --url <page> (or set ds-config.json → a11y.urls / a11y.serve), or build the UIs for a static DS. Auto-discovery found nothing.');
   const waitFor = cfg.a11y?.waitFor ?? null;   // optional selector to await before the sweep (SPA hydration)
 
+  // State-class → the aria/native state it must also expose. A common-English default (extend or
+  // override per project via ds-config.json → a11y.stateClasses). Curated words only, so a plain
+  // decorative class never trips it; the check only fires on interactive / roled elements.
+  const STATE_MAP = Object.assign({
+    selected:      { attr: 'aria-selected', val: 'true' },
+    checked:       { attr: 'aria-checked',  val: 'true' },
+    expanded:      { attr: 'aria-expanded', val: 'true' },
+    open:          { attr: 'aria-expanded', val: 'true' },
+    pressed:       { attr: 'aria-pressed',  val: 'true' },
+    disabled:      { attr: 'disabled',      val: 'true' },
+    invalid:       { attr: 'aria-invalid',  val: 'true' },
+    error:         { attr: 'aria-invalid',  val: 'true' },
+    current:       { attr: 'aria-current',  val: 'true' },
+    indeterminate: { attr: 'aria-checked',  val: 'mixed' },
+  }, cfg.a11y?.stateClasses ?? {});
+
   const CHROME = findChrome();
   if (!CHROME) skip('Chrome not found (set CHROME_PATH to enable)');
   if (typeof WebSocket === 'undefined') skip('Node >= 22 required (built-in WebSocket)');
@@ -359,14 +414,18 @@ async function main() {
       }
     } catch { /* Accessibility domain unavailable — skip name/role, not a fail */ }
 
-    // 1 + 3. Contrast per theme; focus once (first theme).
+    // 1. Contrast per theme; 3/4/5. focus + state-exposure + keyboard once (first theme).
     let first = true;
     for (const mode of modes) {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode.scheme }] }, sessionId);
-      const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, first), returnByValue: true }, sessionId);
-      const { textEls = [], noFocus = [] } = r.result.value || {};
+      const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, first, STATE_MAP), returnByValue: true }, sessionId);
+      const { textEls = [], noFocus = [], ariaState = [], notKeyboard = [] } = r.result.value || {};
       for (const f of contrastFindings(textEls, mode.name)) findings.push({ plugin: label, ...f });
-      if (first) for (const desc of noFocus) findings.push({ kind: 'focus', plugin: label, desc });
+      if (first) {
+        for (const desc of noFocus) findings.push({ kind: 'focus', plugin: label, desc });
+        for (const desc of ariaState) findings.push({ kind: 'ariastate', plugin: label, desc });
+        for (const desc of notKeyboard) findings.push({ kind: 'keyboard', plugin: label, desc });
+      }
       first = false;
     }
     await send('Target.closeTarget', { targetId });
@@ -381,22 +440,26 @@ async function main() {
   const cannot   = findings.filter((f) => f.kind === 'contrast' && f.cannotCompute);
   const names    = findings.filter((f) => f.kind === 'name');
   const focus    = findings.filter((f) => f.kind === 'focus');
+  const state    = findings.filter((f) => f.kind === 'ariastate');
+  const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
   console.log(`\n─── [a11y] Accessibility (WCAG AA, from the render) ${STRICT ? '· STRICT' : '· advisory'} ───\n`);
-  console.log(`a11y: ${contrast.length} contrast, ${names.length} missing names, ${focus.length} no-focus across ${themes.length} theme(s)${cannot.length ? ` · ${cannot.length} cannot-compute` : ''}`);
+  console.log(`a11y: ${contrast.length} contrast, ${names.length} missing names, ${focus.length} no-focus, ${state.length} state-not-exposed, ${keyboard.length} not-keyboard across ${themes.length} theme(s)${cannot.length ? ` · ${cannot.length} cannot-compute` : ''}`);
 
   if (VERBOSE) {
     const show = (list, head, fmt) => { if (!list.length) return; console.log(`\n  ${head}`); for (const f of list.slice(0, 100)) console.log(`    · ${fmt(f)}`); };
     show(contrast, 'Below AA contrast:', (f) => `[${f.theme}] ${f.desc} — ${f.ratio}:1 < ${f.threshold}:1${f.text ? `  ("${f.text}")` : ''}`);
-    show(names, 'Missing accessible name:', (f) => `${f.desc} (${f.plugin})`);
+    show(names, 'Missing accessible name (component not exposing aria):', (f) => `${f.desc} (${f.plugin})`);
     show(focus, 'No visible focus indicator:', (f) => `${f.desc} (${f.plugin})`);
+    show(state, 'State shown only by a CSS class (not exposed to assistive tech):', (f) => `${f.desc} (${f.plugin})`);
+    show(keyboard, 'Interactive but not keyboard-reachable:', (f) => `${f.desc} (${f.plugin})`);
     show(cannot, 'Cannot compute (image/gradient background):', (f) => `[${f.theme}] ${f.desc}`);
-  } else if (contrast.length + names.length + focus.length) {
+  } else if (contrast.length + names.length + focus.length + state.length + keyboard.length) {
     console.log('   run with --a11y to list every finding');
   }
 
-  const total = contrast.length + names.length + focus.length;
+  const total = contrast.length + names.length + focus.length + state.length + keyboard.length;
   if (STRICT && total) {
     console.log(`\n❌ [a11y] a11yStrict: ${total} accessibility issue(s)`);
     process.exit(1);

@@ -313,12 +313,16 @@ the few tokens that hold a raw value instead). Override paths with
 #### Accessibility check (I18, advisory, from the render)
 
 A mechanical, agnostic accessibility pass (`a11y-check.mjs`) that reuses the Gate 22 CDP/headless-Chrome
-flow. Per configured theme it reports **WCAG AA contrast** (computed `color` vs the effective composited
-background), **accessible name + role** (interactive nodes, from the accessibility tree), and **visible
-focus** (a computed style change when the element is focused). Findings come from measured pixels and the
-a11y tree, no assumed DS shape (No-imposed-structure).
+flow. It reports **WCAG AA contrast** per theme (computed `color` vs the effective composited background),
+**accessible name + role** (interactive nodes from the accessibility tree — a component that never exposes
+aria), **visible focus** (a computed style change when focused), **state exposure** (an element whose state
+is shown only by a CSS class — `.selected` / `.checked` / `.disabled` / `.invalid` / … — with no matching
+`aria-*` or native state, so assistive tech never hears it; the state-class→aria map is common-English by
+default, extend via `a11y.stateClasses`), and **keyboard reachability** (an interactive control that cannot
+be reached by keyboard — an interactive role on a non-focusable element, or a native control with
+`tabindex=-1`). Findings come from measured pixels and the a11y tree, no assumed DS shape (No-imposed-structure).
 
-**Advisory by default** (a totals line: `a11y: N contrast, M missing names, K no-focus across T themes`);
+**Advisory by default** (a totals line: `a11y: N contrast, M missing names, K no-focus, P state-not-exposed, Q not-keyboard across T themes`);
 `--a11y` lists every finding; `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It runs
 inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y]`
 (`--component` scopes the sweep and accepts a raw CSS selector too). **Skips cleanly** (exit 0) with no
@@ -343,10 +347,11 @@ So a Storybook or router-based DS runs fully automatically the first time — no
 bespoke app that exposes no page index is the only case that needs a `--url` / `a11y.urls` hint (set once).
 
 **Not yet (v2, by design):**
-- **Non-text / component contrast** (WCAG 1.4.11, ≥ 3:1) — borders, icons, states.
-- **Per-interaction-state a11y** (real focus/hover/checked, reusing the state walk).
-- **Keyboard order, skip links, landmarks** — and anything the render cannot reveal: only when the
-  project **declares** it in `ds-config.json`, never imposed (No-imposed-structure).
+- **Non-text / component contrast** (WCAG 1.4.11, ≥ 3:1) — borders, icons, focus-ring contrast.
+- **Live interaction-state a11y** — the state-exposure check reads the resting DOM; forcing each
+  hover/checked/expanded state and re-checking is the next step (reusing the state walk).
+- **Reading order, skip links, landmark completeness** — and anything the render cannot reveal: only when
+  the project **declares** it in `ds-config.json`, never imposed (No-imposed-structure).
 
 ---
 
