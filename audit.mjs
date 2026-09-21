@@ -2238,7 +2238,7 @@ function reportFull(label, items, shown) {
   const a11yArgs = [...SCOPE_COMPONENTS.flatMap((c) => ['--component', c]), ...(process.argv.includes('--a11y') ? ['--a11y'] : [])];
 
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rCase, rA11y] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rReimpl, rCase, rA11y] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2270,6 +2270,7 @@ function reportFull(label, items, shown) {
     runScriptAsync('icon-inventory-check.mjs'),
     runScriptAsync('screen-element-check.mjs'),
     runScriptAsync('docs-truth-check.mjs'),
+    runScriptAsync('reimplementation-check.mjs'),
     runScriptAsync('case-check.mjs'),
     runScriptAsync('a11y-check.mjs', a11yArgs),
   ]);
@@ -2300,6 +2301,11 @@ function reportFull(label, items, shown) {
     parseGeneric(rDocsTruth, /\[docs-truth\]/));
   addGate('No invented text casing  (no text-transform the DS/Figma does not define)',
     parseGeneric(rCase, /\[text-case\]/));
+  // Local reimplementation: a screen that hand-builds a DS component (a locally-styled <button>)
+  // instead of using it. Opt-in via ds-config.json → reimplementationSurfaces[]; advisory unless
+  // reimplementationStrict. code → Figma direction, complements the naming/docs anti-invention gates.
+  addGate('No hand-built DS components  (screens use the DS component, not a local look-alike)',
+    parseGeneric(rReimpl, /\[reimplementation\]/));
 
   // ── CSS quality ───────────────────────────────────────────────────────────────
   addGate('Clean CSS  (no unused variables · no values that contradict Figma · safe containment)',
@@ -2454,6 +2460,7 @@ function reportFull(label, items, shown) {
     'No invented CSS variables',
     'Docs tell the truth',
     'No invented text casing',
+    'No hand-built DS components',
     // Clean CSS
     'Clean CSS',
     'Nested components keep their own styles',

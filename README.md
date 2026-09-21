@@ -63,6 +63,7 @@ Every run compares the code against Figma. In plain terms:
 - **No invented CSS variables** — every variable really comes from Figma.
 - **Docs tell the truth** — your docs mention only tokens and variables that exist.
 - **No invented text casing** — no forced UPPERCASE the design never asked for.
+- **No hand-built DS components** — a screen uses the DS component, not a local look-alike styled by hand (opt-in via `reimplementationSurfaces[]`).
 - **Clean CSS** — no unused variables, and nothing that contradicts Figma.
 - **Nested components keep their own styles** — one component's styles do not leak into another.
 - **Structure** — the right height, spacing and corners, from tokens.

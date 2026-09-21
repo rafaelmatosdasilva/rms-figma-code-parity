@@ -418,6 +418,7 @@ Once `ds-config.json` exists, extract:
 - `figma.motion` *(optional)* - opt-in motion-token parity (easing + duration variables → CSS). `{ explicit?: { token: "--css-var" }, skip?: [token] }`. Tokens default to `--token-path`. No-op unless the snapshot has a `motion` map AND this is set.
 - `figma.effects` *(optional)* - opt-in effect-style parity (Figma shadow styles → CSS `box-shadow`). `{ explicit?: { styleName: "--css-var" }, skip?: [styleName] }`. Requires the shadow to be tokenised as a CSS var. No-op unless the snapshot has an `effects` map AND this is set.
 - `docs.surfaces` *(optional)* - array of documentation files (relative paths, e.g. `["apps/style-guide/index.html"]`) that Gate [20] checks for invented/stale DS references. Local files only (a URL-hosted stylesheet is skipped, never a false failure). Unset = the gate is a no-op PASS. Point it at any living style guide / component showroom / DS doc that should reference only real DS tokens and vars.
+- `reimplementationSurfaces` *(optional)* - array of code surfaces (relative paths; one trailing-`*` glob supported, e.g. `["apps/*/ui.src.html", "src/views/*.vue"]`) that Gate [20b] scans for a DS component **rebuilt by hand** - an interactive element of a DS-owned role, locally styled to look like the component but not using its class. Unset = a no-op PASS. `reimplementationRoles` *(optional, default `["button"]`)* widens the roles checked; a role is only checked when the DS defines a component for it. `reimplementationStrict` *(optional, default `false`)* promotes a finding from advisory to a hard fail. Exempt a deliberate look-alike via `knownReimplementations` (`["ui.html#.save-btn"]`).
 - `figma.primitivePrefix` - token path prefix to exclude from component token walks (e.g. `"primitives/"`)
 - `figma.componentsPage` *(optional)* - node id of the DS components page (e.g. `"1:439"`). Enables Gate [1]'s **component inventory** check: the live component list on that page is diffed against the structure snapshot so an added/removed DS component always surfaces by name. Without it, the check is skipped (a new component can slip through unaudited).
 - `figma.namingConvention` *(optional)* - overrides for how Figma token paths are converted to CSS var names:
@@ -519,7 +520,7 @@ are far under the cap and are collected in full.
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`rms-figma-code-parity`** | **All 24 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`rms-figma-code-parity`** | **All 25 gates - snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -1456,13 +1457,13 @@ This file is produced by the Phase 1 Plugin API walk (works on any plan, no spec
 
 ---
 
-## Phase 2 - Step 2: Run all 24 audit gates
+## Phase 2 - Step 2: Run all 25 audit gates
 
 ```bash
 rms-figma-code-parity
 ```
 
-All 24 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
+All 25 gates must pass. Gate [1] is ✅ right after a live Phase 1 refresh; when the refresh was skipped (no token / COMPONENT_SET / MCP not authorised) it reports the snapshot's age as an advisory instead - that is expected, not a failure.
 
 Gates are grouped by theme. Within a group, earlier gates are prerequisites for later ones.
 
@@ -1491,6 +1492,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [18] | `motion-check.mjs` | **Animation** | **Motion** - Easing and duration variables in Figma (the Motion collection) match their CSS custom properties. Opt-in: a no-op unless `figma.motion` is configured and the snapshot has a `motion` map. |
 | [19] | `effect-check.mjs` | **Animation** | **Shadows** - Figma effect styles (drop/inner shadow) match the CSS `box-shadow` they are tokenised into. Opt-in: a no-op unless `figma.effects` is configured and the snapshot has an `effects` map. |
 | [20] | `docs-truth-check.mjs` | **Docs integrity** | **Docs tell the truth** - A documentation surface (a living style guide, component showroom, or any DS doc) must reference **only DS things that exist** - never invented or stale tokens, and reuse DS icons rather than hand-drawing them. Verifies (1) every `var(--x)` used in the doc is declared somewhere real (the canonical `theme.css`/`pluginCSS`, or the doc's own `:root`/chrome vars - a self-contained doc that inlines the theme still gets caught when it references a var declared *nowhere*, e.g. a `--radius-sm` chip); (2) every DS token path shown as a label (`radii/… gap/… padding/… typography/… general/…`) is a real key in the vars/sizing snapshot (an invented `radii/whatever` fails); and (3) every icon `<use href="#id">` resolves to a `<symbol id="id">` defined in the doc's own DS icon sheet or the `pluginCSS`/HTML surfaces (a dangling/typo'd icon id fails). It also enforces the DS **construction rules** for the doc's own CSS: (4) **no all-caps** — `text-transform: uppercase` is invented styling (the DS has none) → fails; (5) **colours are variables** — a colour literal (`#hex`/`rgb()`/`hsl()`) as the value of a visual property in a rule is a hardcoded colour → fails (a `--token: #hex` *declaration* is the variable, so it never trips). And it **advises** (never fails) on: an inline `<svg>` that draws its own icon (a `<path>`/`<circle>`/… outside a `<symbol>`) instead of `<use>`-ing a DS one; and a hardcoded `font-size` in a rule (prefer the DS text-scale vars `--s/m/l-size` — advisory because a doc legitimately needs a few display heading sizes the 3-tier component scale doesn't provide). Comments (`/* … */`, `<!-- … -->`) are stripped before the usage scan, so prose *about* the DS never counts as a reference. Opt-in and generic: runs only when `ds-config.json → docs: { surfaces: ["apps/style-guide/index.html", …] }` is set; a no-op PASS otherwise. Completeness ("the DS has 8 radii, the doc shows 5") and non-token claims (a fake text style) are out of scope here - the design-intent GENERATOR (`--docs`) is the upstream cure, deriving the doc from canonical sources so invention is impossible. **Hard rule for construction: when you build a doc/showroom, never use a component, icon, text style, token or var the system doesn't have, and never invent - reuse the DS.** |
+| [20b] | `reimplementation-check.mjs` | **Docs integrity** | **No hand-built DS components** - The code→Figma anti-invention gates catch invented *names* (a var, a prop); this catches a subtler drift the Notion DS manuals name explicitly ("não uses HTML/CSS local para simular componentes"): a screen that **re-builds** a DS component by hand instead of using it. It flags an interactive element of a role the DS **owns** (defines a component for) that (a) does **not** carry a DS component class for that role, yet (b) is locally styled to reconstruct it (`background`/`border`/`border-radius`/`padding`, via a local class rule or an inline `style`). That pairing - "styled like the component, but not the component" - is the signature of a look-alike. **Opt-in and generic**: runs only when `ds-config.json → reimplementationSurfaces[]` lists code surfaces (local paths, one trailing-`*` glob supported), a no-op PASS otherwise. Roles default to `["button"]` (highest signal, lowest false-positive) and widen via `reimplementationRoles`; the DS component universe comes from `componentSelectors` + the composition/structure snapshots, so a role is only checked when the DS actually defines a component for it. **ADVISORY by default** (never blocks); a hard fail under `reimplementationStrict: true`. Exempt a deliberate look-alike via `knownReimplementations` (`["ui.html#.save-btn"]`). Native radio/checkbox/input are deliberately left to Gate [13c] (form controls); container components rebuilt as `<div>` are a v2 (shape inference, higher FP). |
 | [21] | `case-check.mjs` | **Docs integrity** | **No invented text casing** - Figma text styles carry no forced casing, so a `text-transform: uppercase | lowercase | capitalize` in the token/component CSS (`paths.themeCSS` + `paths.pluginCSS`) is invented styling that drifts from Figma - the same "no all-caps" rule the docs-truth gate applies to a showroom, applied to the DS CSS itself. Caught a real case: a `.section-label` "uppercase group heading" that had no Figma text style behind it and had spread into two plugins. A DS that genuinely defines an upper/lower/title text style (Figma `textCase`) exempts it via `ds-config.json → knownTextTransforms` (the casing word, or a `"<file>:<line>"`). |
 
 **Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
@@ -1915,7 +1917,7 @@ return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 24 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
+| All 25 gates pass AND Phase 1 found no new tokens | **Spot-check** - sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** - run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** - Step 3 deep-walk for that component at minimum |
 
