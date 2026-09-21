@@ -69,6 +69,7 @@ Every run compares the code against Figma. In plain terms:
 - **All states are built** — hover, disabled, selected and the rest each exist and use the right values.
 - **Component props match Figma** — the same names, defaults and options as Figma.
 - **Sub-components match Figma** — the parts Figma nests are the ones the code uses.
+- **Templates compose the right components** — each template/page uses the components Figma composes (opt-in via `templates[]`).
 - **Markup** — ids, classes and icons match, and every control the design shows is actually built.
 - **Required pieces are in place** — icon slots, component slots and form controls.
 - **Icons** — come from the shared set and match Figma.

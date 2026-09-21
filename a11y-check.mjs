@@ -111,6 +111,57 @@ export function contrastFindings(textEls, theme) {
   return out;
 }
 
+// ── Auto-discovery: start the project's dev server and enumerate render pages ────
+// The most-automated path when nothing is configured and there is no static build. Reads
+// package.json for a dev/serve/storybook script, starts it, reads the URL it prints, then
+// enumerates targets: Storybook stories → else static router routes → else the base page.
+// Fully agnostic (no DS shape assumed) and opt-out via ds-config.json → a11y.discover:false.
+// Any failure returns null/nothing — the caller then asks or skips, never a crash.
+function detectServeCmd(ROOT, cfg) {
+  if (cfg.a11y?.serve) return cfg.a11y.serve;
+  let pkg; try { pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')); } catch { return null; }
+  const s = pkg.scripts || {};
+  for (const name of ['storybook', 'dev', 'serve', 'start', 'preview']) if (s[name]) return 'npm run ' + name;
+  return null;
+}
+function startDevServer(cmd, ROOT) {
+  const parts = cmd.split(/\s+/);
+  const proc = spawn(parts[0], parts.slice(1), { cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '0' } });
+  const stop = () => { try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch {} } };
+  const url = new Promise((res) => {
+    let buf = '', done = false;
+    const finish = (v) => { if (!done) { done = true; res(v); } };
+    const scan = (d) => { buf += d.toString(); const m = buf.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d+)?[^\s'"]*/i); if (m) finish(m[0].replace(/\/+$/, '')); };
+    proc.stdout.on('data', scan); proc.stderr.on('data', scan);
+    proc.on('exit', () => finish(null));
+    setTimeout(() => finish(null), 40000);   // give the server up to 40s to print a URL
+  });
+  return { url, stop };
+}
+async function fetchJson(u) { try { const r = await fetch(u, { signal: AbortSignal.timeout(6000) }); return r.ok ? await r.json() : null; } catch { return null; } }
+async function discoverStorybook(base) {
+  for (const p of ['/index.json', '/stories.json']) {
+    const j = await fetchJson(base + p); if (!j) continue;
+    const entries = j.entries || j.stories || {};
+    const ids = Object.values(entries).filter((e) => (e.type ?? 'story') === 'story').map((e) => e.id).filter(Boolean);
+    if (ids.length) return ids.map((id) => `${base}/iframe.html?id=${encodeURIComponent(id)}&viewMode=story`);
+  }
+  return null;
+}
+function discoverRoutes(ROOT, base) {
+  const files = ['src/router/index.ts', 'src/router/index.js', 'src/router.ts', 'src/router.js', 'src/routes.ts', 'src/routes.js', 'src/App.tsx', 'src/App.jsx'];
+  const out = new Set();
+  for (const rel of files) {
+    let txt; try { txt = readFileSync(join(ROOT, rel), 'utf8'); } catch { continue; }
+    for (const m of txt.matchAll(/\bpath\s*:\s*['"`]([^'"`]+)['"`]/g)) {
+      const p = m[1];
+      if (p.startsWith('/') && !p.includes(':') && !p.includes('*')) out.add(p);   // static routes only (no params/wildcards)
+    }
+  }
+  const b = base.replace(/\/$/, '');
+  return out.size ? [...out].map((p) => b + p) : null;
+}
+
 // ── CLI arg helpers ─────────────────────────────────────────────────────────────
 function argValues(flag, argv) {
   const out = [];
@@ -217,12 +268,37 @@ async function main() {
     return join(ROOT, src ? src.replace(/\.src\.html$/, '.html') : `apps/${plugin}/ui.html`);
   };
 
-  // Render targets — no project shape imposed. --url > ds-config a11y.urls > built plugin UIs.
+  // Render targets — no project shape imposed. Priority: --url > ds-config a11y.urls > built
+  // static HTML (the plugin shape) > AUTO-DISCOVERY (start the dev server + enumerate pages).
   const urlList = [...cliUrls, ...(cfg.a11y?.urls ?? [])];
-  const targets = urlList.length
+  let stopServer = null;
+  let targets = urlList.length
     ? urlList.map((u) => ({ label: u, url: u }))
     : plugins.map(builtUiPath).filter((f) => existsSync(f)).map((f) => ({ label: f.replace(ROOT + '/', ''), url: pathToFileURL(f).href }));
-  if (!targets.length) skip('no render targets — set ds-config.json → a11y.urls (a running dev server), pass --url <page>, or build the plugin UIs (paths.plugins)');
+
+  // Nothing configured or built → be as automatic as possible: start the project's dev server
+  // and discover pages (Storybook stories, else static router routes, else the base page). This
+  // is what lets a non-plugin DS (SPA/Storybook) run with zero config and zero questions.
+  if (!targets.length && cfg.a11y?.discover !== false) {
+    let base = cfg.a11y?.baseUrl || null;
+    if (!base) {
+      const cmd = detectServeCmd(ROOT, cfg);
+      if (cmd) {
+        console.log(`ℹ️  [a11y] no target configured — starting the dev server (${cmd}) to discover pages…`);
+        const srv = startDevServer(cmd, ROOT);
+        base = await srv.url;
+        if (base) stopServer = srv.stop; else srv.stop();
+      }
+    }
+    if (base) {
+      const found = (await discoverStorybook(base)) || discoverRoutes(ROOT, base) || [base];
+      const capped = found.slice(0, 40);
+      targets = capped.map((u) => ({ label: u.startsWith(base) ? (u.slice(base.length) || '/') : u, url: u }));
+      console.log(`ℹ️  [a11y] ${found.length === 1 ? 'checking the base page' : `${found.length} page(s) found — checking ${capped.length}`} via ${base}`);
+    }
+  }
+
+  if (!targets.length) skip('no render targets — start your dev server and pass --url <page> (or set ds-config.json → a11y.urls / a11y.serve), or build the UIs for a static DS. Auto-discovery found nothing.');
   const waitFor = cfg.a11y?.waitFor ?? null;   // optional selector to await before the sweep (SPA hydration)
 
   const CHROME = findChrome();
@@ -231,9 +307,9 @@ async function main() {
 
   const userDataDir = mkdtempSync(join(tmpdir(), 'a11y-check-'));
   const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-sandbox', '--disable-gpu', '--disable-extensions', `--user-data-dir=${userDataDir}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  const cleanup = () => { try { chrome.kill(); } catch {} try { rmSync(userDataDir, { recursive: true, force: true }); } catch {} };
+  const cleanup = () => { try { chrome.kill(); } catch {} try { rmSync(userDataDir, { recursive: true, force: true }); } catch {} try { stopServer?.(); } catch {} };
   process.on('exit', cleanup);
-  const killTimer = setTimeout(() => { console.error('❌ [a11y] timed out (45s)'); process.exit(STRICT ? 1 : 0); }, 45000); killTimer.unref();
+  const killTimer = setTimeout(() => { console.error('❌ [a11y] timed out (120s)'); cleanup(); process.exit(STRICT ? 1 : 0); }, 120000); killTimer.unref();
 
   const wsUrl = await new Promise((res, rej) => {
     let buf = '';
