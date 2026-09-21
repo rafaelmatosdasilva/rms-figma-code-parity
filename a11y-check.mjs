@@ -16,6 +16,12 @@
 //
 // No npm dependencies (Node >= 22 built-in WebSocket). Honors No-imposed-structure: findings
 // come from measured pixels and the accessibility tree, not from any presumed token/tier model.
+//
+// NOT yet (v2, by design):
+//   - Non-text / component contrast (WCAG 1.4.11, >= 3:1) — borders, icons, states.
+//   - Per-interaction-state a11y (real focus/hover/checked, reusing the state walk).
+//   - Keyboard order, skip links, landmarks — and anything the render cannot reveal: only when
+//     the project declares it in ds-config.json, never imposed (No-imposed-structure).
 
 import { readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
 import { join, resolve } from 'path';

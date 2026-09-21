@@ -322,8 +322,13 @@ a11y tree, no assumed DS shape (No-imposed-structure).
 `--a11y` lists every finding; `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It runs
 inside the audit and standalone: `node a11y-check.mjs [--component A,B] [--a11y]` (`--component` scopes the
 sweep). **Skips cleanly** (exit 0) with no browser, never a false fail. Deps: Node >= 22 (built-in
-WebSocket), Chrome/Chromium (or `CHROME_PATH`), and the built plugin UIs. Per-interaction-state a11y
-(hover/checked) is deferred to v2.
+WebSocket), Chrome/Chromium (or `CHROME_PATH`), and the built plugin UIs.
+
+**Not yet (v2, by design):**
+- **Non-text / component contrast** (WCAG 1.4.11, ≥ 3:1) — borders, icons, states.
+- **Per-interaction-state a11y** (real focus/hover/checked, reusing the state walk).
+- **Keyboard order, skip links, landmarks** — and anything the render cannot reveal: only when the
+  project **declares** it in `ds-config.json`, never imposed (No-imposed-structure).
 
 ---
 
