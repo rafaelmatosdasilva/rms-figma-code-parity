@@ -320,9 +320,19 @@ a11y tree, no assumed DS shape (No-imposed-structure).
 
 **Advisory by default** (a totals line: `a11y: N contrast, M missing names, K no-focus across T themes`);
 `--a11y` lists every finding; `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It runs
-inside the audit and standalone: `node a11y-check.mjs [--component A,B] [--a11y]` (`--component` scopes the
-sweep). **Skips cleanly** (exit 0) with no browser, never a false fail. Deps: Node >= 22 (built-in
-WebSocket), Chrome/Chromium (or `CHROME_PATH`), and the built plugin UIs.
+inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y]`
+(`--component` scopes the sweep and accepts a raw CSS selector too). **Skips cleanly** (exit 0) with no
+browser, never a false fail. Deps: Node >= 22 (built-in WebSocket), Chrome/Chromium (or `CHROME_PATH`), and
+a render target.
+
+**Render targets are agnostic — it does not assume a Figma plugin.** It checks whatever surface the project
+serves. Point it at a live page with **`--url <route>`** (a Vue/Vite/React dev server, Storybook, a deployed
+styleguide — anything a browser can open; repeatable/comma), or set `ds-config.json → a11y.urls` (with
+`a11y.waitFor` to await an SPA's first render); `--url` runs with **no `ds-config.json`** at all. If a
+project instead ships **static built HTML** (a plain-HTML/plugin DS, e.g. `apps/*/ui.html`), those are used
+automatically — one shape among others, not the assumed one. When the engine cannot discover a target,
+**the skill ASKS the user for the one render URL (and whether the dev server is up), then runs `--url` — it
+never fabricates a config or crawls the repo**; with no target it skips cleanly and says how to provide one.
 
 **Not yet (v2, by design):**
 - **Non-text / component contrast** (WCAG 1.4.11, ≥ 3:1) — borders, icons, states.

@@ -1,9 +1,17 @@
 // a11y-check.mjs — I18 Accessibility gate.  Run from project root:
-//   node a11y-check.mjs [--component A,B] [--a11y]
+//   node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y]
 //
 // Mechanical + agnostic: reads the REAL render (headless Chrome via the DevTools Protocol,
-// the same flow as rendered-check.mjs / Gate 22), never an assumed DS shape. Per configured
-// theme it checks:
+// the same flow as rendered-check.mjs / Gate 22), never an assumed DS shape.
+//
+// Render targets — NO project shape is imposed. It loads, in priority order: a live page from
+// `--url <page>` (repeatable/comma), then `ds-config.json → a11y.urls` (any project that serves
+// its components — a Vue/Vite SPA, Storybook, a deployed styleguide), then the built plugin UIs
+// via file:// (the Figma-plugin shape). So a non-plugin DS is checked by pointing it at a running
+// dev server; `--url` even runs with no ds-config.json at all. `a11y.waitFor` (a selector) delays
+// the sweep until an SPA has rendered.
+//
+// Per configured theme it checks:
 //   1. Contrast  — WCAG 2.1 AA ratio of each text leaf's computed color vs its EFFECTIVE
 //                  (composited) background; normal >= 4.5:1, large >= 3:1.
 //   2. Name/role — every interactive node in the accessibility tree has a non-empty
@@ -179,21 +187,28 @@ async function main() {
   const argv = process.argv.slice(2);
   const VERBOSE = argv.includes('--a11y');
   const components = argValues('--component', argv).concat(argValues('--components', argv));
+  const cliUrls = argValues('--url', argv);   // check a live page directly (any project that serves it)
 
   let cfg = {};
   try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); }
-  catch { console.error('❌ ds-config.json not found at project root.'); process.exit(1); }
+  catch {
+    // --url runs configuration-free (a non-plugin DS with no ds-config still gets checked).
+    if (!cliUrls.length) { console.error('❌ ds-config.json not found at project root (or pass --url <page> to check a live URL without a config).'); process.exit(1); }
+  }
 
   const STRICT = cfg.a11yStrict === true;
   const skip = (msg) => { console.log(`⏭  [a11y] ${msg}`); process.exit(0); };
 
   const plugins = cfg.paths?.plugins ?? [];
   const pluginSrc = cfg.paths?.pluginCSS ?? [];
-  if (!plugins.length) skip('no built UIs configured (ds-config.json → paths.plugins) - nothing to render');
 
   const modes = (cfg.figma?.modes?.length ? cfg.figma.modes : [{ name: 'Light', snapshotKey: 'light' }])
     .map((m) => ({ name: m.name || m.snapshotKey || 'light', scheme: (m.snapshotKey || m.name || 'light').toLowerCase().includes('dark') ? 'dark' : 'light' }));
-  const selOf = (name) => cfg.componentSelectors?.[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1));
+  const selOf = (name) => {
+    if (cfg.componentSelectors?.[name]) return cfg.componentSelectors[name];
+    if (/^[.#\[]/.test(name)) return name;                        // already a CSS selector — use as-is
+    return '.' + name.charAt(0).toLowerCase() + name.slice(1);    // DS convention: ComponentName -> .componentName
+  };
   const roots = components.length ? components.map(selOf) : null;
 
   const builtUiPath = (plugin) => {
@@ -201,6 +216,14 @@ async function main() {
     const src = i >= 0 ? pluginSrc[i] : null;
     return join(ROOT, src ? src.replace(/\.src\.html$/, '.html') : `apps/${plugin}/ui.html`);
   };
+
+  // Render targets — no project shape imposed. --url > ds-config a11y.urls > built plugin UIs.
+  const urlList = [...cliUrls, ...(cfg.a11y?.urls ?? [])];
+  const targets = urlList.length
+    ? urlList.map((u) => ({ label: u, url: u }))
+    : plugins.map(builtUiPath).filter((f) => existsSync(f)).map((f) => ({ label: f.replace(ROOT + '/', ''), url: pathToFileURL(f).href }));
+  if (!targets.length) skip('no render targets — set ds-config.json → a11y.urls (a running dev server), pass --url <page>, or build the plugin UIs (paths.plugins)');
+  const waitFor = cfg.a11y?.waitFor ?? null;   // optional selector to await before the sweep (SPA hydration)
 
   const CHROME = findChrome();
   if (!CHROME) skip('Chrome not found (set CHROME_PATH to enable)');
@@ -231,22 +254,23 @@ async function main() {
   const findings = [];   // { kind, theme?, desc, ... }
   let sweptPlugins = 0;
 
-  for (const plugin of plugins) {
-    const uiPath = builtUiPath(plugin);
-    if (!existsSync(uiPath)) continue;   // nothing built for this plugin — skip (advisory, not a fail)
-    const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
+  for (const target of targets) {
+    const label = target.label;
+    const { targetId } = await send('Target.createTarget', { url: target.url });
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
     await send('Runtime.enable', {}, sessionId);
     let loaded = false;
-    for (let i = 0; i < 100; i++) {
-      const r = await send('Runtime.evaluate', { expression: 'location.protocol === "file:" && document.readyState === "complete"', returnByValue: true }, sessionId);
-      if (r.result.value === true) { loaded = true; break; }
+    for (let i = 0; i < 200; i++) {   // up to ~10s — a dev server / SPA can be slower than a file://
+      const expr = `document.readyState === "complete"${waitFor ? ` && !!document.querySelector(${JSON.stringify(waitFor)})` : ''}`;
+      const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId).catch(() => ({ result: {} }));
+      if (r.result?.value === true) { loaded = true; break; }
       await new Promise((res) => setTimeout(res, 50));
     }
     if (!loaded) { await send('Target.closeTarget', { targetId }); continue; }
+    await new Promise((res) => setTimeout(res, 300));   // settle — let an SPA finish its first render
     sweptPlugins++;
 
-    // 2. Name/role — accessibility tree (theme-independent), run once per plugin.
+    // 2. Name/role — accessibility tree (theme-independent), run once per target.
     try {
       await send('Accessibility.enable', {}, sessionId);
       const { nodes } = await send('Accessibility.getFullAXTree', {}, sessionId);
@@ -255,7 +279,7 @@ async function main() {
         const role = n.role?.value;
         if (!INTERACTIVE_ROLES.has(role)) continue;
         const name = (n.name?.value || '').trim();
-        if (!name) findings.push({ kind: 'name', plugin, role, desc: `<${role}> with no accessible name` });
+        if (!name) findings.push({ kind: 'name', plugin: label, role, desc: `<${role}> with no accessible name` });
       }
     } catch { /* Accessibility domain unavailable — skip name/role, not a fail */ }
 
@@ -265,8 +289,8 @@ async function main() {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode.scheme }] }, sessionId);
       const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, first), returnByValue: true }, sessionId);
       const { textEls = [], noFocus = [] } = r.result.value || {};
-      for (const f of contrastFindings(textEls, mode.name)) findings.push({ plugin, ...f });
-      if (first) for (const desc of noFocus) findings.push({ kind: 'focus', plugin, desc });
+      for (const f of contrastFindings(textEls, mode.name)) findings.push({ plugin: label, ...f });
+      if (first) for (const desc of noFocus) findings.push({ kind: 'focus', plugin: label, desc });
       first = false;
     }
     await send('Target.closeTarget', { targetId });
@@ -274,7 +298,7 @@ async function main() {
 
   ws.close(); cleanup(); clearTimeout(killTimer);
 
-  if (!sweptPlugins) skip('no built UI files found (run the build first) - nothing rendered to check');
+  if (!sweptPlugins) skip('nothing rendered to check — a --url/dev-server page did not load, or the plugin UIs are not built');
 
   // ── Report ────────────────────────────────────────────────────────────────────
   const contrast = findings.filter((f) => f.kind === 'contrast' && !f.cannotCompute);
