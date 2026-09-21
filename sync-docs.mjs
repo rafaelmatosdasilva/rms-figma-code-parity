@@ -139,6 +139,14 @@ const DOCS = [
 
 let anyStale = false;
 
+// Source-of-truth contract: GATE_PLAIN (the summary's plain names) must stay 1:1 with the gate
+// list, or the summary silently shows a shifted/wrong plain label for every gate past the gap.
+// Fail loudly here instead of letting it drift (this was a recurring mismatch).
+if (gatePlain.length !== GATE_COUNT) {
+  anyStale = true;
+  console.log(red(`  ❌ audit.mjs: GATE_PLAIN has ${gatePlain.length} entr${gatePlain.length === 1 ? 'y' : 'ies'} but there are ${GATE_COUNT} gates - realign GATE_PLAIN 1:1 with the addGate() calls (else the summary shows the wrong plain name).`));
+}
+
 for (const doc of DOCS) {
   if (!existsSync(doc.path)) {
     console.log(yellow(`  ⚠️  ${doc.label} not found - skipped`));

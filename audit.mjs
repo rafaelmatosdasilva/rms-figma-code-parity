@@ -2384,35 +2384,40 @@ function reportFull(label, items, shown) {
   })();
 
   // ── Summary table ─────────────────────────────────────────────────────────────
+  // Plain-English gate names for the summary table. MUST stay 1:1 with the addGate() calls above,
+  // in the same order (sync-docs.mjs asserts GATE_PLAIN.length === the gate count, so a drift fails
+  // the docs check instead of silently shifting the labels).
   const GATE_PLAIN = [
     // Up to date
-    'Figma snapshots and build outputs are current',
-    'Live Figma frame is unchanged vs its saved reference screenshot',
+    'Data is up to date',
+    'Figma frame unchanged',
     // Token integrity
-    'Token values agree (color · sizing · typography · breakpoints · text · animation)',
-    'Every DS token bound in a screen has a CSS variable',
-    'Every token that changes between modes is handled in CSS',
-    'All documented exceptions are still valid',
-    'Every CSS variable maps back to a real Figma token',
+    'Token values match Figma',
+    'Tokens used in screens exist in CSS',
+    'Every mode is covered',
+    'Exception lists are valid',
+    'No invented CSS variables',
+    'Docs tell the truth',
+    'No invented text casing',
     // Clean CSS
-    'No unused CSS variables, no values that contradict Figma, safe containment',
-    'Child components are not overridden by parent CSS rules',
+    'Clean CSS',
+    'Nested components keep their own styles',
     // Structure
-    'Component structure agrees (height, spacing, base-rule var bindings)',
-    'All component states are built, wired, and in the right selector',
-    'Every Figma component property has a matching code prop (name and coverage)',
-    'The sub-components Figma nests are the ones the code uses',
+    'Structure matches (height, spacing, corners)',
+    'All states are built',
+    'Component props match Figma',
+    'Sub-components match Figma',
     // Markup
-    'HTML structure (ids, component classes, icon refs) agrees with the snapshot',
-    'Every declared slot uses the correct DS icon and component class',
-    'All DS icon symbols are documented, paths verified, and current from Figma',
+    'Markup matches',
+    'Required pieces are in place',
+    'Icons match Figma',
     // Animation & motion (Motion / Shadows opt-in)
-    'All CSS transitions use the documented duration, easing and property',
-    'Motion tokens (easing · duration) agree - when configured',
-    'Effect/shadow styles agree with CSS box-shadow - when configured',
+    'Transitions match',
+    'Motion matches (when defined)',
+    'Shadows match (when defined)',
     // Rendered output & self-check
-    'Rendered computed styles agree with the DS spec (headless Chrome)',
-    'Coverage - which DS components/states the audit actually checks',
+    'Renders correctly in a browser',
+    'What this audit actually checked',
   ];
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {

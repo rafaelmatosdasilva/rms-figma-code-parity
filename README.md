@@ -1,288 +1,85 @@
 # rms-figma-code-parity
 
-Checks that your CSS code matches your Figma design system. Run it whenever the DS changes - it tells you exactly what's out of sync and where to fix it.
+Checks that your code matches your Figma design system, and tells you exactly what is out of sync and where to fix it.
 
----
+## Install (once per computer)
 
-## Quick start
-
-**1. Install (once per computer)**
-
-Open your terminal (the Terminal app on Mac, or Windows Terminal) and paste this line, then press Enter:
+In your terminal (the Terminal app on Mac, or Windows Terminal), paste this and press Enter:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rafaelmatosdasilva/rms-figma-code-parity/main/install.sh | bash
 ```
 
-You only do this once. After that, updating is a single command (below), so you never download or reinstall by hand.
+## Update
 
-**2. Set up a project (once per project)**
+```bash
+rms-figma-code-parity --update
+```
 
-In the terminal, go into your project folder and run:
+`rms-figma-code-parity --version` tells you if you are behind, and every run gives a quiet once-a-day heads-up when a new version is out. You never re-download.
+
+## Run it
+
+First time in a project, set it up once (it asks a couple of quick questions):
 
 ```bash
 cd my-project
 rms-figma-code-parity --init
 ```
 
-It asks a few quick questions and sets up the rest. Every project uses the same shared install, so they are all on the same version.
+Then the easy way is to just ask, in plain language, inside Claude Code:
 
-**3. Run it**
+- *"run the parity on the whole DS"* — checks everything
+- *"run the parity on input"* — checks the `input` component (and its sub-parts) and reports only that
 
-In Claude Code, inside your project, type:
-
-```
-/rms-figma-code-parity
-```
-
-### Just ask - don't write a prompt full of rules
-
-Name what to check in one line; the skill handles setup, scoping, running and reporting.
-
-- *"Audit ButtonPrimary"* · *"Check the button and the toast"* · *"Run parity on the whole DS"*
-
-Naming a component **is** the scope - *"run the parity on input"* audits `input` (and the sub-components it contains) and reports only its findings. Say *"the whole DS"* to audit everything.
-
-## Staying up to date
-
-You never re-download. In the terminal, run one of these:
+Or from the terminal:
 
 ```bash
-rms-figma-code-parity --version    # am I on the latest?
-rms-figma-code-parity --update     # get the latest
+rms-figma-code-parity                       # the whole design system
+rms-figma-code-parity --component input     # one component (or a few: input,button)
 ```
 
-Every run also gives you a quiet heads-up (once a day) when a new version is out.
+## Run just one check
 
----
-
-## What it does
-
-Every run has two phases:
-
-| Phase | What happens |
-|---|---|
-| **1. Get the latest from Figma** | Reads the current colors, sizes, fonts and component shapes from Figma and shows what changed since last time. |
-| **2. Check the code** | Runs up to 23 checks against your CSS and reports anything that doesn't match. |
-
-You always check against the latest design, so you can't accidentally compare against an old one.
-
----
-
-## The 23 checks
-
-Each run runs up to 23 checks (the last two run only when your DS defines motion or shadows) and tells you which are off. In plain terms:
-
-| # | What it checks |
-|---|---|
-| 1 | **Data is up to date**: you're comparing against today's Figma, not an old copy. |
-| 2 | **Figma frame unchanged**: the design still looks like the last version you approved. |
-| 3 | **Token values**: colors, sizes and fonts in the code match Figma, in every mode (light, dark…). |
-| 4 | **Tokens used in screens exist in CSS**: nothing used in a screen is missing from the code. |
-| 5 | **Every mode is covered**: things that should change between light/dark actually do. |
-| 6 | **Exception lists are valid**: your "ignore this" notes don't point at things that no longer exist. |
-| 7 | **No invented CSS variables**: every variable in the code really comes from Figma. |
-| 8 | **Docs tell the truth**: your style guide / design-system docs only mention tokens and variables that actually exist (no invented or leftover names). |
-| 9 | **No invented text casing**: the design-system CSS never forces UPPERCASE / lowercase text that Figma doesn't actually define. |
-| 10 | **Clean CSS**: no unused variables, and no values that disagree with Figma (a hardcoded value that matches Figma is fine). |
-| 11 | **Nested components keep their own styles**: one component's styles don't leak into another. |
-| 12 | **Structure**: each component has the right height, spacing and corners, from tokens. |
-| 13 | **All states are built**: hover, disabled, selected… each exists and uses the right values. |
-| 14 | **Component props match Figma**: every Figma component property has a code prop with the same name, default and variant options, and every Figma slot (instance-swap) has a code slot (catches missing props, renames like `size` vs `buttonSize`, a `medium` default the code sets to `small`, a `large` variant the code doesn't accept, or an icon slot with no `<slot>`). |
-| 15 | **Sub-components match Figma**: the sub-components Figma nests inside a component are the ones the code actually uses (catches a Card that should hold a Badge but doesn't). |
-| 16 | **Markup**: the HTML shape (ids, classes, icons) still matches what was approved, and every control the design puts on a screen (a button, a modal, a toggle) is actually built in the code, not just mentioned in passing. |
-| 17 | **Required pieces are in place**: buttons use the icon and component the design asks for. |
-| 18 | **Icons**: icons come from the shared set and match Figma. |
-| 19 | **Transitions**: animations use the durations and easings from the design. |
-| 20 | **Renders correctly in a browser**: the real rendered result matches the design, not just the code on paper. |
-| 21 | **What this audit actually checked**: shows what was and wasn't covered, so nothing slips through unnoticed. |
-| 22 | **Motion** *(optional)*: motion values match Figma, when your DS defines them. |
-| 23 | **Shadows** *(optional)*: shadows match Figma, when your DS defines them. |
-
----
-
-## Example output
-
-> Auto-generated by `sync-docs.mjs` - do not edit manually.
-
-<!-- EXAMPLE-OUTPUT-START -->
-```
-────────────────────────────────────────────────────────────
-  PARITY AUDIT  ·  YYYY-MM-DD
-────────────────────────────────────────────────────────────
-
-✅  [1] Figma snapshots are up to date
-       packages/ui/src/figma-vars.snapshot.json ✓ (updated today)
-       ✅ All outputs current
-
-❌  [2] Live Figma frame is unchanged vs its saved reference screenshot
-       ✅ PASS  87
-       ❌ FAIL  2
-         ❌ [color/Dark] buttonPrimary/background → --buttonPrimary-background
-              Figma: #ededed   CSS: #d4d4d4
-
-  ... (one block per gate)
-
-────────────────────────────────────────────────────────────
-  GATE SUMMARY
-────────────────────────────────────────────────────────────
-  ✅  [1]   Figma snapshots and build outputs are current       Pass
-  ✅  [2]   Live Figma frame is unchanged vs its saved referenc…Pass
-  ✅  [3]   Token values agree (color · sizing · typography · b…Pass
-  ✅  [4]   Every DS token bound in a screen has a CSS variable Pass
-  ✅  [5]   Every token that changes between modes is handled i…Pass
-  ✅  [6]   All documented exceptions are still valid           Pass
-  ✅  [7]   Every CSS variable maps back to a real Figma token  Pass
-  ✅  [8]   No unused CSS variables, no values that contradict …Pass
-  ✅  [9]   Child components are not overridden by parent CSS r…Pass
-  ✅  [10]  Component structure agrees (height, spacing, base-r…Pass
-  ✅  [11]  All component states are built, wired, and in the r…Pass
-  ✅  [12]  Every Figma component property has a matching code …Pass
-  ✅  [13]  The sub-components Figma nests are the ones the cod…Pass
-  ✅  [14]  HTML structure (ids, component classes, icon refs) …Pass
-  ✅  [15]  Every declared slot uses the correct DS icon and co…Pass
-  ✅  [16]  All DS icon symbols are documented, paths verified,…Pass
-  ✅  [17]  All CSS transitions use the documented duration, ea…Pass
-  ✅  [18]  Motion tokens (easing · duration) agree - when conf…Pass
-  ✅  [19]  Effect/shadow styles agree with CSS box-shadow - wh…Pass
-  ✅  [20]  Rendered computed styles agree with the DS spec (he…Pass
-  ✅  [21]  Coverage - which DS components/states the audit act…Pass
-  ✅  [22]  Renders correctly in a browser  (real computed styl…Pass
-  ✅  [23]  What this audit actually checked  (which DS compone…Pass
-
-────────────────────────────────────────────────────────────
-
-  ALL GATES PASS ✅
-
-  ⏭  STALE-SNAPSHOT MODE - when a gate shows ⏭ instead of ✅:
-
-────────────────────────────────────────────────────────────
-```
-<!-- EXAMPLE-OUTPUT-END -->
-
-**Trend view** (`rms-figma-code-parity --trend`):
-
-```
-─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  23/23 [███████████████████████]
-  ❌  2026-06-16  11/12 [██████████████████████░]
-  ✅  2026-06-17  23/23 [███████████████████████]
-────────────────────────────────────────────────────────────
-```
-
----
-
-## Other commands
-
-Run these in the terminal, from inside your project:
+Each check is its own script, so you can run only one. Accessibility, for example, on the whole system or on one component:
 
 ```bash
-rms-figma-code-parity --init                     # first-time setup for a project
-rms-figma-code-parity --component ButtonPrimary  # check one component (or a few: A,B)
-rms-figma-code-parity --trend                    # show the last runs
-rms-figma-code-parity --exemption-debt           # list every exemption to review (a totals line shows on every run)
-rms-figma-code-parity --no-contracts             # skip the machine-readable contract this run (it is emitted by default)
+node ~/.claude/skills/rms-figma-code-parity/a11y-check.mjs                    # whole system
+node ~/.claude/skills/rms-figma-code-parity/a11y-check.mjs --component input   # one component
 ```
 
-## Machine-readable contract
+Add `--a11y` to list every finding. (Inside Claude Code you can also just ask: *"run only the accessibility check on input"*.)
 
-Every run also writes a standard, machine-readable description of your design system, in two parts:
+## What it checks
 
-- **`contract.authored.json`** (project root, **committed**): your decisions - Figma-to-code bindings,
-  semantics, notes. It holds no DS values, so it is safe to share and applies in CI. Scaffolded once,
-  then it is yours to edit.
-- **`contracts/`** (local, **gitignored**): the generated views built from your decisions + the Figma
-  snapshots - a **W3C DTCG** token file plus one **contract per component** (props, bindings, anatomy,
-  states), validated by a schema. These carry your DS's real values, so they stay on your machine.
+Every run compares the code against Figma. In plain terms:
 
-On by default so it never goes stale. Use the views as an always-current spec for docs, AI/codegen or
-token pipelines. Fill in a binding under a component in `contract.authored.json` and Gate 14 uses it to
-resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap - it still
-fails). The public tool ships only the generator, never your data.
+- **Data is up to date** — you are comparing against today's Figma, not an old copy.
+- **Figma frame unchanged** — the design still looks like the version you approved.
+- **Token values** — colors, sizes and fonts match Figma, in every mode (light, dark).
+- **Tokens used in screens exist in CSS** — nothing a screen uses is missing from the code.
+- **Every mode is covered** — things that should change between light and dark actually do.
+- **Exception lists are valid** — your "ignore this" notes still point at real things.
+- **No invented CSS variables** — every variable really comes from Figma.
+- **Docs tell the truth** — your docs mention only tokens and variables that exist.
+- **No invented text casing** — no forced UPPERCASE the design never asked for.
+- **Clean CSS** — no unused variables, and nothing that contradicts Figma.
+- **Nested components keep their own styles** — one component's styles do not leak into another.
+- **Structure** — the right height, spacing and corners, from tokens.
+- **All states are built** — hover, disabled, selected and the rest each exist and use the right values.
+- **Component props match Figma** — the same names, defaults and options as Figma.
+- **Sub-components match Figma** — the parts Figma nests are the ones the code uses.
+- **Markup** — ids, classes and icons match, and every control the design shows is actually built.
+- **Required pieces are in place** — icon slots, component slots and form controls.
+- **Icons** — come from the shared set and match Figma.
+- **Transitions** — use the durations and easings from the design.
+- **Motion** — motion values match Figma (only when your DS defines them).
+- **Shadows** — shadows match Figma (only when your DS defines them).
+- **Renders correctly in a browser** — the real rendered result matches, not just the code on paper.
+- **What this audit actually checked** — shows what was and was not covered, so nothing slips through.
 
-You can also add optional **agent guidance** under a component in `contract.authored.json`, so an AI
-builds from real rules instead of guessing:
+It also runs an advisory **accessibility** pass (contrast, accessible names, visible focus) and writes a machine-readable **contract** locally for AI tools. Neither ever blocks the audit.
 
-- **`whenNotToUse`** (string) and **`useInstead`** (a name or a list) - when not to reach for this
-  component, and what to pick instead.
-- **`neverCombineWith`** (list) - pairings that are genuinely invalid.
+## That's it
 
-These, together with a **derived `composesWith`** (the DS components each one nests, read from the
-composition snapshot), are emitted into the per-component contract and the `llms.txt` index. All are
-optional and additive - absent, nothing changes.
-
-Each run also warns (never failing) when a contract change since your last run is **breaking** (a prop,
-option, state or token removed, a default changed), when a token is newly deprecated or referenced but
-undefined, or when a token is used where a different type is expected - and it writes an `llms.txt`
-index for AI tools.
-
-Off for one run with `--no-contracts`, or per project with `contracts.auto: false` in `ds-config.json`.
-
-## Accessibility check (advisory)
-
-Every run also does a mechanical **accessibility** pass on the real render (headless Chrome), per theme:
-**WCAG AA contrast** (computed text color vs its effective background), **accessible name + role** on
-interactive elements, and **visible focus** on focusable ones. It is **advisory** (never fails the audit)
-and **skips cleanly** when no browser is available. Set `a11yStrict: true` in `ds-config.json` to promote
-findings to a hard fail.
-
-Run just the accessibility check, on chosen components, in your terminal from the project root:
-
-```bash
-node <install-path>/a11y-check.mjs --component buttonPrimary,input --a11y
-```
-
----
-
-## First-time setup (what `--init` asks)
-
-In the terminal, inside your project, run `rms-figma-code-parity --init` once. It asks just two things:
-
-1. **Figma file link**: paste the link to your design system file.
-2. **CSS file**: the file with your `--variable` colors and sizes (found automatically if there's only one).
-
-That's it. Run `/rms-figma-code-parity` and it captures the Figma data for you (no token, any plan) and audits the code. Commit the saved files and the whole team, and CI, runs with nothing installed.
-
-*(Optional, for branded forks: if your project is a copy of a shared design system, you can point it at the original so things that still match the original are marked "pending sync" instead of failing.)*
-
----
-
-## Using an upstream DS source
-
-If your project is a branded fork of a shared design system, set `figmaSourceKey` in `ds-config.json` to the upstream DS file key. Phase 1 will query both files. Any token where your CSS matches the upstream source (but not the fork snapshot) gets flagged as `⏳ PENDING FIGMA SYNC` instead of ❌ - that means it's not a code bug, just a snapshot that hasn't been updated yet.
-
----
-
-## Visual regression
-
-Check 7 compares live Figma frame screenshots against stored reference images.
-
-Requires a `FIGMA_TOKEN` in `.env` and at least one frame configured in `ds-config.json`. Silently skips if either is missing.
-
-To accept a visual change as the new baseline, run this in the terminal:
-
-```bash
-mv .parity-refs/<frame-id>.new.png .parity-refs/<frame-id>.png
-```
-
----
-
-## Webhook automation
-
-You can set up automatic parity checks that trigger every time Figma publishes a library update:
-
-```bash
-# Start the server (keep it running, e.g. with pm2)
-node scripts/webhook-server.mjs
-
-# Register with Figma once (needs a public URL)
-FIGMA_TOKEN=xxx node scripts/setup-webhook.mjs --url https://your-host.com/webhook
-```
-
-Configure `webhook.port` and `webhook.secret` in `ds-config.json`. The server never modifies your source files - it only reports.
-
----
-
-## Works the same in every project
-
-There's one shared install, so every project is always on the same version. Update it once (`rms-figma-code-parity --update`) and every project has the latest. Your project's own settings stay in your project and are never touched.
+Commit the files it creates (the `*.snapshot.json`) so your whole team and CI run against the same design. Deeper setup and options live in the skill's own doc.
