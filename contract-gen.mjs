@@ -80,6 +80,12 @@ function buildTokens(vars, modes) {
     return leaf;
   };
 
+  // setDeep returns false on a name collision (a token path that would overwrite a leaf or descend
+  // through one, e.g. a color "spacing" and a sizing "spacing/xs"). Record the drop so it is surfaced
+  // loudly instead of a token silently vanishing from the dictionary ("silence is never a pass").
+  const dropped = [];
+  const place = (name, path, leaf) => { if (!setDeep(out, path, leaf)) dropped.push(name); };
+
   // color — resolved per mode; base $value is the first mode, other modes under $extensions.
   const cLight = vars.color?.[lightKey] || {};
   const cDark  = darkKey ? (vars.color?.[darkKey] || {}) : null;
@@ -88,16 +94,16 @@ function buildTokens(vars, modes) {
     if (cDark && cDark[name] !== undefined && cDark[name] !== cLight[name]) {
       leaf.$extensions = { 'com.rms.parity': { modes: { [lightKey]: cLight[name], [darkKey]: cDark[name] } } };
     }
-    setDeep(out, tokenPath(name), applyMeta(leaf, name));
+    place(name, tokenPath(name), applyMeta(leaf, name));
   }
   // sizing — mode-agnostic dimensions (px).
   for (const [name, val] of Object.entries(vars.sizing || {})) {
-    setDeep(out, tokenPath(name), applyMeta({ $type: 'dimension', $value: String(val), $deprecated: false }, name));
+    place(name, tokenPath(name), applyMeta({ $type: 'dimension', $value: String(val), $deprecated: false }, name));
   }
   // typography — DTCG composite type.
   for (const [name, val] of Object.entries(vars.typography || {})) {
     if (val && typeof val === 'object') {
-      setDeep(out, ['typography', name], applyMeta({
+      place(name, ['typography', name], applyMeta({
         $type: 'typography',
         $value: { fontSize: val.size, fontWeight: String(val.weight), lineHeight: val.lh },
         $deprecated: false,
@@ -106,9 +112,9 @@ function buildTokens(vars, modes) {
   }
   // breakpoints — dimensions, when present.
   for (const [name, val] of Object.entries(vars.breakpoints || {})) {
-    setDeep(out, ['breakpoint', name], applyMeta({ $type: 'dimension', $value: String(val), $deprecated: false }, name));
+    place(name, ['breakpoint', name], applyMeta({ $type: 'dimension', $value: String(val), $deprecated: false }, name));
   }
-  return out;
+  return { tokens: out, dropped };
 }
 
 // ── Component contract pieces ─────────────────────────────────────────────────
@@ -532,7 +538,7 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
 
   // 1) DTCG token dictionary (diff the structural shape vs the previous emit).
   const prevTokens = readJSON(tokensOut);
-  const tokens = buildTokens(vars, cfg.figma?.modes);
+  const { tokens, dropped: droppedTokens } = buildTokens(vars, cfg.figma?.modes);
   ensureDir(dirname(tokensOut));
   writeFileSync(tokensOut, JSON.stringify(tokens, null, 2) + '\n');
   const tokenChanges = prevTokens ? diffTokens(flattenTokens(prevTokens), flattenTokens(tokens)) : [];   // first run has no baseline
@@ -573,5 +579,5 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const llmsOut = cc.llmsOut ? resolve(ROOT, cc.llmsOut) : join(outDir, 'llms.txt');
   try { writeFileSync(llmsOut, buildLlms(built, tokens, countLeaves(tokens)) + '\n'); } catch { /* best-effort */ }
 
-  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches };
+  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens };
 }

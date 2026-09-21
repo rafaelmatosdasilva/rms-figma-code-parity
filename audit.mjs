@@ -869,7 +869,10 @@ async function bootstrapConfig() {
   console.log(C.green('✅ ds-config.json written'));
 
   // ── Save FIGMA_TOKEN to .env ──────────────────────────────────────────────────
-  if (figmaToken && !existingToken) {
+  // (The `!envContent.includes('FIGMA_TOKEN')` guard below already prevents a duplicate, so no
+  // separate "already exists" flag is needed — an earlier `!existingToken` here referenced an
+  // undeclared identifier and threw a ReferenceError mid-setup whenever FIGMA_TOKEN was set.)
+  if (figmaToken) {
     const envContent = existsSync(join(ROOT, '.env')) ? readFileSync(join(ROOT, '.env'), 'utf8') : '';
     if (!envContent.includes('FIGMA_TOKEN')) {
       writeFileSync(join(ROOT, '.env'), envContent + (envContent.endsWith('\n') ? '' : '\n') + `FIGMA_TOKEN=${figmaToken}\n`);
@@ -2605,6 +2608,10 @@ function reportFull(label, items, shown) {
       if (r.authoredIssues?.length) {
         console.log(C.yellow(`⚠️  contract.authored.json has ${r.authoredIssues.length} issue(s) — the malformed binding(s) below are ignored until fixed:`));
         for (const i of r.authoredIssues.slice(0, 20)) console.log(C.yellow(`     · ${i}`));
+      }
+      if (r.droppedTokens?.length) {
+        console.log(C.yellow(`⚠️  ${r.droppedTokens.length} token(s) dropped from the DTCG dictionary — a name collides with another token's path (a leaf vs a group), so it was not emitted:`));
+        for (const t of r.droppedTokens.slice(0, 20)) console.log(C.yellow(`     · ${t}`));
       }
       // Change detection (advisory, never fails the audit): breaking vs additive contract
       // changes since the last run, newly-deprecated tokens, and undefined token references.

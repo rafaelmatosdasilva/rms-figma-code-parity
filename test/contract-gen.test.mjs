@@ -231,3 +231,19 @@ test('emits an llms.txt AI index listing components and the token dictionary', a
   assert.match(llms, /buttonPrimary\]\(\.\/buttonPrimary\.contract\.json\)/);
   assert.match(llms, /tokens\.json/);
 });
+
+test('a token whose path collides with another is surfaced in droppedTokens, not silently lost', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root{}\n',
+    // color "spacing" (a leaf) then sizing "spacing/xs" (would descend through the leaf) → collision
+    'vars.json': { color: { light: { spacing: '#111' }, dark: { spacing: '#111' } }, sizing: { 'spacing/xs': '4px' }, typography: {} },
+    'struct.json': { components: { widget: { nodeId: '1:1', h: 10, paddingVar: { tb: null, lr: null } } } },
+    'props.json': { widget: { nodeId: '1:1', properties: {}, annotations: [] } },
+    'structure-contract.mjs': "export const CONTRACT = { widget: { h:10, paddingVar:{tb:null,lr:null} } };\n",
+  });
+  const r = await generateContracts(dir, { paths: cfg.paths, figma: cfg.figma }, {});
+  assert.ok(r.droppedTokens.includes('spacing/xs'), 'collision surfaced: ' + JSON.stringify(r.droppedTokens));
+  // a cleanly-namespaced DS drops nothing
+  const r2 = await generateContracts(fixture(), cfg, {});
+  assert.deepEqual(r2.droppedTokens, []);
+});
