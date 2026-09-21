@@ -223,6 +223,20 @@ index for AI tools.
 
 Off for one run with `--no-contracts`, or per project with `contracts.auto: false` in `ds-config.json`.
 
+## Accessibility check (advisory)
+
+Every run also does a mechanical **accessibility** pass on the real render (headless Chrome), per theme:
+**WCAG AA contrast** (computed text color vs its effective background), **accessible name + role** on
+interactive elements, and **visible focus** on focusable ones. It is **advisory** (never fails the audit)
+and **skips cleanly** when no browser is available. Set `a11yStrict: true` in `ds-config.json` to promote
+findings to a hard fail.
+
+Run just the accessibility check, on chosen components, in your terminal from the project root:
+
+```bash
+node <install-path>/a11y-check.mjs --component buttonPrimary,input --a11y
+```
+
 ---
 
 ## First-time setup (what `--init` asks)

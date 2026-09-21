@@ -2174,8 +2174,12 @@ function reportFull(label, items, shown) {
   const _g6 = computeGate6();
   const _g7 = computeGate7();
 
+  // Accessibility gate (I18) args: forward the --component scope and --a11y verbosity so the
+  // audit's a11y advisory covers the same components the user scoped the run to.
+  const a11yArgs = [...SCOPE_COMPONENTS.flatMap((c) => ['--component', c]), ...(process.argv.includes('--a11y') ? ['--a11y'] : [])];
+
   // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rCase] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rCase, rA11y] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2207,7 +2211,13 @@ function reportFull(label, items, shown) {
     runScriptAsync('screen-element-check.mjs'),
     runScriptAsync('docs-truth-check.mjs'),
     runScriptAsync('case-check.mjs'),
+    runScriptAsync('a11y-check.mjs', a11yArgs),
   ]);
+
+  // Accessibility (I18): advisory by default; a11yStrict promotes any finding to a hard fail.
+  // Set the fail flag BEFORE the gate summary so the verdict stays consistent; the a11y detail
+  // prints in the advisory section further below (or a clean ⏭ when there is no browser).
+  if (cfg.a11yStrict === true && rA11y && rA11y.status === 1) anyFail = true;
 
   // ── Freshness ─────────────────────────────────────────────────────────────────
   addGate('Data is up to date  (Figma snapshots & build output are current)',
@@ -2496,6 +2506,14 @@ function reportFull(label, items, shown) {
         ? C.yellow('   Clear one by adding the missing token / building the control, or confirm it is a genuine, permanent exception.')
         : '   Run with --exemption-debt to list them.');
     }
+  }
+
+  // ── Accessibility (I18, advisory) ───────────────────────────────────────────
+  // Relay the a11y gate's own report (WCAG AA contrast · accessible name/role · visible focus,
+  // from the render). Advisory: a11yStrict already folded a failure into anyFail above; here we
+  // just surface the detail (or a clean ⏭ when no browser). Run with --a11y to list every finding.
+  if (rA11y && (rA11y.stdout || '').trim()) {
+    process.stdout.write(rA11y.stdout.replace(/\s+$/, '') + '\n');
   }
 
   // ── Token layering (agnostic, descriptive — never a gate) ───────────────────

@@ -310,6 +310,21 @@ tier model, only measures the DS's own aliasing rate and, when references are th
 the few tokens that hold a raw value instead). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
+#### Accessibility check (I18, advisory, from the render)
+
+A mechanical, agnostic accessibility pass (`a11y-check.mjs`) that reuses the Gate 22 CDP/headless-Chrome
+flow. Per configured theme it reports **WCAG AA contrast** (computed `color` vs the effective composited
+background), **accessible name + role** (interactive nodes, from the accessibility tree), and **visible
+focus** (a computed style change when the element is focused). Findings come from measured pixels and the
+a11y tree, no assumed DS shape (No-imposed-structure).
+
+**Advisory by default** (a totals line: `a11y: N contrast, M missing names, K no-focus across T themes`);
+`--a11y` lists every finding; `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It runs
+inside the audit and standalone: `node a11y-check.mjs [--component A,B] [--a11y]` (`--component` scopes the
+sweep). **Skips cleanly** (exit 0) with no browser, never a false fail. Deps: Node >= 22 (built-in
+WebSocket), Chrome/Chromium (or `CHROME_PATH`), and the built plugin UIs. Per-interaction-state a11y
+(hover/checked) is deferred to v2.
+
 ---
 
 ## Project Config
