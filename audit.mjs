@@ -2757,31 +2757,41 @@ function reportFull(label, items, shown) {
     }
   }
 
-  // ── Multi-brand token coverage (I6, project-DECLARED, advisory) ─────────────
-  // Runs only when ds-config declares `brands: [snapshotKey, …]` (>=2). For a multi-brand DS every brand
-  // should define the SAME token set; a token present in some brands but MISSING in others is a coverage
-  // hole an agent can't fill for the missing brand. Advisory; never fails, never imposed.
+  // ── Multi-brand token coverage (I6, advisory) ───────────────────────────────
+  // Brands come from resolveBrands (declared > a captured collections manifest that marks a brand
+  // collection > none-with-a-suggestion). Plan-agnostic: it reads the snapshot the any-plan capture
+  // wrote; an Enterprise file with extended collections just yields a richer manifest to exploit. For a
+  // multi-brand DS every brand should define the SAME token set; a token in some brands but missing in
+  // others is a hole an agent can't fill for the missing brand. Advisory; never fails, never imposed.
   {
-    const brands = Array.isArray(cfg.brands) ? cfg.brands.filter((b) => typeof b === 'string') : [];
-    if (brands.length >= 2) {
-      try {
-        const { brandCoverage } = await import('./brand-check.mjs');
-        const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
-        const vsnap = JSON.parse(readFileSync(vPath, 'utf8'));
-        const colorByBrand = {};
-        for (const b of brands) colorByBrand[b] = new Set(Object.keys(vsnap.color?.[b] || {}).map((k) => k.replace(/\/color$/, '')));
-        const { tokenUniverse, missing } = brandCoverage(colorByBrand);
-        const holes = Object.keys(missing);
-        if (holes.length) {
-          console.log(C.yellow(`\n⚠️  Multi-brand coverage: ${holes.length}/${tokenUniverse} token(s) defined in some brands but missing in others (${brands.join(', ')}).`));
-          for (const t of holes.slice(0, 20)) console.log(C.yellow(`     ${t} — missing in ${missing[t].join(', ')}`));
-          if (holes.length > 20) console.log(`     … ${holes.length - 20} more`);
-          console.log('   Advisory: every brand should define the same token set; the engine only surfaces the gaps.');
-        } else {
-          console.log(`\nℹ️  Multi-brand coverage: all ${tokenUniverse} tokens are defined across every declared brand (${brands.join(', ')}).`);
+    try {
+      const { brandCoverage, resolveBrands } = await import('./brand-check.mjs');
+      const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
+      let vsnap = null; try { vsnap = JSON.parse(readFileSync(vPath, 'utf8')); } catch { /* no snapshot */ }
+      if (vsnap) {
+        const { brands, source, suggest } = resolveBrands(cfg, vsnap);
+        if (brands && brands.length >= 2) {
+          const colorByBrand = {};
+          for (const b of brands) colorByBrand[b] = new Set(Object.keys(vsnap.color?.[b] || {}).map((k) => k.replace(/\/color$/, '')));
+          const { tokenUniverse, missing } = brandCoverage(colorByBrand);
+          const holes = Object.keys(missing);
+          const via = source === 'declared' ? '' : ` (from ${source})`;
+          if (holes.length) {
+            console.log(C.yellow(`\n⚠️  Multi-brand coverage${via}: ${holes.length}/${tokenUniverse} token(s) defined in some brands but missing in others (${brands.join(', ')}).`));
+            for (const t of holes.slice(0, 20)) console.log(C.yellow(`     ${t} — missing in ${missing[t].join(', ')}`));
+            if (holes.length > 20) console.log(`     … ${holes.length - 20} more`);
+            console.log('   Advisory: every brand should define the same token set; the engine only surfaces the gaps.');
+          } else if (tokenUniverse) {
+            console.log(`\nℹ️  Multi-brand coverage${via}: all ${tokenUniverse} tokens are defined across every brand (${brands.join(', ')}).`);
+          }
+        } else if (suggest && suggest.length) {
+          // Detected candidate multi-mode collections in the capture but no declared brands: nudge,
+          // never assume (modes may be theme/density/locale, not brands).
+          console.log(C.yellow(`\nℹ️  Multi-brand: detected ${suggest.length} multi-mode collection(s) in the capture. If any are brands, declare them in ds-config → brands[] to check cross-brand coverage:`));
+          for (const s of suggest.slice(0, 8)) console.log(`     ${s.name}: ${s.modes.join(', ')}`);
         }
-      } catch { /* advisory: never fails */ }
-    }
+      }
+    } catch { /* advisory: never fails */ }
   }
 
   // ── External guidelines: optional live capture (Phase-1-style) ──────────────

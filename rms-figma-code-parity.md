@@ -356,8 +356,11 @@ scaffold** (the element plus each prop with a concrete example value, derived fr
 so an agent instantiates the component without guessing). Two more **opt-in, project-declared** advisories
 (never imposed, never fail): **closed vocabulary** (`ds-config.json → closedVocab: { bannedTags, surfaces,
 suggest? }` — counts raw container tags the project banned, in the declared surfaces) and **multi-brand
-coverage** (`ds-config.json → brands: [snapshotKey, …]` with ≥2 — flags a token defined in some brands but
-missing in others; the engine never auto-detects "brand", you declare which modes are brands). Override paths with
+coverage** (flags a token defined in some brands but missing in others). Brands are resolved by
+`resolveBrands`, plan-agnostically: **declared** `ds-config.json → brands: [snapshotKey, …]` wins; else a
+captured **collections manifest** that marks a brand collection (the Enterprise / extended-collections
+enhancement, read as data the any-plan capture wrote — never a plan-gated API call); else it **suggests**
+candidate multi-mode collections but never assumes (modes may be theme/density/locale, not brands). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
 #### Accessibility check (I18, advisory, from the render)
