@@ -2698,6 +2698,40 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // ── Token tiers (I10b, project-DECLARED, advisory) ──────────────────────────
+  // Runs ONLY when ds-config.json declares `tiers` (never imposes a tier model). Classifies each
+  // token by the project's own regexes and flags a token that aliases a token in a tier its
+  // `mayReference` list does not allow. Advisory: surfaces cross-tier references, never fails.
+  {
+    const tiers = Array.isArray(cfg.tiers) ? cfg.tiers.filter((t) => t && t.name && t.match != null) : [];
+    if (tiers.length) {
+      try {
+        const { checkTiers } = await import('./tier-check.mjs');
+        const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
+        const vsnap = JSON.parse(readFileSync(vPath, 'utf8'));
+        const tokenSet = new Set();
+        const aliasMap = new Map();   // token path -> Set(referenced token paths)
+        for (const mode of Object.keys(vsnap.color || {})) {
+          for (const k of Object.keys(vsnap.color[mode] || {})) tokenSet.add(k.replace(/\/color$/, ''));
+          for (const [tok, target] of Object.entries(vsnap.aliases?.[mode] || {})) {
+            const key = tok.replace(/\/color$/, '');
+            if (!aliasMap.has(key)) aliasMap.set(key, new Set());
+            for (const ref of (Array.isArray(target) ? target : [target])) if (ref) aliasMap.get(key).add(String(ref).replace(/\/color$/, ''));
+          }
+        }
+        const { violations, classified } = checkTiers([...tokenSet], (t) => [...(aliasMap.get(t) || [])], tiers);
+        const summary = Object.entries(classified).map(([n, c]) => `${n}:${c}`).join(' · ') || 'none classified';
+        if (violations.length) {
+          console.log(C.yellow(`\n⚠️  Token tiers (declared): ${violations.length} cross-tier reference(s) the project's rules disallow. [${summary}]`));
+          for (const v of violations.slice(0, 20)) console.log(C.yellow(`     · ${v.token} (${v.tier}) → ${v.ref} (${v.refTier})`));
+          console.log('   Advisory: the tiers are yours (ds-config → tiers); the engine only surfaces the crossings.');
+        } else {
+          console.log(`\nℹ️  Token tiers (declared): all ${tokenSet.size} tokens respect the declared tier references. [${summary}]`);
+        }
+      } catch { /* advisory: never fails the audit */ }
+    }
+  }
+
   // ── External guidelines: optional live capture (Phase-1-style) ──────────────
   // When ds-config.json declares guidelines.source.notion (the page link, committed, NOT secret) and
   // NOTION_TOKEN is in the environment (per-person, in .env, gitignored), fetch the page and WRITE it
