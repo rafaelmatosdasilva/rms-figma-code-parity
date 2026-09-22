@@ -2732,6 +2732,58 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // ── Closed vocabulary / raw containers (I16, project-DECLARED, advisory) ────
+  // Runs only when ds-config declares `closedVocab: { bannedTags, surfaces, suggest? }`. Counts the raw
+  // container tags the project chose to ban, in its declared surfaces. Advisory: surfaces the count so a
+  // "typed primitive, not a raw div" convention can trend down; never fails, never imposed.
+  {
+    const cv = cfg.closedVocab;
+    if (cv && Array.isArray(cv.bannedTags) && cv.bannedTags.length && Array.isArray(cv.surfaces) && cv.surfaces.length) {
+      try {
+        const { scanBannedContainers } = await import('./vocab-check.mjs');
+        const totals = {};
+        for (const rel of cv.surfaces) {
+          const abs = join(ROOT, rel); if (!existsSync(abs)) continue;
+          let txt; try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+          for (const [t, n] of Object.entries(scanBannedContainers(txt, cv.bannedTags))) totals[t] = (totals[t] || 0) + n;
+        }
+        const total = Object.values(totals).reduce((a, b) => a + b, 0);
+        if (total) {
+          console.log(C.yellow(`\n⚠️  Closed vocabulary (declared): ${total} raw container(s) across ${cv.surfaces.length} surface(s)${cv.suggest ? ` — ${cv.suggest}` : ' — prefer the DS primitive'}.`));
+          for (const [t, n] of Object.entries(totals)) console.log(C.yellow(`     <${t}>: ${n}`));
+          console.log('   Advisory: you declared these bans (ds-config → closedVocab); the engine only surfaces them.');
+        }
+      } catch { /* advisory: never fails */ }
+    }
+  }
+
+  // ── Multi-brand token coverage (I6, project-DECLARED, advisory) ─────────────
+  // Runs only when ds-config declares `brands: [snapshotKey, …]` (>=2). For a multi-brand DS every brand
+  // should define the SAME token set; a token present in some brands but MISSING in others is a coverage
+  // hole an agent can't fill for the missing brand. Advisory; never fails, never imposed.
+  {
+    const brands = Array.isArray(cfg.brands) ? cfg.brands.filter((b) => typeof b === 'string') : [];
+    if (brands.length >= 2) {
+      try {
+        const { brandCoverage } = await import('./brand-check.mjs');
+        const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
+        const vsnap = JSON.parse(readFileSync(vPath, 'utf8'));
+        const colorByBrand = {};
+        for (const b of brands) colorByBrand[b] = new Set(Object.keys(vsnap.color?.[b] || {}).map((k) => k.replace(/\/color$/, '')));
+        const { tokenUniverse, missing } = brandCoverage(colorByBrand);
+        const holes = Object.keys(missing);
+        if (holes.length) {
+          console.log(C.yellow(`\n⚠️  Multi-brand coverage: ${holes.length}/${tokenUniverse} token(s) defined in some brands but missing in others (${brands.join(', ')}).`));
+          for (const t of holes.slice(0, 20)) console.log(C.yellow(`     ${t} — missing in ${missing[t].join(', ')}`));
+          if (holes.length > 20) console.log(`     … ${holes.length - 20} more`);
+          console.log('   Advisory: every brand should define the same token set; the engine only surfaces the gaps.');
+        } else {
+          console.log(`\nℹ️  Multi-brand coverage: all ${tokenUniverse} tokens are defined across every declared brand (${brands.join(', ')}).`);
+        }
+      } catch { /* advisory: never fails */ }
+    }
+  }
+
   // ── External guidelines: optional live capture (Phase-1-style) ──────────────
   // When ds-config.json declares guidelines.source.notion (the page link, committed, NOT secret) and
   // NOTION_TOKEN is in the environment (per-person, in .env, gitignored), fetch the page and WRITE it

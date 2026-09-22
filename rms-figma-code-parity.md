@@ -353,7 +353,11 @@ a tier model, zero config = does not run); and an **AI-readiness scorecard** (a 
 measure across gate health, coverage, documentation and guidance, aggregated from the signals above,
 never a grade and never blocking). Each emitted `<component>.contract.json` also carries a **usage
 scaffold** (the element plus each prop with a concrete example value, derived from the contract itself
-so an agent instantiates the component without guessing). Override paths with
+so an agent instantiates the component without guessing). Two more **opt-in, project-declared** advisories
+(never imposed, never fail): **closed vocabulary** (`ds-config.json → closedVocab: { bannedTags, surfaces,
+suggest? }` — counts raw container tags the project banned, in the declared surfaces) and **multi-brand
+coverage** (`ds-config.json → brands: [snapshotKey, …]` with ≥2 — flags a token defined in some brands but
+missing in others; the engine never auto-detects "brand", you declare which modes are brands). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
 #### Accessibility check (I18, advisory, from the render)
