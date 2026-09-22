@@ -290,6 +290,25 @@ function buildContract(name, { contract, structure, props, authored, composition
     if (Object.keys(exampleProps).length) usage.props = exampleProps;
     if (Object.keys(usage).length) out.usage = usage;
   }
+
+  // Slot constraints (I5): surface the component's slots for the agent - each Figma INSTANCE_SWAP
+  // property (or a prop the contract binds to a code slot) is a place another component goes. `accepts`
+  // is the component's own composesWith universe (what it actually nests), so the agent has the valid
+  // set without guessing. Derived from the contract's own props + relationships; emitted only when there
+  // are slots.
+  {
+    const accepts = out.relationships?.composesWith || [];
+    const slots = out.props
+      .filter((p) => p.bindings?.figma?.kind === 'INSTANCE_SWAP'
+        || (p.bindings?.code && (p.bindings.code.slot === true || typeof p.bindings.code.slot === 'string')))
+      .map((p) => {
+        const s = { name: p.name, default: p.default ?? null };
+        if (typeof p.bindings?.code?.slot === 'string') s.code = p.bindings.code.slot;
+        if (accepts.length) s.accepts = accepts;
+        return s;
+      });
+    if (slots.length) out.slots = slots;
+  }
   return out;
 }
 

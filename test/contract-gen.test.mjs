@@ -33,6 +33,7 @@ const fixture = () => makeFixture({
   'props.json': { buttonPrimary: { nodeId: '1428:21123', properties: {
     'label-content#1428:0': { type: 'TEXT', defaultValue: 'label' },
     'disabled': { type: 'VARIANT', defaultValue: 'false', variantOptions: ['false', 'true'] },
+    'icon-swap': { type: 'INSTANCE_SWAP', defaultValue: 'IconChevron' },
   }, annotations: [] } },
   'structure-contract.mjs': "export const CONTRACT = { buttonPrimary: { h:24, paddingVar:{tb:null,lr:'padding/xs'}, gapVar:null, gapPx:0, fontSizeVar:'m', innerRadiusVar:'radii/button', strokeSides:'none', children:[{name:'LabelContainer', cssSelector:'.buttonPrimary span', gapVar:null, paddingVar:{tb:null,lr:'padding/xs'}}], propertyMap:{ disabled:{ false:'.buttonPrimary', true:'.buttonPrimary:disabled' } } } };\n",
 });
@@ -255,6 +256,16 @@ test('[I26] emits a grounded usage scaffold from the contract props (default / f
   assert.ok(c.usage, 'contract should carry a usage scaffold');
   assert.equal(c.usage.props['label-content'], 'label', 'text prop uses its default value');
   assert.equal(c.usage.props.disabled, 'false', 'variant prop uses its default (or first option)');
+});
+
+test('[I5] emits slot constraints from the INSTANCE_SWAP props', async () => {
+  const dir = fixture();
+  const r = await generateContracts(dir, cfg, {});
+  const c = JSON.parse(readFileSync(join(r.outDir, 'buttonPrimary.contract.json'), 'utf8'));
+  assert.ok(Array.isArray(c.slots) && c.slots.length, 'contract should carry a slots array');
+  const icon = c.slots.find((s) => s.name === 'icon-swap');
+  assert.ok(icon, 'the INSTANCE_SWAP prop is emitted as a slot');
+  assert.equal(icon.default, 'IconChevron');
 });
 
 test('[I20] usageCounts counts how many components depend on each token / component (blast radius)', () => {
