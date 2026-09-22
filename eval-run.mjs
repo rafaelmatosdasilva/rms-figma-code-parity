@@ -64,7 +64,9 @@ export function generateCandidate(c, cmd, ctxPath, run = defaultRun) {
 // judgment (right component for the intent, empty/error states), never gates. Returns null on failure.
 export function judgeCandidate(c, code, cmd, run = defaultRun) {
   if (!cmd || !code || !code.trim()) return null;
-  const payload = JSON.stringify({ id: c.id, prompt: c.prompt || '', component: c.component ?? null, candidate: code });
+  // Pass the component's DS guidance (description + whenNotToUse/useInstead) so the judge can assess
+  // "right component for the intent / correct usage" against the DS's OWN rules, not blind.
+  const payload = JSON.stringify({ id: c.id, prompt: c.prompt || '', component: c.component ?? null, guidance: c.guidance ?? null, candidate: code });
   try {
     const out = run(cmd, payload, { EVAL_ID: c.id || '' });
     const m = out && out.match(/\{[\s\S]*\}/);
@@ -104,6 +106,21 @@ export function runEvals(cases, ctx, loadCandidate) {
     results.push({ id: c.id, prompt: c.prompt || '', component: c.component ?? null, code, metrics, violations, runs: 1, cleanRuns: metrics.clean ? 1 : 0 });
   }
   return { results, summary: summarize(results) };
+}
+
+// The component's DS guidance (the "why"), from its emitted contract — fed to the judge so it can
+// assess "right component / correct usage" against the DS rules. Falls back to nothing if absent.
+export function loadGuidance(ROOT, cfg, component) {
+  if (!component) return null;
+  const dir = resolve(ROOT, cfg.contracts?.out || 'contracts');
+  try {
+    const c = JSON.parse(readFileSync(join(dir, `${component}.contract.json`), 'utf8'));
+    const g = {};
+    if (c.description) g.description = String(c.description).slice(0, 400);
+    if (c.whenNotToUse) g.whenNotToUse = c.whenNotToUse;
+    if (Array.isArray(c.useInstead) && c.useInstead.length) g.useInstead = c.useInstead;
+    return Object.keys(g).length ? g : null;
+  } catch { return null; }
 }
 
 function fileLoader(ROOT, outDir) {
@@ -180,7 +197,8 @@ async function main() {
   if (judgeCmd) {
     for (const r of results) {
       if (!r.metrics.produced) continue;
-      const v = judgeCandidate({ id: r.id, prompt: r.prompt, component: r.component }, r.code, judgeCmd);
+      const guidance = loadGuidance(ROOT, cfg, r.component);
+      const v = judgeCandidate({ id: r.id, prompt: r.prompt, component: r.component, guidance }, r.code, judgeCmd);
       if (v) r.judge = v;
     }
   }

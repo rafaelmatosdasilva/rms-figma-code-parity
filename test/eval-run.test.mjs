@@ -70,3 +70,14 @@ test('judgeCandidate parses a JSON verdict and degrades on non-JSON / no code', 
   assert.equal(judgeCandidate({ id: 'a', prompt: 'p' }, '<x/>', 'judge', () => 'not json'), null);
   assert.equal(judgeCandidate({ id: 'a', prompt: 'p' }, '', 'judge', () => '{"ok":true}'), null);   // no code → null
 });
+
+test('judgeCandidate passes the component guidance (the "why") into the payload', () => {
+  let seen = null;
+  const run = (cmd, input) => { seen = JSON.parse(input); return '{"ok":true}'; };
+  judgeCandidate(
+    { id: 'a', prompt: 'a login button', component: 'Button', guidance: { whenNotToUse: 'not for navigation', useInstead: ['Link'] } },
+    '<button/>', 'judge', run);
+  assert.equal(seen.component, 'Button');
+  assert.equal(seen.guidance.whenNotToUse, 'not for navigation');
+  assert.deepEqual(seen.guidance.useInstead, ['Link']);
+});

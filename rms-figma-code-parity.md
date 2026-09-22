@@ -432,7 +432,9 @@ non-deterministic. **Advisory** (exit 0 unless `evals.strict`), and it **never g
 - `evals.generate.cmd` — run with `--generate` (or when a candidate is missing): the prompt is piped on
   stdin, the DS context (`llms.txt`) path is in `$EVAL_CONTEXT`, `$EVAL_ID`/`$EVAL_COMPONENT` are set, and
   the command's **stdout** becomes the candidate (written to `evals/<id>.<ext>`).
-- `evals.judge.cmd` — advisory only: gets `{id,prompt,component,candidate}` as JSON on stdin and must print
+- `evals.judge.cmd` — advisory only: gets `{id,prompt,component,guidance,candidate}` as JSON on stdin (where
+  `guidance` is the component's own description + whenNotToUse/useInstead from its contract, so the judge
+  assesses "right component / correct usage" against the DS's rules, not blind) and must print
   a JSON verdict `{ok, notes}` (right component for the intent, empty/error states). It never gates.
 Both **degrade safely** (a missing/failing command just leaves the committed candidates and skips the judge).
 Spec: `plans/PARITY-evals-spec.md`.
