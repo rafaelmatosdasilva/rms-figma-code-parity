@@ -7,3 +7,6 @@ component-prop-result.json
 .parity-refs/
 node_modules/
 .DS_Store
+
+# private parity plans/roadmap (local-only, never published)
+plans/
