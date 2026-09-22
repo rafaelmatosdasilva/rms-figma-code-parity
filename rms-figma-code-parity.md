@@ -4,6 +4,18 @@
 matches the design, and emit machine-readable facts (real token names, values, selectors
 and component relationships) that other tools and AI agents can consume without guessing.
 
+**The model — four layers:**
+- **Facts** — what Figma has: the captured snapshot + the DTCG `tokens.json`.
+- **Contracts** — what the code must satisfy: `<component>.contract.json`.
+- **Intent** — why it exists and how it should be used: `design-intent.json`.
+- **Evaluation** — whether generated code satisfies those constraints: the evals (feed
+  `evals-history.json`, an advisory trend — never the source of truth).
+
+Two deterministic checks stand on the Facts: **parity** (the repo's OWN code vs Facts — is the DS
+right?) and **evaluation** (an agent's GENERATED code vs Contracts + Intent — does the agent use the
+DS right?). The mechanical checks are the authority; an LLM judge is optional and secondary, never
+the primary validator.
+
 **What it does:** Verifies that the code matches Figma. Every gate compares what Figma
 defines against what the code implements - nothing more. It does not lint style or judge
 the design; it only answers "does the code agree with Figma?". The gates cover:
