@@ -215,6 +215,7 @@ rms-figma-code-parity --link-command                  # (re)point the /rms-figma
 rms-figma-code-parity --trend                         # show last 20 audit runs + pass/fail trend
 rms-figma-code-parity --exemption-debt                # list every exemption/escape-hatch (debt report + legibility: temporary/permanent/owner; totals show on every run)
 rms-figma-code-parity --code-drift                    # list props that exist in code but not in Figma (code→design "sync back" advisory; totals show on every run)
+rms-figma-code-parity --contract-completeness         # list components whose emitted contract has no description (agent-readiness gaps; totals show on every run)
 rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
 rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
@@ -313,7 +314,9 @@ authored decisions win). Nothing generates a surface from any of it. **Gate 14**
 flagged in the run output, never silently ignored. Each run also reports **advisory** signals (never
 pass/fail): breaking vs additive contract changes since the last run, newly-deprecated tokens, token
 references that resolve to nothing (a silent-failure risk), and tokens used where a different `$type`
-is expected; **exemption debt** (every escape-hatch surfaced for periodic review, tagged by legibility:
+is expected; **contract completeness** (how many emitted contracts carry a description, semantics and
+whenNotToUse/useInstead guidance, naming those with no description so agent-readiness gaps are visible;
+full list with `--contract-completeness`); **exemption debt** (every escape-hatch surfaced for periodic review, tagged by legibility:
 temporary vs permanent, owner, and review-by, so temporary bypasses get cleared and permanent ones stay
 accountable; totals each run, full list with `--exemption-debt`); **code→design drift** (props that
 exist in code but not in Figma, surfaced as a "sync back to the design" advisory so code-ahead-of-design

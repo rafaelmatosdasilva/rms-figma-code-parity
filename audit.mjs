@@ -2759,6 +2759,40 @@ function reportFull(label, items, shown) {
         console.log(C.yellow(`⚠️  ${r.typeMismatches.length} token type mismatch(es) — a token used where a different type is expected:`));
         for (const t of r.typeMismatches.slice(0, 20)) console.log(C.yellow(`     · ${t}`));
       }
+      // Contract completeness (I15, advisory). Reads the just-emitted contracts and reports how
+      // agent-ready they are: how many carry a description, semantics (element/aria), and
+      // whenNotToUse/useInstead guidance, then names the components missing a description (the
+      // field agents lean on most). Advisory only, never fails; a thin field is a gap to author,
+      // not a bug. --contract-completeness lists every component without a description.
+      try {
+        const cfiles = readdirSync(r.outDir).filter((f) => f.endsWith('.contract.json'));
+        const rowsC = [];
+        for (const f of cfiles) {
+          let j = null; try { j = JSON.parse(readFileSync(join(r.outDir, f), 'utf8')); } catch { continue; }
+          const parts = j.anatomy && typeof j.anatomy === 'object' ? Object.values(j.anatomy) : [];
+          const guidance = !!(j.whenNotToUse || j.useInstead) ||
+            parts.some((p) => p && typeof p === 'object' && (p.whenNotToUse || p.useInstead));
+          rowsC.push({
+            name: j.id || f.replace(/\.contract\.json$/, ''),
+            desc: !!(j.description && String(j.description).trim()),
+            sem: !!(j.semantics && typeof j.semantics === 'object' && Object.keys(j.semantics).length),
+            guidance,
+          });
+        }
+        if (rowsC.length) {
+          const n = rowsC.length;
+          const withDesc = rowsC.filter((x) => x.desc).length;
+          const withSem = rowsC.filter((x) => x.sem).length;
+          const withGuid = rowsC.filter((x) => x.guidance).length;
+          const noDesc = rowsC.filter((x) => !x.desc).map((x) => x.name);
+          console.log(`ℹ️  Contract completeness: ${withDesc}/${n} have a description · ${withSem}/${n} have semantics · ${withGuid}/${n} carry whenNotToUse/useInstead guidance. Advisory only.`);
+          if (noDesc.length) {
+            const detail = process.argv.includes('--contract-completeness');
+            console.log(C.yellow(`     ${noDesc.length} without a description` + (detail ? ':' : ' (run with --contract-completeness to list)')));
+            if (detail) for (const nm of noDesc) console.log(`       · ${nm}`);
+          }
+        }
+      } catch { /* advisory: never fails the audit */ }
     } catch (e) {
       console.log(C.yellow('\n⚠️  contracts: generation failed (never fails the audit): ' + e.message));
     }
