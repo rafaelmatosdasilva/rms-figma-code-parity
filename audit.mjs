@@ -2795,18 +2795,34 @@ function reportFull(label, items, shown) {
     }
   }
 
-  // ── Token contrast (I28, project-DECLARED, advisory, no browser) ────────────
-  // Runs only when ds-config declares a11y.tokenPairs: [{text, bg, large?, name?}]. Computes WCAG
-  // contrast from the DS's own token values, PER mode, and flags any pair below AA. Complements the
-  // render-based a11y gate (works in CI without Chrome). Advisory; never fails, never imposed.
+  // ── Token contrast (I28 + I14, advisory, no browser) ────────────────────────
+  // Computes WCAG contrast from the DS's own token values, PER mode, and flags any text/bg pair below
+  // AA. Pairs come from two places: DERIVED from the token names by convention (I14 - a component's
+  // text/label/icon token paired with the background sharing its state/variant qualifier; on by
+  // default, opt out with a11y.derivePairs:false) and/or DECLARED in ds-config a11y.tokenPairs (I28).
+  // Complements the render a11y gate (works in CI without Chrome). Advisory; never fails, never imposed.
   {
-    const pairs = cfg.a11y?.tokenPairs;
-    if (Array.isArray(pairs) && pairs.length) {
-      try {
+    try {
+      const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
+      const vsnap = JSON.parse(readFileSync(vPath, 'utf8'));
+      const modes = Object.keys(vsnap.color || {});
+      const authored = Array.isArray(cfg.a11y?.tokenPairs) ? cfg.a11y.tokenPairs : [];
+      let derived = [];
+      if (cfg.a11y?.derivePairs !== false && modes.length) {
+        const { deriveContrastPairs } = await import('./pair-derive.mjs');
+        derived = deriveContrastPairs(Object.keys(vsnap.color[modes[0]] || {}));
+      }
+      // Merge + dedupe by text|bg; an authored pair wins over a derived one with the same endpoints.
+      const seen = new Set(); const pairs = []; let nAuthored = 0, nDerived = 0;
+      for (const [src, list] of [['authored', authored], ['derived', derived]]) {
+        for (const p of list) {
+          if (!p || !p.text || !p.bg) continue;
+          const key = `${p.text}|${p.bg}`; if (seen.has(key)) continue; seen.add(key);
+          pairs.push(p); if (src === 'authored') nAuthored++; else nDerived++;
+        }
+      }
+      if (pairs.length) {
         const { tokenContrastFindings } = await import('./contrast-check.mjs');
-        const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
-        const vsnap = JSON.parse(readFileSync(vPath, 'utf8'));
-        const modes = Object.keys(vsnap.color || {});
         const all = [];
         let anyChecked = 0;
         for (const mode of modes) {
@@ -2815,15 +2831,16 @@ function reportFull(label, items, shown) {
           anyChecked += checked;
           for (const f of findings) all.push({ ...f, mode });
         }
+        const provenance = `${nDerived} derived from token names${nAuthored ? ` + ${nAuthored} declared` : ''}`;
         if (all.length) {
-          console.log(C.yellow(`\n⚠️  Token contrast: ${all.length} pair(s) below WCAG AA (from token values, per mode).`));
+          console.log(C.yellow(`\n⚠️  Token contrast: ${all.length} pair(s) below WCAG AA (${provenance}, per mode).`));
           for (const f of all.slice(0, 20)) console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}`));
-          console.log('   Advisory: you declared these pairs (ds-config → a11y.tokenPairs); the engine only surfaces the math.');
+          console.log('   Advisory: pairs are derived from the token-name convention and/or declared in ds-config → a11y.tokenPairs; the engine only surfaces the math.');
         } else if (anyChecked) {
-          console.log(`\nℹ️  Token contrast: all declared pairs meet WCAG AA across ${modes.length} mode(s).`);
+          console.log(`\nℹ️  Token contrast: all pairs meet WCAG AA across ${modes.length} mode(s) (${provenance}).`);
         }
-      } catch { /* advisory: never fails */ }
-    }
+      }
+    } catch { /* advisory: never fails */ }
   }
 
   // ── Token tiers (I10b, project-DECLARED, advisory) ──────────────────────────
