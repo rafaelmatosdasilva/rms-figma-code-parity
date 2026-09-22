@@ -2698,6 +2698,30 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // ── External guidelines: optional live capture (Phase-1-style) ──────────────
+  // When ds-config.json declares guidelines.source.notion (the page link, committed, NOT secret) and
+  // NOTION_TOKEN is in the environment (per-person, in .env, gitignored), fetch the page and WRITE it
+  // to the committed guidelines file (sources[0]) BEFORE intent-gen reads it. Degrade-safe: no token /
+  // not shared / network / rate limit -> keep the committed file, never fail the audit. The token is
+  // read inside notion-fetch and never logged.
+  {
+    const gsrc = cfg.guidelines?.source?.notion;
+    const gfile = cfg.guidelines?.sources?.[0];
+    if (gsrc && gfile) {
+      try {
+        const { fetchNotionMarkdown } = await import('./notion-fetch.mjs');
+        const md = await fetchNotionMarkdown(gsrc, {});
+        const target = join(ROOT, gfile);
+        if (md && md.trim()) {
+          const prevMd = existsSync(target) ? readFileSync(target, 'utf8') : '';
+          if (md !== prevMd) { writeFileSync(target, md); console.log(`\n🔗 Guidelines refreshed from Notion → ${gfile}`); }
+        } else if (!existsSync(target)) {
+          console.log(C.yellow(`\n⚠️  Guidelines: could not fetch from Notion and no committed ${gfile} exists. Set NOTION_TOKEN in .env and share the page with the integration, or commit an export.`));
+        }
+      } catch { /* degrade: keep whatever is committed */ }
+    }
+  }
+
   // ── Design-intent (adopt-aware OUTPUT, not a gate) ──────────────────────────
   // Aggregates this project's Figma annotations + code notes + facts + usage into
   // one private, merge-aware design-intent.json. Never affects pass/fail. This is

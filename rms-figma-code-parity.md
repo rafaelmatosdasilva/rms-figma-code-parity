@@ -259,6 +259,21 @@ It writes **one** merge-aware file, `<theme-css dir>/design-intent.json` (overri
   is a separate capture step (Phase 1) that writes that file first, then the generator folds it in. It
   never follows links inside a doc: list every page you want in `sources`. Advisory, never a gate.
 
+**Wiring an external guidelines doc** (e.g. a Notion page). In `ds-config.json`:
+```jsonc
+"guidelines": {
+  "sources": ["guidelines.md"],               // the committed file the generator reads (md or json)
+  "source":  { "notion": "<page url or id>" }  // OPTIONAL: refresh guidelines.md from Notion each run
+}
+```
+`sources` alone is enough: export the doc to Markdown, commit it, done. To make the refresh automatic
+from Notion, the person does three one-time things: (1) create a Notion **internal integration** and
+copy its secret; (2) **share the page** with that integration; (3) put the secret in the project's
+`.env` as `NOTION_TOKEN` (gitignored, so it is per-person and never committed). The page **link** in
+`ds-config.json` is not secret and is committed; the **token** stays in each person's `.env`. No token,
+page not shared, or offline → the audit keeps the committed `guidelines.md` and never fails. The fetch
+reads one page and does not follow links inside it.
+
 Because the file is regenerated every run, the generator is **merge-aware**: it reads the existing
 file and **preserves everything you authored** — each layer's `authored` string, and every
 component's `authored` field — refreshing only the derived parts. So you get one file that is
