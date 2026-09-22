@@ -21,6 +21,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { loadTokensDict, tokenSource } from './fix-hint.mjs';
 
 const ROOT     = process.cwd();
 const FIX_MODE  = process.argv.includes('--fix');
@@ -31,6 +32,11 @@ let cfg = {};
 try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch {
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
+
+// Emitted DTCG dictionary (feature #1): lets a divergence cite the token's verified value and the
+// file that declares it. Absent when contracts have not been generated yet - citations degrade.
+const CONTRACTS_REL  = cfg.contracts?.out ?? 'contracts';
+const TOKENS_DICT    = loadTokensDict(ROOT, join(ROOT, CONTRACTS_REL));
 
 const THEME_PATHS   = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 const THEME_PATH    = THEME_PATHS[0]; // primary - used in fix hints
@@ -857,6 +863,7 @@ if (FAIL.length) {
       console.log(`       Figma: ${f.figma}   CSS: ${f.css}`);
     }
     if (f.fixHint) console.log(`       Fix:  ${f.fixHint}`);
+    if (f.token) { const src = tokenSource(f.token, { dict: TOKENS_DICT, contractsDir: CONTRACTS_REL }); if (src) console.log(`       ${src}`); }
   }
 }
 if (ALIAS_FAIL.length) {

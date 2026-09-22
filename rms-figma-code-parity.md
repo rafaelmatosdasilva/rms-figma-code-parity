@@ -340,7 +340,10 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
   `relationships` — `composesWith` derived from the composition snapshot, `neverCombineWith` authored),
   `contract.schema.json`, and an `llms.txt` AI index (which also lists each component's guidance and
   composition). They carry the DS's real values, so a single
-  `.gitignore` keeps them local.
+  `.gitignore` keeps them local. When these are present, a token divergence also **cites its source**:
+  the token's verified value from `tokens.json` and the file that declares it, so a fix (by a person or
+  an agent) is applied against the real fact, not a guess. Absent contracts, the citation degrades to
+  naming the token and its convention var.
 
 The generator reads `contract.authored.json` + the snapshots and merges them into the local views (the
 authored decisions win). Nothing generates a surface from any of it. **Gate 14** reads the authored
