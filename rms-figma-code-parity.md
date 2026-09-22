@@ -231,6 +231,8 @@ rms-figma-code-parity --contract-completeness         # list components whose em
 rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
 rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
+rms-figma-code-parity --baseline                      # capture today's failing gates as accepted adoption debt (commit parity-baseline.json)
+rms-figma-code-parity --no-baseline                   # ignore any parity-baseline.json this run (enforce every gate)
 node scripts/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
 node scripts/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
 ```
@@ -379,6 +381,19 @@ captured **collections manifest** that marks a brand collection (the Enterprise 
 enhancement, read as data the any-plan capture wrote — never a plan-gated API call); else it **suggests**
 candidate multi-mode collections but never assumes (modes may be theme/density/locale, not brands). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
+
+#### Adoption baseline / ratchet (opt-in, gate-level)
+
+A real codebase is rarely 100% green on day one. Rather than a wall of red (ignored) or turning gates
+off (drift hides), run `--baseline` once to record **today's failing gates as accepted debt** in a
+committed `parity-baseline.json`. After that, a normal run **tolerates** those baselined gates (shown
+as `⚠️ Debt`, verdict `NO REGRESSIONS ✅`) but **fails on any gate not in the baseline that goes red** —
+a real regression. Debt only ratchets **down**: a baselined gate that goes green is surfaced as "ready
+to ratchet" so you can re-run `--baseline` to lock it in (it can no longer regress silently); stale
+entries (a renamed/removed gate) are flagged for pruning. It is gate-level on purpose — it uses only
+the pass/fail the audit already has for all 25 gates, so it is fully deterministic and imposes no
+structure. Off by default (no file = no baseline); ignore a file for one run with `--no-baseline`, or
+per-project with `ds-config.json → baseline.enabled: false` (path via `baseline.path`).
 
 #### Accessibility check (I18, advisory, from the render)
 

@@ -29,6 +29,7 @@ import { makeFigmaFetch }                                       from './figma-fe
 import { collectRawValues, COLLECT_NODE_BUDGET }                from './collect-raw-values.mjs';
 import { extractDynamicClassPrefixes }                          from './dynamic-class-prefixes.mjs';
 import { frameworkGateSkipReason }                              from './component-framework-gate.mjs';
+import { loadBaselineLabels, classifyBaseline, writeBaseline } from './baseline.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT       = process.cwd();
@@ -2388,6 +2389,35 @@ function reportFull(label, items, shown) {
   addGate('What this audit actually checked  (which DS components & states are covered)',
     parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
 
+  // ── Adoption baseline / ratchet (feature #2) ────────────────────────────────────
+  // Let a real (imperfect) codebase adopt the audit without either a wall of red or turning gates
+  // off. The baseline records today's failing gates as ACCEPTED DEBT: they no longer fail the run,
+  // but any gate NOT in the baseline that fails is a real regression and still fails. Debt only
+  // ratchets down. Gate-level, deterministic, opt-in. Off by default (no file, no baseline).
+  //   node audit.mjs --baseline   → capture the current failing gates as the baseline (commit it)
+  //   node audit.mjs              → enforce: debt is tolerated, regressions fail, ratchets surfaced
+  //   --no-baseline / ds-config baseline.enabled:false → ignore any baseline file
+  const BASELINE_OFF  = process.argv.includes('--no-baseline') || cfg.baseline?.enabled === false;
+  const BASELINE_PATH = join(ROOT, cfg.baseline?.path ?? 'parity-baseline.json');
+  let baselineInfo = null;
+  if (!BASELINE_OFF && process.argv.includes('--baseline')) {
+    const written = writeBaseline(BASELINE_PATH, gates);
+    baselineInfo = { mode: 'write', written, path: BASELINE_PATH };
+    anyFail = false;   // capturing the baseline is not a failing run
+  } else if (!BASELINE_OFF) {
+    const baseLabels = loadBaselineLabels(BASELINE_PATH);
+    if (baseLabels) {
+      const cls = classifyBaseline(gates, baseLabels);
+      baselineInfo = { mode: 'enforce', ...cls };
+      // Re-derive the verdict: accepted debt no longer fails; only regressions do. Preserve the
+      // one non-gate contribution (a11yStrict, folded into anyFail above).
+      const a11yHardFail = cfg.a11yStrict === true && rA11y && rA11y.status === 1;
+      anyFail = a11yHardFail || cls.gateFail;
+      const debtSet = new Set(cls.debt);
+      for (const g of gates) if (debtSet.has(g.label) && !g.pass && !g.planLimited) g.baselined = true;
+    }
+  }
+
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
   console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
@@ -2402,8 +2432,10 @@ function reportFull(label, items, shown) {
   gates.forEach((g, i) => {
     let icon;
     if (g.planLimited) { icon = C.yellow('⏭ '); planLimitedGates.push(i + 1); }
+    else if (g.baselined) icon = C.yellow('⚠️ ');
     else icon = g.pass ? C.green('✅') : C.red('❌');
     console.log(`${icon}  [${i + 1}] ${C.bold(g.label)}`);
+    if (g.baselined) console.log(C.yellow('       baselined - accepted adoption debt (not a regression). Fix it, then re-run --baseline to lock it in.'));
     for (const line of g.lines || []) console.log(`       ${line}`);
     console.log();
   });
@@ -2503,8 +2535,8 @@ function reportFull(label, items, shown) {
   ];
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
-    const icon = result === 'plan' ? C.yellow('⏭') : result ? C.green('✅') : C.red('❌');
-    const status = result === 'plan' ? C.yellow('Skipped') : result ? C.green('Pass') : C.red('Fail');
+    const icon = result === 'plan' ? C.yellow('⏭') : result === 'debt' ? C.yellow('⚠️') : result ? C.green('✅') : C.red('❌');
+    const status = result === 'plan' ? C.yellow('Skipped') : result === 'debt' ? C.yellow('Debt') : result ? C.green('Pass') : C.red('Fail');
     const n = `[${num}]`.padEnd(COL1);
     const l = label.length > COL2 ? label.slice(0, COL2 - 1) + '…' : label.padEnd(COL2);
     return `  ${icon}  ${n}${l}${status}`;
@@ -2513,7 +2545,7 @@ function reportFull(label, items, shown) {
   console.log(C.bold('  GATE SUMMARY'));
   console.log(C.bold('─'.repeat(WIDTH)));
   gates.forEach((g, i) => {
-    const result = g.planLimited ? 'plan' : g.pass;
+    const result = g.planLimited ? 'plan' : g.baselined ? 'debt' : g.pass;
     const plainLabel = GATE_PLAIN[i] ?? g.label;
     console.log(tRow(i + 1, plainLabel, result));
     if (g.planLimited) {
@@ -2533,9 +2565,29 @@ function reportFull(label, items, shown) {
     console.log();
   }
 
+  // ── Adoption baseline verdict (feature #2) ──────────────────────────────────
+  if (baselineInfo?.mode === 'write') {
+    console.log('─'.repeat(WIDTH));
+    const n = baselineInfo.written.length;
+    console.log(C.yellow(`\n  📌 BASELINE CAPTURED - ${n} failing gate${n === 1 ? '' : 's'} recorded as accepted debt in ${relative(ROOT, baselineInfo.path) || 'parity-baseline.json'}.`));
+    if (n) for (const l of baselineInfo.written) console.log(C.yellow(`       • ${l}`));
+    console.log(C.dim('       Commit this file. From now on these gates are tolerated; any OTHER gate that fails is a regression.'));
+    console.log();
+  } else if (baselineInfo?.mode === 'enforce') {
+    console.log('─'.repeat(WIDTH));
+    const { debt, regressions, ratcheted, stale } = baselineInfo;
+    console.log(C.bold(`\n  📌 ADOPTION BASELINE  ·  ${debt.length} debt · ${regressions.length} regression${regressions.length === 1 ? '' : 's'} · ${ratcheted.length} ready to ratchet`));
+    if (regressions.length) { console.log(C.red('     Regressions (not baselined - these FAIL the run):')); for (const l of regressions) console.log(C.red(`       ❌ ${l}`)); }
+    if (ratcheted.length)   { console.log(C.green('     Fixed since the baseline - re-run --baseline to lock in (they can no longer regress silently):')); for (const l of ratcheted) console.log(C.green(`       ✅ ${l}`)); }
+    if (stale.length)       { console.log(C.dim('     Stale baseline entries (no matching gate - prune them):')); for (const l of stale) console.log(C.dim(`       · ${l}`)); }
+    console.log();
+  }
+
   console.log('─'.repeat(WIDTH));
   if (anyFail) {
     console.log(C.bold(C.red('\n  AUDIT FAILED - fix all ❌ above before declaring parity\n')));
+  } else if (baselineInfo?.mode === 'enforce' && baselineInfo.debt.length) {
+    console.log(C.bold(C.yellow('\n  NO REGRESSIONS ✅  (adoption debt remains - see baseline above)\n')));
   } else {
     console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
   }
