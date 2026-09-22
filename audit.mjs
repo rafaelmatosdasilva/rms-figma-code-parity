@@ -3093,6 +3093,46 @@ function reportFull(label, items, shown) {
           }
         }
       } catch { /* advisory: never fails the audit */ }
+
+      // Code Connect validation (I31, advisory). Code Connect is a DOWNSTREAM artifact - it can be
+      // stale (QBDS: "do NOT seed truth from it"). We NEVER call the plan-gated Code Connect API; we
+      // read only committed *.figma.* files already in the repo and diff their mappings against the
+      // just-emitted contracts, joined by Figma node id. Detected, never imposed: no CC files = no-op
+      // (any-plan projects unchanged). Opt-in file list via ds-config codeConnect.files.
+      try {
+        const declared = (cfg.codeConnect?.files ?? []).flat().filter(Boolean);
+        const ccFiles = declared.length
+          ? declared.map((p) => join(ROOT, p)).filter((p) => existsSync(p))
+          : collectSourceFiles(ROOT).filter((p) => /\.figma\.(t|j)sx?$/.test(p));
+        if (ccFiles.length) {
+          const { parseCodeConnect, codeConnectFindings } = await import('./codeconnect-check.mjs');
+          const contracts = [];
+          for (const f of readdirSync(r.outDir).filter((f) => f.endsWith('.contract.json'))) {
+            try { contracts.push(JSON.parse(readFileSync(join(r.outDir, f), 'utf8'))); } catch { /* skip */ }
+          }
+          const entries = [];
+          for (const f of ccFiles) {
+            try { for (const e of parseCodeConnect(readFileSync(f, 'utf8'))) entries.push({ ...e, file: relative(ROOT, f) }); } catch { /* skip unreadable */ }
+          }
+          const { findings, checked, matched } = codeConnectFindings(entries, contracts);
+          const stale = findings.filter((f) => f.kind !== 'no-contract');
+          const noContract = findings.filter((f) => f.kind === 'no-contract');
+          if (findings.length) {
+            const detail = process.argv.includes('--code-connect');
+            console.log(C.yellow(`ℹ️  Code Connect: ${stale.length} stale/invalid mapping(s)${noContract.length ? ` · ${noContract.length} mapping(s) with no matching contract` : ''} across ${checked} connect(s) (${matched} matched a contract). Code Connect is downstream - fix the mapping, not the contract. Advisory.`));
+            if (detail) {
+              for (const f of stale) console.log(C.yellow(f.kind === 'unknown-prop'
+                ? `     · ${f.component}: prop "${f.figmaProp}" is not in the contract (renamed or removed?)`
+                : `     · ${f.component}: option "${f.option}" for "${f.figmaProp}" is not in the contract`));
+              for (const f of noContract) console.log(C.dim(`     · ${f.component}: node ${f.nodeId || '?'} has no emitted contract (out of scope, or a stale connect)`));
+            } else {
+              console.log(C.dim('     Run with --code-connect to list them.'));
+            }
+          } else if (matched) {
+            console.log(C.dim(`ℹ️  Code Connect: ${matched} mapping(s) agree with the contract.`));
+          }
+        }
+      } catch { /* advisory: never fails the audit */ }
     } catch (e) {
       console.log(C.yellow('\n⚠️  contracts: generation failed (never fails the audit): ' + e.message));
     }
