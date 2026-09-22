@@ -2503,6 +2503,17 @@ function reportFull(label, items, shown) {
   });
   console.log();
 
+  // ── Honesty legend (I11) ────────────────────────────────────────────────────
+  // Say plainly what is verified vs merely reported, and scope the claim to what was actually
+  // checked (from the coverage gate), so the report never over-claims. Wording only, no new checks.
+  {
+    const cov = (rCoverage?.stdout || '').match(/MODELLED\s+(\d+)\/(\d+)/);
+    const scope = cov ? `checked ${cov[1]} of ${cov[2]} DS components` : null;
+    console.log(C.dim(`  [verified] the ${gates.length} gates above are mechanically checked against Figma${scope ? `; ${scope} (see gate ${gates.length})` : ''}.`));
+    console.log(C.dim('  [reported] the advisory notes below (exemption debt, code drift, accessibility, layering) are signals, not pass/fail.'));
+    console.log();
+  }
+
   console.log('─'.repeat(WIDTH));
   if (anyFail) {
     console.log(C.bold(C.red('\n  AUDIT FAILED - fix all ❌ above before declaring parity\n')));
@@ -2557,16 +2568,70 @@ function reportFull(label, items, shown) {
     const debtTotal = debtLists.reduce((n, l) => n + l.entries.length, 0);
     if (debtTotal) {
       const detail = process.argv.includes('--exemption-debt');
-      console.log(C.yellow(`\n⚠️  Exemption debt: ${debtTotal} bypass(es) across ${debtLists.length} list(s) — each is a deliberate exception to review (a missing token or a real gap), not a silent pass.`));
+      // I19 (decision legibility). An exemption entry may be a bare string or an object carrying
+      // optional legibility fields: status ('permanent' | 'temporary'), owner, and reviewBy (a date
+      // or a trigger), alongside the existing rationale (_note / note / reason). An entry is LEGIBLE
+      // when a non-participant can see WHY it exists and WHO owns it: a rationale AND an owner or a
+      // status. Advisory only. Missing legibility never fails; it just surfaces so temporary bypasses
+      // get cleared and permanent ones stay accountable.
+      const legOf = (e) => {
+        if (!e || typeof e !== 'object') return { status: null, owner: null, reviewBy: null, rationale: null, legible: false };
+        const status = typeof e.status === 'string' ? e.status.toLowerCase() : null;
+        const owner = e.owner ?? null;
+        const reviewBy = e.reviewBy ?? e.review ?? e.reviewWhen ?? null;
+        const rationale = e._note ?? e.note ?? e.reason ?? null;
+        return { status, owner, reviewBy, rationale, legible: !!(rationale && (owner || status)) };
+      };
+      const flat = debtLists.flatMap((l) => l.entries.map(legOf));
+      const temp = flat.filter((x) => x.status === 'temporary').length;
+      const perm = flat.filter((x) => x.status === 'permanent').length;
+      const noStatus = flat.filter((x) => !x.status).length;
+      const notLegible = flat.filter((x) => !x.legible).length;
+      console.log(C.yellow(`\n⚠️  Exemption debt: ${debtTotal} bypass(es) across ${debtLists.length} list(s). Each is a deliberate exception to review (a missing token or a real gap), not a silent pass.`));
+      console.log(C.yellow(`     legibility: ${temp} temporary · ${perm} permanent · ${noStatus} unspecified · ${notLegible} not legible (no rationale/owner/status)`));
       for (const l of debtLists) {
         console.log(C.yellow(`     ${l.key}: ${l.entries.length}`));
         if (detail) {
-          for (const e of l.entries) console.log(`       · ${typeof e === 'string' ? e : JSON.stringify(e)}`);
+          for (const e of l.entries) {
+            const m = legOf(e);
+            const label = typeof e === 'string' ? e : (e.pattern ?? e.file ?? e.token ?? e.name ?? JSON.stringify(e));
+            const tags = [m.status && `status:${m.status}`, m.owner && `owner:${m.owner}`, m.reviewBy && `review:${m.reviewBy}`, !m.legible && 'not-legible'].filter(Boolean).join('  ');
+            console.log(`       · ${label}${tags ? '   ' + C.dim(`[${tags}]`) : ''}`);
+          }
         }
       }
       console.log(detail
-        ? C.yellow('   Clear one by adding the missing token / building the control, or confirm it is a genuine, permanent exception.')
-        : '   Run with --exemption-debt to list them.');
+        ? C.yellow('   Clear a temporary one by adding the missing token / building the control; give each a rationale + owner (and status) so it stays legible.')
+        : '   Run with --exemption-debt to list them (with status / owner / review).');
+    }
+  }
+
+  // ── Code → design drift (I24, advisory, never a gate) ───────────────────────
+  // A diagnostic layer must work BOTH directions (S19). The parity is design → code; this surfaces
+  // the reverse: props that exist in CODE but not in Figma, so code-ahead-of-design is visible and
+  // can be synced back to the design (or documented). Reuses the component-prop gate's already
+  // captured rows: status 'extra' = a code prop with no Figma property; 'rename' = a likely match to
+  // document. The engine only SURFACES the drift; the designer decides. Never affects pass/fail. Run
+  // with --code-drift to list every item.
+  {
+    let propRes = null;
+    try { propRes = JSON.parse(readFileSync(join(ROOT, 'component-prop-result.json'), 'utf8')); } catch { /* optional */ }
+    const propRows = Array.isArray(propRes?.rows) ? propRes.rows : [];
+    const extra = propRows.filter((r) => r.status === 'extra');
+    const rename = propRows.filter((r) => r.status === 'rename');
+    if (extra.length || rename.length) {
+      const detail = process.argv.includes('--code-drift');
+      const byComp = new Map();
+      for (const r of extra) { if (!byComp.has(r.component)) byComp.set(r.component, []); byComp.get(r.component).push(r.codeProp); }
+      console.log(C.yellow(`\nℹ️  Code → design drift: ${extra.length} code prop(s)${rename.length ? ` and ${rename.length} likely rename(s)` : ''} exist in code but not in Figma. Decide whether to sync them back to the design or document them. Advisory only.`));
+      for (const [comp, props] of byComp) {
+        console.log(C.yellow(`     ${comp}: ${props.length}` + (detail ? C.dim(`  (${props.join(', ')})`) : '')));
+      }
+      if (detail && rename.length) {
+        console.log(C.yellow('   likely renames (Figma prop ~ code prop):'));
+        for (const r of rename) console.log(`       · ${r.component}: Figma "${r.figmaProp}" ~ code "${r.codeProp}"`);
+      }
+      if (!detail) console.log('   Run with --code-drift to list them.');
     }
   }
 

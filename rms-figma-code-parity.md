@@ -1,5 +1,9 @@
 # /rms-figma-code-parity - Figma-to-Code Parity
 
+**In one line:** given a Figma design system and its codebase, decide whether the code
+matches the design, and emit machine-readable facts (real token names, values, selectors
+and component relationships) that other tools and AI agents can consume without guessing.
+
 **What it does:** Verifies that the code matches Figma. Every gate compares what Figma
 defines against what the code implements - nothing more. It does not lint style or judge
 the design; it only answers "does the code agree with Figma?". The gates cover:
@@ -10,6 +14,10 @@ the design; it only answers "does the code agree with Figma?". The gates cover:
 | **Data is up to date** | The Figma snapshots and build output are current, so you are never auditing a stale picture of the DS |
 | **Clean CSS** | No unused variables, no values that contradict Figma, no parent rule overriding a child component |
 | **What the audit covered** | Which DS components and states the audit actually reached - so gaps are visible, not silent |
+
+**Why this matters for AI:** an agent never has to infer the design system from a Figma
+file and invent component names, token values or selectors. It reads the verified facts
+this skill emits (the contract and `llms.txt`), so what it builds is grounded, not guessed.
 
 > ## ⛔ INVARIANT — parity runs on ANY Figma plan (non-negotiable)
 >
@@ -205,7 +213,8 @@ rms-figma-code-parity --version                       # am I on the latest? comp
 rms-figma-code-parity --update                        # update to the latest - no re-download
 rms-figma-code-parity --link-command                  # (re)point the /rms-figma-code-parity command at the install via symlink
 rms-figma-code-parity --trend                         # show last 20 audit runs + pass/fail trend
-rms-figma-code-parity --exemption-debt                # list every exemption/escape-hatch (debt report; a totals line shows on every run)
+rms-figma-code-parity --exemption-debt                # list every exemption/escape-hatch (debt report + legibility: temporary/permanent/owner; totals show on every run)
+rms-figma-code-parity --code-drift                    # list props that exist in code but not in Figma (code→design "sync back" advisory; totals show on every run)
 rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
 rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
@@ -304,8 +313,12 @@ authored decisions win). Nothing generates a surface from any of it. **Gate 14**
 flagged in the run output, never silently ignored. Each run also reports **advisory** signals (never
 pass/fail): breaking vs additive contract changes since the last run, newly-deprecated tokens, token
 references that resolve to nothing (a silent-failure risk), and tokens used where a different `$type`
-is expected; **exemption debt** (every escape-hatch surfaced for periodic review — totals each run,
-full list with `--exemption-debt`); and **token layering** (a structure-agnostic check: it imposes no
+is expected; **exemption debt** (every escape-hatch surfaced for periodic review, tagged by legibility:
+temporary vs permanent, owner, and review-by, so temporary bypasses get cleared and permanent ones stay
+accountable; totals each run, full list with `--exemption-debt`); **code→design drift** (props that
+exist in code but not in Figma, surfaced as a "sync back to the design" advisory so code-ahead-of-design
+is visible; the engine only surfaces it, the designer decides; totals each run, full list with
+`--code-drift`); and **token layering** (a structure-agnostic check: it imposes no
 tier model, only measures the DS's own aliasing rate and, when references are the DS's norm, surfaces
 the few tokens that hold a raw value instead). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
