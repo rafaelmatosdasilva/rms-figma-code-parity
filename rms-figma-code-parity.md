@@ -323,7 +323,11 @@ exist in code but not in Figma, surfaced as a "sync back to the design" advisory
 is visible; the engine only surfaces it, the designer decides; totals each run, full list with
 `--code-drift`); and **token layering** (a structure-agnostic check: it imposes no
 tier model, only measures the DS's own aliasing rate and, when references are the DS's norm, surfaces
-the few tokens that hold a raw value instead). Override paths with
+the few tokens that hold a raw value instead); and an **AI-readiness scorecard** (a running R/Y/G
+measure across gate health, coverage, documentation and guidance, aggregated from the signals above,
+never a grade and never blocking). Each emitted `<component>.contract.json` also carries a **usage
+scaffold** (the element plus each prop with a concrete example value, derived from the contract itself
+so an agent instantiates the component without guessing). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
 #### Accessibility check (I18, advisory, from the render)

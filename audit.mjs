@@ -2566,6 +2566,10 @@ function reportFull(label, items, shown) {
   if (hist.length > 100) hist = hist.slice(-100);
   try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
 
+  // AI-readiness scorecard (I12) accumulates a few run signals as the advisory blocks below compute
+  // them, then prints one R/Y/G summary at the end. Declared here, before the first writer.
+  const _sc = { exempt: 0, contracts: null };
+
   // ── Exemption debt (advisory, never a gate) ─────────────────────────────────
   // Every exemption / escape-hatch is a deliberate bypass — usually a missing token or a
   // real gap, not a free pass. Surface them each run so they stay visible and trend down,
@@ -2585,6 +2589,7 @@ function reportFull(label, items, shown) {
     };
     walkDebt(cfg, '');
     const debtTotal = debtLists.reduce((n, l) => n + l.entries.length, 0);
+    _sc.exempt = debtTotal;
     if (debtTotal) {
       const detail = process.argv.includes('--exemption-debt');
       // I19 (decision legibility). An exemption entry may be a bare string or an object carrying
@@ -2803,6 +2808,7 @@ function reportFull(label, items, shown) {
           const withDesc = rowsC.filter((x) => x.desc).length;
           const withSem = rowsC.filter((x) => x.sem).length;
           const withGuid = rowsC.filter((x) => x.guidance).length;
+          _sc.contracts = { n, withDesc, withSem, withGuid };
           const noDesc = rowsC.filter((x) => !x.desc).map((x) => x.name);
           console.log(`ℹ️  Contract completeness: ${withDesc}/${n} have a description · ${withSem}/${n} have semantics · ${withGuid}/${n} carry whenNotToUse/useInstead guidance. Advisory only.`);
           if (noDesc.length) {
@@ -2815,6 +2821,38 @@ function reportFull(label, items, shown) {
     } catch (e) {
       console.log(C.yellow('\n⚠️  contracts: generation failed (never fails the audit): ' + e.message));
     }
+  }
+
+  // ── AI-readiness scorecard (I12, advisory, never a gate) ────────────────────
+  // A running R/Y/G measure across a few axes, aggregated from signals this run already produced.
+  // Not a grade and it never blocks - a trend you watch move over time.
+  {
+    const dot = (st) => st === 'g' ? C.green('●') : st === 'y' ? C.yellow('●') : C.red('●');
+    const band = (p, hi, mid) => p == null ? 'y' : (p >= hi ? 'g' : p >= mid ? 'y' : 'r');
+    const rows = [];
+
+    const passN = gates.filter((g) => g.pass && !g.planLimited).length;
+    const totalN = gates.length;
+    rows.push([anyFail ? 'r' : (passN < totalN ? 'y' : 'g'), 'Gate health', `${passN}/${totalN} gates pass`]);
+
+    const cov = (rCoverage?.stdout || '').match(/MODELLED\s+(\d+)\/(\d+)/);
+    if (cov && +cov[2]) {
+      const p = Math.round((+cov[1] / +cov[2]) * 100);
+      rows.push([band(p, 90, 70), 'Coverage', `${cov[1]}/${cov[2]} components modelled (${p}%)  ·  exemption debt ${_sc.exempt}`]);
+    } else {
+      rows.push(['y', 'Coverage', `exemption debt ${_sc.exempt}`]);
+    }
+
+    if (_sc.contracts && _sc.contracts.n) {
+      const c = _sc.contracts;
+      const dp = Math.round((c.withDesc / c.n) * 100);
+      const gp = Math.round((c.withGuid / c.n) * 100);
+      rows.push([band(dp, 90, 60), 'Documentation', `${c.withDesc}/${c.n} contracts have a description (${dp}%)`]);
+      rows.push([band(gp, 60, 20), 'AI guidance', `${c.withGuid}/${c.n} carry whenNotToUse/useInstead (${gp}%)`]);
+    }
+
+    console.log('\n' + C.bold('  AI-READINESS SCORECARD') + C.dim('  (advisory - a running measure, never blocks)'));
+    for (const [st, label, detail] of rows) console.log(`  ${dot(st)} ${label.padEnd(16)} ${C.dim(detail)}`);
   }
 
   // Passive, throttled "you're behind" nudge - at most once/day, best-effort, never

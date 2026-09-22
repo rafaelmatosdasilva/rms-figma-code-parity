@@ -247,3 +247,12 @@ test('a token whose path collides with another is surfaced in droppedTokens, not
   const r2 = await generateContracts(fixture(), cfg, {});
   assert.deepEqual(r2.droppedTokens, []);
 });
+
+test('[I26] emits a grounded usage scaffold from the contract props (default / first option)', async () => {
+  const dir = fixture();
+  const r = await generateContracts(dir, cfg, {});
+  const c = JSON.parse(readFileSync(join(r.outDir, 'buttonPrimary.contract.json'), 'utf8'));
+  assert.ok(c.usage, 'contract should carry a usage scaffold');
+  assert.equal(c.usage.props['label-content'], 'label', 'text prop uses its default value');
+  assert.equal(c.usage.props.disabled, 'false', 'variant prop uses its default (or first option)');
+});

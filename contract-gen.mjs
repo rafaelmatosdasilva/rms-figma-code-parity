@@ -271,6 +271,25 @@ function buildContract(name, { contract, structure, props, authored, composition
     const b = bindings[pp.name];
     if (b && typeof b === 'object') pp.bindings.code = b;   // { attribute } | { slot } | { attribute: true } ...
   }
+
+  // Usage scaffold (I26): a grounded, ready-to-fill example derived from THIS contract - the authored
+  // semantic element (when known) plus each prop with a concrete example value (its default, else its
+  // first variant option). Nothing is invented: every value comes from the captured props / authored
+  // semantics, so an agent instantiates the component with real names instead of guessing. Framework
+  // syntax is intentionally left to the agent (we give the element + prop values, not JSX vs class).
+  // Emitted only when there is something concrete to show.
+  {
+    const exampleProps = {};
+    for (const pr of out.props) {
+      const val = (pr.default != null && pr.default !== '') ? pr.default
+        : (Array.isArray(pr.options) && pr.options.length ? pr.options[0] : undefined);
+      if (val !== undefined) exampleProps[pr.name] = val;
+    }
+    const usage = {};
+    if (out.semantics && out.semantics.element) usage.element = out.semantics.element;
+    if (Object.keys(exampleProps).length) usage.props = exampleProps;
+    if (Object.keys(usage).length) out.usage = usage;
+  }
   return out;
 }
 
