@@ -57,7 +57,7 @@ export function evalConformance(code, ctx = {}) {
     violations,
     metrics: {
       produced: src.trim().length > 0,
-      clean: violations.length === 0,        // "zero-fix": the candidate needs no correction
+      clean: src.trim().length > 0 && violations.length === 0,   // "zero-fix": produced AND needs no correction
       rawColors: rawColors.length,
       rawDimensions: rawDims.length,
       inventedVars: inventedVars.length,

@@ -396,6 +396,25 @@ bespoke app that exposes no page index is the only case that needs a `--url` / `
 - **Reading order, skip links, landmark completeness** — and anything the render cannot reveal: only when
   the project **declares** it in `ds-config.json`, never imposed (No-imposed-structure).
 
+#### Evals (I7, a separate entry point — measures agent OUTPUT, never gates the repo)
+
+`eval-run.mjs` points the DS-conformance core at an agent's GENERATED output instead of the repo, so you
+can measure whether agents actually follow the DS. Configure in `ds-config.json → evals`:
+```jsonc
+"evals": {
+  "cases": [ { "id": "login", "prompt": "build a login screen with the DS", "component": "input" } ],
+  "outDir": "evals",        // pre-generated candidates live at evals/<id>.<html|jsx|vue|…>
+  "strict": false           // true → exit 1 when any candidate has a violation
+}
+```
+Run: `node eval-run.mjs`. For each case it reads the candidate `outDir/<id>.<ext>` and flags the same
+mechanical failures the gates catch — raw color/dimension literals that should be tokens, `var(--x)` not
+in the DS var universe (invented) — and reports per-case + aggregate metrics (produced?, zero-fix rate,
+violations), appending to `evals-history.json`. Deterministic (candidates are pre-generated), **advisory**
+(exit 0 unless `evals.strict`), and it **never gates the repo audit**. Driving a live agent to generate the
+candidates is a pluggable adapter (the next step); an LLM-judge (right component for the intent, empty/error
+states) is advisory and also future. Spec: `plans/PARITY-evals-spec.md`.
+
 ---
 
 ## Project Config
