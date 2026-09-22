@@ -2793,11 +2793,11 @@ function reportFull(label, items, shown) {
       const additiveN = (r.breaking || []).filter((c) => c.level === 'additive').length;
       if (breaks.length) {
         console.log(C.yellow(`⚠️  ${breaks.length} breaking contract change(s) since the last run:`));
-        for (const c of breaks.slice(0, 20)) console.log(C.yellow(`     · ${c.msg}`));
+        for (const c of breaks.slice(0, 20)) console.log(C.yellow(`     · ${c.msg}${c.consumers ? `  · used by ${c.consumers} component(s) — a shared-contract change` : ''}`));
       }
       if (deprecs.length) {
         console.log(C.yellow(`⚠️  ${deprecs.length} token(s) newly deprecated:`));
-        for (const c of deprecs.slice(0, 12)) console.log(C.yellow(`     · ${c.msg}`));
+        for (const c of deprecs.slice(0, 12)) console.log(C.yellow(`     · ${c.msg}${c.consumers ? `  · used by ${c.consumers} component(s)` : ''}`));
       }
       if (additiveN) console.log(`   +${additiveN} additive change(s)`);
       if (r.undefinedRefs?.length) {

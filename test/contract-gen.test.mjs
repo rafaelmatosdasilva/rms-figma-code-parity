@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { makeFixture } from './helpers.mjs';
-import { generateContracts } from '../contract-gen.mjs';
+import { generateContracts, usageCounts } from '../contract-gen.mjs';
 
 const cfg = {
   paths: {
@@ -255,4 +255,16 @@ test('[I26] emits a grounded usage scaffold from the contract props (default / f
   assert.ok(c.usage, 'contract should carry a usage scaffold');
   assert.equal(c.usage.props['label-content'], 'label', 'text prop uses its default value');
   assert.equal(c.usage.props.disabled, 'false', 'variant prop uses its default (or first option)');
+});
+
+test('[I20] usageCounts counts how many components depend on each token / component (blast radius)', () => {
+  const built = [
+    { name: 'buttonPrimary',   contract: { anatomy: { root: { radiusToken: '{radii.button}' } }, relationships: { composesWith: ['icon'] } } },
+    { name: 'buttonSecondary', contract: { anatomy: { root: { radiusToken: '{radii.button}' } }, relationships: { composesWith: ['icon'] } } },
+    { name: 'card',            contract: { anatomy: { root: { gapToken: '{spacing.md}' } } } },
+  ];
+  const u = usageCounts(built);
+  assert.equal(u.tokens.get('radii.button'), 2, 'radii.button is used by 2 components');
+  assert.equal(u.tokens.get('spacing.md'), 1);
+  assert.equal(u.components.get('icon'), 2, 'icon is composed by 2 components');
 });

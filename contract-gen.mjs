@@ -424,6 +424,27 @@ function collectRefSlots(contract, out = []) {
   walk(contract.anatomy, 'anatomy');
   return out;
 }
+
+// Blast radius (I20): how many components depend on each token / component, so a change to a shared
+// contract reads as authorship rather than a quiet local tweak (S9 "may it?"). Counts only - the
+// engine SURFACES the reach, it never enforces authority. Pure and testable.
+export function usageCounts(built) {
+  const tokens = new Map();       // token dot-path -> Set(component that references it)
+  const components = new Map();   // component -> Set(component that composes it)
+  for (const { name, contract } of built) {
+    for (const ref of new Set(collectRefSlots(contract).map((r) => r.ref))) {
+      if (!tokens.has(ref)) tokens.set(ref, new Set());
+      tokens.get(ref).add(name);
+    }
+    for (const child of (contract.relationships?.composesWith || [])) {
+      if (!components.has(child)) components.set(child, new Set());
+      components.get(child).add(name);
+    }
+  }
+  const sizes = (m) => new Map([...m].map(([k, v]) => [k, v.size]));
+  return { tokens: sizes(tokens), components: sizes(components) };
+}
+
 const semverMajor = (v) => { const n = parseInt(String(v ?? '0').split('.')[0], 10); return Number.isFinite(n) ? n : 0; };
 
 // Classify the change between a component's previous emitted contract and the new one.
@@ -453,17 +474,17 @@ function diffContract(prev, next, name) {
   // Semver guard: a breaking change should carry a major-version bump.
   if (out.some((c) => c.level === 'breaking') && semverMajor(next.version) <= semverMajor(prev.version))
     out.push({ level: 'breaking', msg: `${name}: breaking change but version still ${next.version} — bump the major in contract.authored.json` });
-  return out;
+  return out.map((c) => ({ ...c, component: name }));   // tag with the component for blast-radius
 }
 // Structural token diff (removals break consumers silently; additions are safe; a token newly
 // flagged $deprecated is a heads-up). Value changes are NOT here — the parity gates already
 // report value drift against Figma.
 function diffTokens(prevFlat, nextFlat) {
   const out = [];
-  for (const name of prevFlat.keys()) if (!nextFlat.has(name)) out.push({ level: 'breaking', msg: `token "${name}" removed` });
+  for (const name of prevFlat.keys()) if (!nextFlat.has(name)) out.push({ level: 'breaking', msg: `token "${name}" removed`, ref: name });
   for (const [name, meta] of nextFlat) {
-    if (!prevFlat.has(name)) out.push({ level: 'additive', msg: `token "${name}" added` });
-    else if (meta.deprecated && !prevFlat.get(name).deprecated) out.push({ level: 'deprecation', msg: `token "${name}" deprecated` });
+    if (!prevFlat.has(name)) out.push({ level: 'additive', msg: `token "${name}" added`, ref: name });
+    else if (meta.deprecated && !prevFlat.get(name).deprecated) out.push({ level: 'deprecation', msg: `token "${name}" deprecated`, ref: name });
   }
   return out;
 }
@@ -592,6 +613,13 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
       const expected = REF_KEY_TYPE[key];
       if (expected && t.type && t.type !== expected) typeMismatches.push(`${name}: {${ref}} is a ${t.type} but a ${expected} is expected (${key})`);
     }
+  }
+
+  // Blast radius (I20): attach how many components depend on each changed token/component.
+  const usage = usageCounts(built);
+  for (const c of breaking) {
+    const n = c.ref != null ? usage.tokens.get(c.ref) : (c.component != null ? usage.components.get(c.component) : undefined);
+    if (n) c.consumers = n;
   }
 
   // 4) AI index (llms.txt) — a machine-readable summary for agents, local beside the contracts.
