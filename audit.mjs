@@ -2711,6 +2711,51 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // ── List duplication / single-source-of-truth (I21, advisory) ───────────────
+  // A DS list copied by hand into an agent-instruction file, a skill, or a doc drifts into a stale
+  // parallel truth - exactly what makes an agent hallucinate. The engine already generates the
+  // authoritative index (llms.txt + contracts); this flags hand-maintained surfaces that restate a
+  // CLUSTER of DS names so they can reference the generated index instead of keeping a copy. Opt-in,
+  // never fails: runs only on surfaces the project declares in ds-config duplication.surfaces
+  // (generated surfaces like the showroom are NOT listed - showing every component is their job).
+  {
+    const dupSurfaces = (cfg.duplication?.surfaces ?? []).flat().filter(Boolean);
+    if (dupSurfaces.length) {
+      const { duplicationFindings } = await import('./duplication-check.mjs');
+      // DS truth: component names from the structure snapshot, token names from the vars snapshot.
+      let componentNames = [], tokenNames = [];
+      try {
+        const st = JSON.parse(readFileSync(join(ROOT, SNAP_STRUCT), 'utf8'));
+        componentNames = Object.keys(st.components || st || {}).filter((k) => !k.startsWith('_'));
+      } catch { /* no structure snapshot - components skipped */ }
+      try {
+        const vs = JSON.parse(readFileSync(cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json'), 'utf8'));
+        const tk = new Set();
+        for (const mode of Object.values(vs.color || {})) for (const k of Object.keys(mode)) tk.add(k);
+        for (const k of Object.keys(vs.sizing || {})) tk.add(k);
+        for (const k of Object.keys(vs.typography || {})) tk.add('typography/' + k);
+        tokenNames = [...tk];
+      } catch { /* no vars snapshot - tokens skipped */ }
+      const surfaces = [];
+      for (const p of dupSurfaces) {
+        if (/^https?:\/\//.test(p)) continue;
+        try { surfaces.push({ name: p, text: readFileSync(join(ROOT, p), 'utf8') }); }
+        catch { console.log(C.dim(`     (duplication) surface not found, skipped: ${p}`)); }
+      }
+      const minCluster = Number.isFinite(cfg.duplication?.minCluster) ? cfg.duplication.minCluster : 5;
+      const { findings, parallel } = duplicationFindings({ surfaces, componentNames, tokenNames, minCluster });
+      if (findings.length) {
+        const detail = process.argv.includes('--duplication');
+        console.log(C.yellow(`\nℹ️  List duplication: ${findings.length} hand-maintained surface list(s) restate the DS. A copied list drifts - keep one home (the generated llms.txt/contracts) and reference it. Advisory.`));
+        for (const f of findings) {
+          console.log(C.yellow(`     ${f.surface}: restates ${f.count}/${f.total} ${f.kind}`) + (detail ? C.dim(`  (${f.matched.slice(0, 20).join(', ')}${f.matched.length > 20 ? ', …' : ''})`) : ''));
+        }
+        for (const p of parallel) console.log(C.yellow(`     ⚠️  parallel truths: ${p.kind} list duplicated across ${p.surfaces.join(', ')} - these WILL diverge`));
+        if (!detail) console.log('   Run with --duplication to list the names.');
+      }
+    }
+  }
+
   // ── Accessibility (I18, advisory) ───────────────────────────────────────────
   // Relay the a11y gate's own report (WCAG AA contrast · accessible name/role · visible focus,
   // from the render). Advisory: a11yStrict already folded a failure into anyFail above; here we

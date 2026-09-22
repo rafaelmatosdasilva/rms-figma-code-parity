@@ -229,6 +229,7 @@ rms-figma-code-parity --exemption-debt                # list every exemption/esc
 rms-figma-code-parity --code-drift                    # list props that exist in code but not in Figma (code→design "sync back" advisory; totals show on every run)
 rms-figma-code-parity --contract-completeness         # list components whose emitted contract has no description (agent-readiness gaps; totals show on every run)
 rms-figma-code-parity --prune                         # list prune candidates: deprecated tokens, single-option variants, single-use components (totals show on every run)
+rms-figma-code-parity --duplication                   # list DS names restated by hand-maintained surfaces (opt-in via ds-config duplication.surfaces; totals show on every run)
 rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
 rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
@@ -374,7 +375,14 @@ measure across gate health, coverage, documentation and guidance, aggregated fro
 never a grade and never blocking); and **prune candidates** (a leaner library is cheaper for an agent
 to read and mis-picks less: surfaces deprecated tokens still present, variant axes that do not vary
 (a "variant" prop with one option), and components used in exactly one place — each a QUESTION, never
-a verdict; totals each run, full list with `--prune`). Each emitted `<component>.contract.json` also carries a **usage
+a verdict; totals each run, full list with `--prune`). One more **opt-in, project-declared** advisory:
+**list duplication** (`ds-config.json → duplication: { surfaces: ["AGENTS.md", ".cursorrules", …], minCluster? }`) —
+a DS list copied by hand into an agent-instruction file, skill, or doc drifts into a stale parallel truth
+(and a stale list is what makes an agent hallucinate). Flags a declared hand-maintained surface that restates
+a cluster of DS component/token names (and calls out the same list duplicated across two or more surfaces),
+so it can reference the generated `llms.txt`/contracts instead of keeping a copy; totals each run, names with
+`--duplication`. Generated surfaces (the showroom) are not listed here — showing every component is their job.
+Each emitted `<component>.contract.json` also carries a **usage
 scaffold** (the element plus each prop with a concrete example value, derived from the contract itself
 so an agent instantiates the component without guessing). Two more **opt-in, project-declared** advisories
 (never imposed, never fail): **closed vocabulary** (`ds-config.json → closedVocab: { bannedTags, surfaces,
