@@ -23,6 +23,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { pruneCandidates } from './prune-check.mjs';
 
 function readJSON(p) { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } }
 function ensureDir(p) { try { mkdirSync(p, { recursive: true }); } catch { /* best-effort */ } }
@@ -645,5 +646,8 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const llmsOut = cc.llmsOut ? resolve(ROOT, cc.llmsOut) : join(outDir, 'llms.txt');
   try { writeFileSync(llmsOut, buildLlms(built, tokens, countLeaves(tokens)) + '\n'); } catch { /* best-effort */ }
 
-  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens };
+  // Prune candidates (I8): a lean-library advisory over what we just built. Surfaced, never enforced.
+  const prune = pruneCandidates({ built, usage, tokensDict: tokens });
+
+  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens, prune };
 }

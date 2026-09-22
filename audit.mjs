@@ -2987,6 +2987,32 @@ function reportFull(label, items, shown) {
         console.log(C.yellow(`⚠️  ${r.typeMismatches.length} token type mismatch(es) — a token used where a different type is expected:`));
         for (const t of r.typeMismatches.slice(0, 20)) console.log(C.yellow(`     · ${t}`));
       }
+      // Prune candidates (I8, advisory): keep the library lean so an agent reads less and mis-picks
+      // less. Deprecated tokens still present, variant axes that do not vary, and single-use
+      // components - each a QUESTION, never a verdict. Never fails. Full list with --prune.
+      {
+        const pr = r.prune || {};
+        const dt = pr.deprecatedTokens || [], dc = pr.deprecatedComponents || [];
+        const sv = pr.singleOptionVariants || [], su = pr.singleUseComponents || [];
+        if (pr.total) {
+          const detail = process.argv.includes('--prune');
+          console.log(C.yellow(`ℹ️  Prune candidates: ${pr.total} (leaner library = cheaper agent context). Advisory - decide keep or drop.`));
+          const bits = [];
+          if (dt.length) bits.push(`${dt.length} deprecated token(s)`);
+          if (dc.length) bits.push(`${dc.length} deprecated component(s)`);
+          if (sv.length) bits.push(`${sv.length} single-option variant(s)`);
+          if (su.length) bits.push(`${su.length} single-use component(s)`);
+          console.log(C.dim(`     ${bits.join(' · ')}`));
+          if (detail) {
+            for (const t of dt) console.log(C.yellow(`     · deprecated token: ${t}`));
+            for (const c of dc) console.log(C.yellow(`     · deprecated component: ${c}`));
+            for (const v of sv) console.log(C.yellow(`     · single-option variant: ${v.component}.${v.prop} = "${v.option}" (axis does not vary - inline it?)`));
+            for (const c of su) console.log(C.yellow(`     · single-use component: ${c} (composed by exactly one parent - inline?)`));
+          } else {
+            console.log(C.dim('     Run with --prune to list them.'));
+          }
+        }
+      }
       // Contract completeness (I15, advisory). Reads the just-emitted contracts and reports how
       // agent-ready they are: how many carry a description, semantics (element/aria), and
       // whenNotToUse/useInstead guidance, then names the components missing a description (the

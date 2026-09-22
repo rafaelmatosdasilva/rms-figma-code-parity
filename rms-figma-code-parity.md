@@ -228,6 +228,7 @@ rms-figma-code-parity --trend                         # show last 20 audit runs 
 rms-figma-code-parity --exemption-debt                # list every exemption/escape-hatch (debt report + legibility: temporary/permanent/owner; totals show on every run)
 rms-figma-code-parity --code-drift                    # list props that exist in code but not in Figma (code→design "sync back" advisory; totals show on every run)
 rms-figma-code-parity --contract-completeness         # list components whose emitted contract has no description (agent-readiness gaps; totals show on every run)
+rms-figma-code-parity --prune                         # list prune candidates: deprecated tokens, single-option variants, single-use components (totals show on every run)
 rms-figma-code-parity --no-docs                       # skip the design-intent layer this run (emitted by default; local, gitignored)
 rms-figma-code-parity --docs                          # ALSO build the showroom HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
@@ -370,7 +371,10 @@ values, per mode, and flags pairs below AA; a no-browser complement to the rende
 project's own regexes and flags a token that aliases a tier its `mayReference` disallows; never imposes
 a tier model, zero config = does not run); and an **AI-readiness scorecard** (a running R/Y/G
 measure across gate health, coverage, documentation and guidance, aggregated from the signals above,
-never a grade and never blocking). Each emitted `<component>.contract.json` also carries a **usage
+never a grade and never blocking); and **prune candidates** (a leaner library is cheaper for an agent
+to read and mis-picks less: surfaces deprecated tokens still present, variant axes that do not vary
+(a "variant" prop with one option), and components used in exactly one place — each a QUESTION, never
+a verdict; totals each run, full list with `--prune`). Each emitted `<component>.contract.json` also carries a **usage
 scaffold** (the element plus each prop with a concrete example value, derived from the contract itself
 so an agent instantiates the component without guessing). Two more **opt-in, project-declared** advisories
 (never imposed, never fail): **closed vocabulary** (`ds-config.json → closedVocab: { bannedTags, surfaces,
