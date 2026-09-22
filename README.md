@@ -1,6 +1,17 @@
 # rms-figma-code-parity
 
-Checks that your code matches your Figma design system, and tells you exactly what is out of sync and where to fix it.
+Audits whether code — including code written by an AI agent — actually conforms to your design system: not just how it looks, but its real tokens, component contracts, and documented intent. It tells you exactly what is out of sync and where to fix it, and emits machine-readable facts an agent can build against without guessing.
+
+## The idea — four layers
+
+It is not a "does this look like Figma?" visual diff. It turns your design system into executable rules, organized as four layers:
+
+- **Facts** — what Figma actually has: the captured snapshot + a W3C DTCG `tokens.json` (real token names and values).
+- **Contracts** — what the code must satisfy per component: `<component>.contract.json` (props, states, variants, slots, relationships).
+- **Intent** — why a component exists and how it should be used: `design-intent.json` (from Figma descriptions, annotations, and your guidelines).
+- **Evaluation** — whether generated code satisfies those constraints: the evals (an advisory trend, never the source of truth).
+
+Two deterministic checks stand on the Facts: **parity** (your repo's own code vs the Facts — *is the DS built right?*) and **evaluation** (an agent's generated code vs the Contracts + Intent — *does the agent use the DS right?*). The many individual checks below are implementations of this model — the mechanical checks are the authority; an LLM judge is optional and secondary.
 
 ## Install (once per computer)
 
@@ -80,7 +91,7 @@ Every run compares the code against Figma. In plain terms:
 - **Renders correctly in a browser** — the real rendered result matches, not just the code on paper.
 - **What this audit actually checked** — shows what was and was not covered, so nothing slips through.
 
-It also runs an advisory **accessibility** pass (contrast, accessible names, visible focus) and writes a machine-readable **contract** locally for AI tools. Neither ever blocks the audit.
+It also runs an advisory **accessibility** pass (contrast, accessible names, visible focus) and emits the machine-readable layers for AI tools — the DTCG `tokens.json` (Facts), per-component `contract.json` (Contracts), `design-intent.json` (Intent), and an `llms.txt` index — plus optional **evals** that score an agent's generated code against the Contracts + Intent (the Evaluation layer). None of these ever block the audit.
 
 ## That's it
 
