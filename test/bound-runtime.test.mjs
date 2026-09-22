@@ -40,3 +40,24 @@ test('[regression bound] a statically-declared bound token is still COVERED', ()
   assert.equal(code, 0, out);
   assert.match(out, /UNCOVERED\s+0/, out);
 });
+
+test('[bugfix bound empty] an EMPTY capture with frames configured is "not run" (exit 2), not a silent pass', () => {
+  const { code, out } = runGate('bound-check.mjs', {
+    'ds-config.json': { ...CFG, frames: [{ name: 'Home', nodeId: '1:2' }] },
+    'parity-map.mjs': MAP,
+    'theme.css': ':root { --x: 1px; }\n',
+    'bound-tokens.json': { _updated: '2026-01-01' },   // stamp only → zero real tokens
+  });
+  assert.equal(code, 2, out);
+  assert.match(out, /no bound tokens|not run/i, out);
+});
+
+test('[regression bound empty] an empty capture with NO frames configured is a clean pass', () => {
+  const { code } = runGate('bound-check.mjs', {
+    'ds-config.json': CFG,                              // no frames[]
+    'parity-map.mjs': MAP,
+    'theme.css': ':root { --x: 1px; }\n',
+    'bound-tokens.json': { _updated: '2026-01-01' },
+  });
+  assert.equal(code, 0);
+});

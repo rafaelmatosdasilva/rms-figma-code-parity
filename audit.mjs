@@ -1235,10 +1235,23 @@ function reportFull(label, items, shown) {
       const msg = out.split('\n').find(l => l.trim()) ?? 'Skipped';
       return { pass: true, lines: [`⏭ ${msg.trim()}`] };
     }
+    // A status-0 run that compared NO frame (FIGMA_TOKEN absent, token lacks scope, images-API or
+    // network error) prints only a "⏭ … skipped" line that the summary filter below drops, leaving
+    // a silent green that asserted nothing - the exact "silence is never a pass" hole. Surface it as
+    // an explicit SKIP instead, so a green here always means at least one frame was actually checked.
+    const compared = /✅|❌|📸/.test(out);
+    if (r.status === 0 && !compared) {
+      const msg = (out.split('\n').find(l => l.trim() && /skip/i.test(l))
+        ?? out.split('\n').find(l => l.trim())
+        ?? 'visual check did not run (no frame was compared)').replace(/^[⏭\s]+/, '').trim();
+      return { pass: true, planLimited: true, lines: [`⏭ ${msg}`] };
+    }
     const pass     = r.status === 0;
     const summary  = out.split('\n').filter(l => /✅|❌|📸|ℹ️/.test(l) && l.trim()).map(l => l.trim()).slice(0, 8);
+    // The script prints its accept hint as `Accept: mv "…"`, so the old `startsWith('mv ')` never
+    // matched - key off the `.new.png` path and the `Accept:` prefix instead.
     const fixLines = pass ? [] : out.split('\n')
-      .filter(l => l.trim().startsWith('mv ') || l.includes('.new.png'))
+      .filter(l => l.includes('.new.png') || l.trim().startsWith('Accept:'))
       .map(l => '  ' + l.trim()).slice(0, 6);
     return { pass, lines: [...summary, ...fixLines] };
   }

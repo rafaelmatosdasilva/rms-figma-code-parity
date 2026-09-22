@@ -41,3 +41,27 @@ test('[regression] a genuinely invented CSS var is still flagged', () => {
   assert.equal(code, 1, out);
   assert.match(out, /totally-invented/);
 });
+
+test('[bugfix reverse-exact] an invented SUB-VARIANT var is flagged even though a shorter token exists', () => {
+  // --button-primary-bogus reverses to button/primary/bogus. The old prefix match accepted it
+  // because button/primary is a real token; the exact-match fix must now flag it as invented.
+  const { code, out } = runGate(GATE, {
+    'ds-config.json': { paths },
+    'parity-map.mjs': EMPTY_PARITY_MAP,
+    'theme.css': ':root { --button-primary-bogus: #ff0000; }',
+    'figma-vars.snapshot.json': { color: { light: { 'button/primary/color': '#ffffff' }, dark: {} } },
+  });
+  assert.equal(code, 1, out);
+  assert.match(out, /button-primary-bogus/);
+});
+
+test('[regression reverse-exact] a var that maps to a real token exactly still traces back', () => {
+  // --button-primary reverses to button/primary, which is a real token → not invented.
+  const { code, out } = runGate(GATE, {
+    'ds-config.json': { paths },
+    'parity-map.mjs': EMPTY_PARITY_MAP,
+    'theme.css': ':root { --button-primary: #ffffff; }',
+    'figma-vars.snapshot.json': { color: { light: { 'button/primary/color': '#ffffff' }, dark: {} } },
+  });
+  assert.equal(code, 0, out);
+});

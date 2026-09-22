@@ -51,6 +51,20 @@ const parsed = JSON.parse(raw);
 // _-prefixed keys are metadata (_updated stamp), not tokens
 const boundTokens = (Array.isArray(parsed) ? parsed : Object.keys(parsed)).filter(t => !t.startsWith('_'));
 
+// A present-but-EMPTY bound-tokens.json asserts nothing. When frames[] are configured, an empty
+// capture means the Phase 2 walk erred or the frame ids are wrong - so an all-green "COVERED 0 /
+// UNCOVERED 0" would be a silent pass that checked no screen. Treat it as "not run" (exit 2, the
+// same as a missing file), never a pass, mirroring the missing-file case above. With no frames
+// configured there is legitimately nothing to check, so fall through to a clean pass.
+if (boundTokens.length === 0 && Array.isArray(cfg.frames) && cfg.frames.length > 0) {
+  console.log('\n⚠️  bound-tokens.json has no bound tokens, but ds-config.json frames[] are configured.');
+  console.log('   The Phase 2 capture wrote an empty file (a walk error, or wrong frame ids), so this');
+  console.log('   gate would assert nothing about those screens. Re-run Phase 2 Step 1b and commit a');
+  console.log('   non-empty capture.');
+  console.log('   (exit 2 - treated as "not run", never as a pass)\n');
+  process.exit(2);
+}
+
 // ── Collect all declared CSS vars ─────────────────────────────────────────────
 const declared = new Set();
 const sources = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));

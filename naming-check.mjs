@@ -123,15 +123,14 @@ for (const cssVar of declared) {
   if (knownCSSVars.has(cssVar)) { OK.push(cssVar); continue; }
 
   // Reverse convention: --foo-bar-baz → try foo/bar/baz and sub-paths
+  // Reverse convention: --foo-bar-baz → foo/bar/baz. Require an EXACT token match (or its
+  // /color leaf), NOT a prefix. A prefix match let an invented sub-variant slip through: e.g.
+  // --button-primary-bogus was accepted because the token `button/primary` exists, which
+  // defeats the whole "every var traces back to a REAL token" guarantee. Legitimate convention
+  // vars are already registered by the forward pass above (knownCSSVars), so requiring an exact
+  // match here loses no real coverage while closing the invented-sub-variant hole.
   const asToken = cssVar.slice(2).replace(/-/g, '/');
-  let found = false;
-  for (let i = asToken.split('/').length; i >= 1; i--) {
-    const candidate = asToken.split('/').slice(0, i).join('/');
-    if (figmaTokens.has(candidate) || figmaTokens.has(candidate + '/color')) {
-      found = true; break;
-    }
-  }
-  if (found) { OK.push(cssVar); continue; }
+  if (figmaTokens.has(asToken) || figmaTokens.has(asToken + '/color')) { OK.push(cssVar); continue; }
 
   UNKNOWN.push(cssVar);
 }
