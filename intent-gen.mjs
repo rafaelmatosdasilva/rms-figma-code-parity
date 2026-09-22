@@ -22,6 +22,7 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const LAYERS = ['system', 'foundations', 'components', 'patterns', 'templates', 'pages', 'flows'];
 
@@ -54,6 +55,54 @@ function cssNoteFor(cls, css) {
   return before.slice(start + 2, end).split('\n')
     .map(l => l.replace(/^\s*\*?\s?/, '').replace(/\s*─+\s*$/, '').trim())
     .filter(Boolean).join(' ').trim().slice(0, 600);
+}
+
+const normName = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Split a markdown doc into a pre-heading "general" chunk + one section per heading.
+function parseSections(text) {
+  const parts = String(text).split(/^#{1,6}\s+(.+)$/m);
+  const general = (parts.shift() || '').trim();
+  const sections = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    sections.push({ heading: (parts[i] || '').trim(), body: (parts[i + 1] || '').trim() });
+  }
+  return { general, sections };
+}
+
+// External guidelines ingestion (guidance → INTENT). Reads the committed files listed in
+// ds-config.json → guidelines.sources (markdown or JSON), folds each section into the matching
+// component (heading text = component name) and collects the rest as a global block. Advisory,
+// never a gate. A live Notion/URL fetch, when configured, is a separate capture step that WRITES
+// these files first; the generator always reads the committed file, for determinism.
+function ingestGuidelines(ROOT, cfg) {
+  const raw = cfg.guidelines?.sources;
+  const files = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : []);
+  const sections = [];          // { heading, body } - matched to a component by heading, else global
+  const generalParts = [];      // pre-heading text and JSON _general
+  const used = [];
+  const blobs = [];
+  for (const rel of files) {
+    const abs = resolve(ROOT, rel);
+    if (!existsSync(abs)) continue;
+    let txt; try { txt = readFileSync(abs, 'utf8'); } catch { continue; }
+    used.push(rel); blobs.push(txt);
+    if (rel.toLowerCase().endsWith('.json')) {
+      const obj = readJSON(abs) || {};
+      for (const [k, v] of Object.entries(obj)) {
+        const val = typeof v === 'string' ? v.trim() : '';
+        if (!val) continue;
+        if (/^_?general$/i.test(k)) generalParts.push(val);
+        else sections.push({ heading: k, body: val });
+      }
+    } else {
+      const parsed = parseSections(txt);
+      if (parsed.general) generalParts.push(parsed.general);
+      for (const s of parsed.sections) if (s.body) sections.push(s);
+    }
+  }
+  const hash = blobs.length ? createHash('sha1').update(blobs.join('\n---\n')).digest('hex').slice(0, 12) : null;
+  return { sources: used, hash, sections, general: generalParts.join('\n\n').trim() };
 }
 
 export async function generateIntent(ROOT, cfg, opts = {}) {
@@ -137,6 +186,24 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
     };
   }
 
+  // ── External guidelines (guidance → INTENT), advisory ──────────────────────
+  // Fold a project's own guidelines doc(s) into the intent so agents read the "why". A section whose
+  // heading matches a component name attaches to that component; the rest becomes a global block.
+  const GL = ingestGuidelines(ROOT, cfg);
+  if (GL.sources.length) {
+    const compByKey = new Map(Object.keys(intent.components).map(n => [normName(n), n]));
+    const perComp = new Map();   // component name -> [bodies]
+    const leftover = [];         // sections that match no component -> the global block (heading kept)
+    for (const s of GL.sections) {
+      const name = compByKey.get(normName(s.heading));
+      if (name) { if (!perComp.has(name)) perComp.set(name, []); perComp.get(name).push(s.body); }
+      else leftover.push(`## ${s.heading}\n${s.body}`);
+    }
+    for (const [name, bodies] of perComp) intent.components[name].guidelines = bodies.join('\n\n');
+    const general = [GL.general, ...leftover].filter(Boolean).join('\n\n').trim();
+    intent.guidelines = { _sources: GL.sources, _hash: GL.hash, general: general || null };
+  }
+
   writeFileSync(outPath, JSON.stringify(intent, null, 2) + '\n');
   const names = Object.keys(intent.components);
   return {
@@ -145,5 +212,7 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
     withDesign: names.filter(n => intent.components[n].design.annotations.length || intent.components[n].design.description).length,
     withCode: names.filter(n => intent.components[n].code.note || intent.components[n].code.cssComment).length,
     authoredKept: names.filter(n => intent.components[n].authored).length + LAYERS.filter(L => L !== 'components' && intent[L].authored).length,
+    withGuidelines: names.filter(n => intent.components[n].guidelines).length,
+    guidelineSources: GL.sources.length,
   };
 }

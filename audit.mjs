@@ -2719,7 +2719,8 @@ function reportFull(label, items, shown) {
     try {
       const { generateIntent } = await import('./intent-gen.mjs');
       const r = await generateIntent(ROOT, cfg, {});
-      console.log(`\n📓 Design intent → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · ${r.withDesign} w/ Figma notes · ${r.withCode} w/ code notes · ${r.authoredKept} authored kept)`);
+      const glNote = r.guidelineSources ? ` · ${r.withGuidelines}/${r.components} w/ external guidelines (${r.guidelineSources} source${r.guidelineSources === 1 ? '' : 's'})` : '';
+      console.log(`\n📓 Design intent → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · ${r.withDesign} w/ Figma notes · ${r.withCode} w/ code notes · ${r.authoredKept} authored kept${glNote})`);
     } catch (e) {
       console.log(C.yellow('\n⚠️  design-intent generation failed (never fails the audit): ' + e.message));
     }

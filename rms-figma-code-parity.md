@@ -250,6 +250,14 @@ It writes **one** merge-aware file, `<theme-css dir>/design-intent.json` (overri
   precedes its rule in the token CSS.
 - **Facts** ← the structure snapshot (height, padding/gap tokens, fill, variants, properties).
 - **Usage** ← which plugin sources reference the component's class.
+- **External guidelines** ← your own doc(s) listed in `ds-config.json → guidelines: { sources: [...] }`
+  (Markdown or JSON, committed to the repo). A section whose heading matches a component name attaches
+  to that component (`components[name].guidelines`); the rest becomes a global `guidelines` block. This
+  is how prose from an external source (a Notion export, a house style-guide) reaches agents without
+  being invented or duplicated. The generator hashes the file(s) so a change is detectable, and it only
+  reads the **committed** file, never the live network. A live Notion/URL fetch, when you configure one,
+  is a separate capture step (Phase 1) that writes that file first, then the generator folds it in. It
+  never follows links inside a doc: list every page you want in `sources`. Advisory, never a gate.
 
 Because the file is regenerated every run, the generator is **merge-aware**: it reads the existing
 file and **preserves everything you authored** — each layer's `authored` string, and every
