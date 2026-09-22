@@ -403,17 +403,26 @@ can measure whether agents actually follow the DS. Configure in `ds-config.json 
 ```jsonc
 "evals": {
   "cases": [ { "id": "login", "prompt": "build a login screen with the DS", "component": "input" } ],
-  "outDir": "evals",        // pre-generated candidates live at evals/<id>.<html|jsx|vue|…>
-  "strict": false           // true → exit 1 when any candidate has a violation
+  "outDir": "evals", "ext": "html",   // candidates at evals/<id>.<ext>
+  "strict": false,                     // true → exit 1 when any candidate has a violation
+  "generate": { "cmd": "your-agent-cli" },  // OPTIONAL: produce the candidate from the prompt
+  "judge":    { "cmd": "your-judge-cli" }   // OPTIONAL: advisory LLM-judge
 }
 ```
 Run: `node eval-run.mjs`. For each case it reads the candidate `outDir/<id>.<ext>` and flags the same
 mechanical failures the gates catch — raw color/dimension literals that should be tokens, `var(--x)` not
 in the DS var universe (invented) — and reports per-case + aggregate metrics (produced?, zero-fix rate,
-violations), appending to `evals-history.json`. Deterministic (candidates are pre-generated), **advisory**
-(exit 0 unless `evals.strict`), and it **never gates the repo audit**. Driving a live agent to generate the
-candidates is a pluggable adapter (the next step); an LLM-judge (right component for the intent, empty/error
-states) is advisory and also future. Spec: `plans/PARITY-evals-spec.md`.
+violations), appending to `evals-history.json`. **Advisory** (exit 0 unless `evals.strict`), and it
+**never gates the repo audit**.
+
+**Generation and the judge are pluggable commands** (any agent/CLI, no provider lock-in):
+- `evals.generate.cmd` — run with `--generate` (or when a candidate is missing): the prompt is piped on
+  stdin, the DS context (`llms.txt`) path is in `$EVAL_CONTEXT`, `$EVAL_ID`/`$EVAL_COMPONENT` are set, and
+  the command's **stdout** becomes the candidate (written to `evals/<id>.<ext>`).
+- `evals.judge.cmd` — advisory only: gets `{id,prompt,component,candidate}` as JSON on stdin and must print
+  a JSON verdict `{ok, notes}` (right component for the intent, empty/error states). It never gates.
+Both **degrade safely** (a missing/failing command just leaves the committed candidates and skips the judge).
+Spec: `plans/PARITY-evals-spec.md`.
 
 ---
 

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runEvals, loadContext } from '../eval-run.mjs';
+import { runEvals, loadContext, generateCandidate, judgeCandidate } from '../eval-run.mjs';
 import { makeFixture } from './helpers.mjs';
 
 const ctx = { cssVars: new Set(['--color-bg']), dsClasses: new Set(['.buttonPrimary']) };
@@ -38,4 +38,20 @@ test('loadContext reads the DS var universe and classes from project files', () 
   assert.ok(ctx2.cssVars.has('--color-bg') && ctx2.cssVars.has('--radii-button'));
   assert.ok(ctx2.dsClasses.has('.buttonPrimary'));
   assert.ok(ctx2.dsClasses.has('.inputField'));   // derived from the structure snapshot
+});
+
+test('generateCandidate runs the command (prompt on stdin, id in env) and returns its stdout', () => {
+  const run = (cmd, input, env) => `<!-- ${env.EVAL_ID} -->\n<button class="buttonPrimary">${input.trim().slice(0, 8)}</button>`;
+  const code = generateCandidate({ id: 'login', prompt: 'a primary button', component: 'buttonPrimary' }, 'my-agent', '/x/llms.txt', run);
+  assert.match(code, /<button class="buttonPrimary">/);
+  assert.match(code, /login/);
+  assert.equal(generateCandidate({ id: 'x', prompt: 'p' }, '', '', run), null);           // no cmd → null
+  assert.equal(generateCandidate({ id: 'x', prompt: 'p' }, 'cmd', '', () => { throw new Error('nope'); }), null); // degrade
+});
+
+test('judgeCandidate parses a JSON verdict and degrades on non-JSON / no code', () => {
+  const ok = judgeCandidate({ id: 'a', prompt: 'p' }, '<button/>', 'judge', () => 'noise {"ok":true,"notes":"right component"} trailing');
+  assert.deepEqual(ok, { ok: true, notes: 'right component' });
+  assert.equal(judgeCandidate({ id: 'a', prompt: 'p' }, '<x/>', 'judge', () => 'not json'), null);
+  assert.equal(judgeCandidate({ id: 'a', prompt: 'p' }, '', 'judge', () => '{"ok":true}'), null);   // no code → null
 });
