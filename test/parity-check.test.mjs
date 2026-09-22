@@ -51,3 +51,19 @@ test('[bugfix base-root] a dark @media block above the base :root does not poiso
   });
   assert.equal(code, 0, out);
 });
+
+test('[bugfix media-mode] a generic media: color mode resolves its OWN override, not the base', () => {
+  const { code, out } = runGate(GATE, {
+    'ds-config.json': { paths, figma: { colorCollection: 'Color', modes: [
+      { name: 'Base', snapshotKey: 'base', cssSelector: 'root' },
+      { name: 'Wide', snapshotKey: 'wide', cssSelector: 'media:(min-width: 768px)' },
+    ] } },
+    'parity-map.mjs': EMPTY_PARITY_MAP,
+    'theme.css': ':root { --brand: #ffffff; }\n@media (min-width: 768px) { :root { --brand: #000000; } }',
+    'figma-vars.snapshot.json': { color: { base: { 'brand/color': '#ffffff' }, wide: { 'brand/color': '#000000' } } },
+  });
+  // Old parser had no media: branch, fell through to new RegExp(selector), matched nothing, and
+  // compared Wide against the BASE #ffffff → mismatch vs Figma #000000 → exit 1. The fix reads the
+  // @media override (#000000) → match → exit 0.
+  assert.equal(code, 0, out);
+});

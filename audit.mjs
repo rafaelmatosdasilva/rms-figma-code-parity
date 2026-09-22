@@ -1383,8 +1383,14 @@ function reportFull(label, items, shown) {
     // Snapshots refreshed by the Phase 1 Plugin API capture (works on ANY plan). Staleness is an
     // advisory here; a hard fail comes only from the maxSnapshotAgeDays ceiling below. Parity never
     // so there is no plan-specific special case - the refresh path is the same everywhere.
+    // age === null has THREE causes: the file is missing, it is unreadable/corrupt, or it is present
+    // but carries no _updated stamp. Say which, so a snapshot that IS on disk isn't mislabeled
+    // "missing" (which sends the developer hunting for a file that is right there).
+    const nullReason = (file) => existsSync(join(ROOT, file))
+      ? 'has no _updated stamp or is unreadable - re-run'
+      : 'missing - run';
     if (vars === null) {
-      lines.push(C.red(`${SNAP_VARS} missing - run /rms-parity Phase 1`)); warn = true;
+      lines.push(C.red(`${SNAP_VARS} ${nullReason(SNAP_VARS)} /rms-parity Phase 1`)); warn = true;
     } else if (vars > 24) {
       lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old - refresh with the Phase 1 Plugin API capture`));
     } else {
@@ -1392,7 +1398,7 @@ function reportFull(label, items, shown) {
     }
 
     if (struct === null) {
-      lines.push(C.red(`${SNAP_STRUCT} missing - run /rms-parity Phase 1`)); warn = true;
+      lines.push(C.red(`${SNAP_STRUCT} ${nullReason(SNAP_STRUCT)} /rms-parity Phase 1`)); warn = true;
     } else if (struct > 24) {
       lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old - refresh with the Phase 1 Step 1c Plugin API capture`));
     } else {
@@ -2300,7 +2306,7 @@ function reportFull(label, items, shown) {
     parseGate9(rVisual));
 
   // ── Token integrity ───────────────────────────────────────────────────────────
-  addGate('Token values  (color · sizing · typography · breakpoints · text · animation)',
+  addGate('Token values  (color · sizing · typography · breakpoints · text)',
     parseGate2(rParity));
   addGate('Tokens used in screens exist in CSS  (every token bound in a DS screen has a CSS variable)',
     parseGate4(rBound));

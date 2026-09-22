@@ -74,7 +74,7 @@ const ICON_TEXT_ALIAS = cfg.figma?.namingConvention?.iconTextAlias  ?? true;
 
 let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
     KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {},
-    BOOLEAN_SKIP = new Set(), ANIMATION_SKIP = new Set(),
+    BOOLEAN_SKIP = new Set(),
     EFFECTS = [], SCOPE_RULES = [], FOCUS_CONTRACT = [];
 let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 // neutralMaps[i] = { key: '#hex' } for mode i - keys match NEUTRAL_VAR_RE capture group
@@ -91,7 +91,6 @@ try {
   if (map.TYPO)            TYPO            = map.TYPO;
   if (map.NEUTRAL_VAR_RE)  NEUTRAL_VAR_RE  = map.NEUTRAL_VAR_RE;
   if (map.BOOLEAN_SKIP)    BOOLEAN_SKIP   = map.BOOLEAN_SKIP instanceof Set ? map.BOOLEAN_SKIP : new Set(map.BOOLEAN_SKIP);
-  if (map.ANIMATION_SKIP)  ANIMATION_SKIP = map.ANIMATION_SKIP instanceof Set ? map.ANIMATION_SKIP : new Set(map.ANIMATION_SKIP);
   if (map.EFFECTS)         EFFECTS        = Array.isArray(map.EFFECTS) ? map.EFFECTS : [];
   if (map.SCOPE_RULES)     SCOPE_RULES    = Array.isArray(map.SCOPE_RULES) ? map.SCOPE_RULES : [];
   if (map.FOCUS_CONTRACT)  FOCUS_CONTRACT = Array.isArray(map.FOCUS_CONTRACT) ? map.FOCUS_CONTRACT : [];
@@ -140,6 +139,15 @@ function parseSelectorVars(css, selector) {
     m = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
   } else if (selector === 'high-contrast-media') {
     m = css.match(/@media\s*\(prefers-contrast:\s*(?:more|forced)\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
+  } else if (selector.startsWith('media:')) {
+    // Generic @media mode, e.g. 'media:(min-width: 768px)'. Match the condition with optional
+    // whitespace between characters so it matches whether the CSS writes `@media (min-width:768px)`
+    // or `@media (min-width: 768px)`. Without this branch a media-selector mode fell through to
+    // `new RegExp(selector)` below, matched nothing, and every token in that mode was silently
+    // compared against the BASE values. Mirrors mode-resolver.mjs so both parsers agree.
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const condRe = selector.slice(6).trim().replace(/\s+/g, '').split('').map(esc).join('\\s*');
+    m = css.match(new RegExp('@media\\s*' + condRe + '\\s*\\{[\\s\\S]*?:root\\s*\\{([\\s\\S]*?)\\}', 'i'));
   } else if (selector.startsWith('class:')) {
     const cls = selector.slice(6).trim();
     m = css.match(new RegExp(`\\.${cls}\\s+:root\\s*\\{([\\s\\S]*?)\\}|:root\\.${cls}\\s*\\{([\\s\\S]*?)\\}`));
@@ -399,7 +407,7 @@ if (snap.primitives && typeof snap.primitives === 'object') {
 const sourceSnap = snap.source ?? null;
 
 // ── Accumulators ──────────────────────────────────────────────────────────────
-const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [], BOOL_INFO = [], ANIM_INFO = [], TYPO_INFO = [], EFFECTS_FAIL = [], SCOPE_FAIL = [], FOCUS_INFO = [];
+const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [], BOOL_INFO = [], TYPO_INFO = [], EFFECTS_FAIL = [], SCOPE_FAIL = [], FOCUS_INFO = [];
 const autoFixes = []; // { cssVar, newVal, line } - applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
@@ -731,37 +739,11 @@ for (const [modeName, tokens] of Object.entries(boolSnap)) {
 }
 
 // ── 7. ANIMATION ──────────────────────────────────────────────────────────────
-// EASING and TIMING Figma variables - pre-formatted as CSS values in the snapshot:
-//   EASING → 'cubic-bezier(p1x, p1y, p2x, p2y)'
-//   TIMING → 'Nms'
-// Each maps to a CSS custom property the same way sizing/string tokens do.
-const animSnap = snap.animation ?? {};
-for (const [tokenName, expected] of Object.entries(animSnap)) {
-  if (ANIMATION_SKIP.has(tokenName)) {
-    SKIP.push({ dimension: 'animation', token: tokenName, mode: '-', reason: 'excluded in ANIMATION_SKIP' });
-    continue;
-  }
-  const cssVar = sizingTokenToVar(tokenName);
-  if (cssVar === null) {
-    SKIP.push({ dimension: 'animation', token: tokenName, mode: '-', reason: 'excluded in SIZING_SKIP' });
-    continue;
-  }
-  const raw = modeVars[0][cssVar];
-  if (!raw) {
-    FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', issue: 'CSS var not declared', fixHint: `Add ${cssVar}: ${expected} to ${THEME_PATH}` });
-    continue;
-  }
-  if (raw.trim() !== String(expected).trim()) {
-    FAIL.push({ dimension: 'animation', token: tokenName, cssVar, mode: '-', figma: expected, css: raw, hint: `CSS has ${cssVar}: ${raw} but Figma says "${expected}"`, fixHint: `${THEME_PATH} - change ${cssVar}: ${raw} → ${expected}` });
-  } else {
-    PASS.push(`animation ${tokenName}`);
-    // Usage advisory: var declared with right value but never referenced in transition/animation
-    const usageRe = new RegExp(`var\\(${cssVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,)]`);
-    if (!usageRe.test(rawCss)) {
-      ANIM_INFO.push({ token: tokenName, cssVar, note: 'declared but not referenced in any transition/animation rule - add to ANIMATION_SKIP if used via JS' });
-    }
-  }
-}
+// Retired: motion parity (easing + duration) is owned by Gate 20 (motion-check.mjs), which reads
+// snap.motion. The documented Phase 1 capture emits { motion, effects } and never a snap.animation
+// key, so this dimension had no producer (dead), and its exact string compare would have false-failed
+// on whitespace (cubic-bezier(0.2, 0, 0, 1) vs cubic-bezier(0.2,0,0,1)) - which motion-check's norm()
+// avoids. Removed to keep this gate to the value dimensions it uniquely owns.
 
 // ── EFFECTS: declared CSS effects must be present in the merged CSS ───────────
 // Verifies that hardcoded visual effects (backdrop-filter, box-shadow, filter) declared
@@ -843,7 +825,6 @@ if (FIX_MODE && autoFixes.length > 0 && THEME_PATHS.length > 1) {
 const _extraDims = [
   Object.keys(strSnap).length  > 0 && 'font strings',
   bpModeNames.length > 0 && `breakpoints (${bpModeNames.length} modes)`,
-  Object.keys(animSnap).length > 0 && 'animation',
 ].filter(Boolean);
 const _passLabel = ['color · radius · gap · padding · stroke · typography', ..._extraDims].join(' · ');
 console.log(`\n✅ PASS  ${PASS.length}   (${_passLabel})`);
@@ -906,14 +887,6 @@ if (BOOL_INFO.length) {
     console.log(`  ℹ️  [${b.breakpoint}] ${b.token}  →  ${b.cssVar}`);
   }
 }
-if (ANIM_INFO.length) {
-  console.log('\n─── ℹ️  Animation vars not used in CSS transitions ────────────');
-  console.log('   These vars are declared with the right value but not referenced in any');
-  console.log('   transition/animation rule. Add to ANIMATION_SKIP if used via JS API.');
-  for (const a of ANIM_INFO) {
-    console.log(`  ℹ️  ${a.token}  →  ${a.cssVar}`);
-  }
-}
 if (TYPO_INFO.length) {
   console.log('\n─── ℹ️  Typography vars not applied in component rules ─────────');
   console.log('   These vars are declared in :root with the right Figma value but never');
@@ -941,9 +914,8 @@ if (JSON_MODE) {
     pass: FAIL.length === 0 && NEW_SKIP.length === 0 && ALIAS_FAIL.length === 0 && EFFECTS_FAIL.length === 0 && SCOPE_FAIL.length === 0,
     fail: FAIL, aliasFail: ALIAS_FAIL, newSkip: NEW_SKIP, skip: SKIP,
     pendingFigmaSync: PENDING_FIGMA_SYNC,
-    boolInfo: BOOL_INFO, animInfo: ANIM_INFO, typoInfo: TYPO_INFO,
+    boolInfo: BOOL_INFO, typoInfo: TYPO_INFO,
     effectsFail: EFFECTS_FAIL, focusInfo: FOCUS_INFO, scopeFail: SCOPE_FAIL,
-    animationCount: Object.keys(animSnap).length,
     passList: PASS,
   }, null, 2));
 }

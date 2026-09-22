@@ -13,7 +13,7 @@
 //
 // Requires at project root:
 //   ds-config.json   - snapshot path, themeCSS
-//   parity-map.mjs   - EXPLICIT, SKIP_TOKENS, KNOWN_NULL, EXPLICIT_SIZING, COVERED, COVERED_STATE
+//   parity-map.mjs   - EXPLICIT, SKIP_TOKENS, EXPLICIT_SIZING, COVERED, COVERED_STATE
 //
 // Exit 0 = all exemptions valid.  Exit 1 = stale/broken entry found.
 
@@ -35,14 +35,15 @@ const PLUGIN_CSS = cfg.paths?.pluginCSS    ?? [];
 const PRIM_PFX   = cfg.figma?.primitivePrefix ?? 'primitives/';
 
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────
-let EXPLICIT = {}, SKIP_TOKENS = new Set(), KNOWN_NULL = new Set();
+let EXPLICIT = {}, SKIP_TOKENS = new Set();
 let EXPLICIT_SIZING = {}, SIZING_SKIP = new Map();
 let COVERED = new Set(), COVERED_STATE = new Set(), COVERED_PREFIX = [];
+let PMAP = null;   // the imported parity-map module, reused below (avoids a second dynamic import)
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  PMAP = await import(join(ROOT, 'parity-map.mjs'));
+  const map = PMAP;
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;
-  if (map.KNOWN_NULL)      KNOWN_NULL      = map.KNOWN_NULL;
   if (map.EXPLICIT_SIZING) EXPLICIT_SIZING = map.EXPLICIT_SIZING;
   if (map.SIZING_SKIP)     SIZING_SKIP     = map.SIZING_SKIP;
   if (map.COVERED)         COVERED         = map.COVERED;
@@ -125,11 +126,10 @@ function mappedVar(cssVar) {
 
 // ── CSS color resolver (shared, N-mode) ───────────────────────────────────────
 // Primitive scale + modes from parity-map.mjs / ds-config.json - no hardcoded light/dark.
-let map_; try { map_ = await import(join(ROOT, 'parity-map.mjs')); } catch {}
-const NL = map_?.NEUTRAL_LIGHT ?? {};
-const ND = map_?.NEUTRAL_DARK  ?? {};
-const NEUTRAL_MAPS = map_?.NEUTRAL_MAPS ?? null;
-const NEUTRAL_VAR_RE = map_?.NEUTRAL_VAR_RE ?? /^--neutral-(\d+)$/;
+const NL = PMAP?.NEUTRAL_LIGHT ?? {};
+const ND = PMAP?.NEUTRAL_DARK  ?? {};
+const NEUTRAL_MAPS = PMAP?.NEUTRAL_MAPS ?? null;
+const NEUTRAL_VAR_RE = PMAP?.NEUTRAL_VAR_RE ?? /^--neutral-(\d+)$/;
 const MODES = loadModes(cfg);
 
 const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
