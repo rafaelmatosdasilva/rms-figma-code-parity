@@ -412,6 +412,7 @@ can measure whether agents actually follow the DS. Configure in `ds-config.json 
   "cases": [ { "id": "login", "prompt": "build a login screen with the DS", "component": "input" } ],
   "outDir": "evals", "ext": "html",   // candidates at evals/<id>.<ext>
   "strict": false,                     // true → exit 1 when any candidate has a violation
+  "runs": 1,                           // with generate.cmd, run each case N times (3–5 signal, 10+ definitive)
   "generate": { "cmd": "your-agent-cli" },  // OPTIONAL: produce the candidate from the prompt
   "judge":    { "cmd": "your-judge-cli" }   // OPTIONAL: advisory LLM-judge
 }
@@ -420,7 +421,9 @@ Run: `node eval-run.mjs`. For each case it reads the candidate `outDir/<id>.<ext
 mechanical failures the gates catch — raw color/dimension literals that should be tokens, `var(--x)` not
 in the DS var universe (invented) — and reports per-case + aggregate metrics (produced?, zero-fix rate,
 violations, **inline-style count**, and, when generating, **avg generation time**), appending to
-`evals-history.json`. **Advisory** (exit 0 unless `evals.strict`), and it **never gates the repo audit**.
+`evals-history.json`. With `evals.runs > 1` (and a `generate.cmd`) each case is generated and checked
+**N times** and reported as a reliability fraction (`k/N runs clean`), since agent output is
+non-deterministic. **Advisory** (exit 0 unless `evals.strict`), and it **never gates the repo audit**.
 
 **Generation and the judge are pluggable commands** (any agent/CLI, no provider lock-in):
 - `evals.generate.cmd` — run with `--generate` (or when a candidate is missing): the prompt is piped on

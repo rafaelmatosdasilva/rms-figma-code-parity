@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { runEvals, loadContext, generateCandidate, judgeCandidate } from '../eval-run.mjs';
+import { runEvals, loadContext, generateCandidate, judgeCandidate, summarize } from '../eval-run.mjs';
 import { makeFixture } from './helpers.mjs';
 
 const ctx = { cssVars: new Set(['--color-bg']), dsClasses: new Set(['.buttonPrimary']) };
@@ -39,6 +39,20 @@ test('loadContext reads the DS var universe and classes from project files', () 
   assert.ok(ctx2.cssVars.has('--color-bg') && ctx2.cssVars.has('--radii-button'));
   assert.ok(ctx2.dsClasses.has('.buttonPrimary'));
   assert.ok(ctx2.dsClasses.has('.inputField'));   // derived from the structure snapshot
+});
+
+test('summarize aggregates multi-run results (zero-fix over all runs; clean = every run clean)', () => {
+  const results = [
+    { id: 'a', metrics: { produced: true, inlineStyles: 0 }, violations: [], runs: 4, cleanRuns: 3 },
+    { id: 'b', metrics: { produced: true, inlineStyles: 1 }, violations: [{ type: 'raw-color', value: '#f00' }], runs: 4, cleanRuns: 0 },
+  ];
+  const s = summarize(results);
+  assert.equal(s.cases, 2);
+  assert.equal(s.produced, 2);
+  assert.equal(s.clean, 0);            // neither is clean across ALL runs (a: 3/4, b: 0/4)
+  assert.equal(s.zeroFixRate, 38);     // 3 of 8 runs clean → 37.5 → 38
+  assert.equal(s.runsPerCase, 4);
+  assert.equal(s.inlineStyles, 1);
 });
 
 test('generateCandidate runs the command (prompt on stdin, id in env) and returns its stdout', () => {

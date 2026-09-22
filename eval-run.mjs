@@ -74,6 +74,26 @@ export function judgeCandidate(c, code, cmd, run = defaultRun) {
   } catch { return null; }
 }
 
+// Aggregate results (single- or multi-run). Each result carries runs + cleanRuns (a single-run result
+// is runs:1, cleanRuns: clean?1:0), so zeroFixRate is total clean runs over total runs, and a case is
+// "clean" only when EVERY run was clean. Exported for the multi-run path + tests.
+export function summarize(results) {
+  const n = results.length;
+  const runsOf = (r) => r.runs || 1;
+  const cleanRunsOf = (r) => (r.cleanRuns != null ? r.cleanRuns : (r.metrics.clean ? 1 : 0));
+  const totalRuns = results.reduce((s, r) => s + runsOf(r), 0);
+  const totalClean = results.reduce((s, r) => s + cleanRunsOf(r), 0);
+  return {
+    cases: n,
+    produced: results.filter((r) => r.metrics.produced).length,
+    clean: results.filter((r) => r.metrics.produced && cleanRunsOf(r) === runsOf(r)).length,
+    zeroFixRate: totalRuns ? Math.round((totalClean / totalRuns) * 100) : null,
+    violations: results.reduce((s, r) => s + r.violations.length, 0),
+    inlineStyles: results.reduce((s, r) => s + (r.metrics.inlineStyles || 0), 0),
+    runsPerCase: results[0] ? runsOf(results[0]) : 1,
+  };
+}
+
 // Pure orchestration: run each case's candidate through the conformance core. `loadCandidate(case)`
 // returns the candidate code string (or '' when none). Injectable, so this is unit-testable.
 export function runEvals(cases, ctx, loadCandidate) {
@@ -81,24 +101,9 @@ export function runEvals(cases, ctx, loadCandidate) {
   for (const c of cases) {
     const code = loadCandidate(c) || '';
     const { violations, metrics } = evalConformance(code, ctx);
-    results.push({ id: c.id, prompt: c.prompt || '', component: c.component ?? null, code, metrics, violations });
+    results.push({ id: c.id, prompt: c.prompt || '', component: c.component ?? null, code, metrics, violations, runs: 1, cleanRuns: metrics.clean ? 1 : 0 });
   }
-  const n = results.length;
-  const produced = results.filter((r) => r.metrics.produced).length;
-  const clean = results.filter((r) => r.metrics.clean).length;
-  const violations = results.reduce((s, r) => s + r.violations.length, 0);
-  const inlineStyles = results.reduce((s, r) => s + (r.metrics.inlineStyles || 0), 0);
-  return {
-    results,
-    summary: {
-      cases: n,
-      produced,
-      clean,
-      zeroFixRate: n ? Math.round((clean / n) * 100) : null,
-      violations,
-      inlineStyles,
-    },
-  };
+  return { results, summary: summarize(results) };
 }
 
 function fileLoader(ROOT, outDir) {
@@ -127,24 +132,48 @@ async function main() {
   const ctx = loadContext(ROOT, cfg);
 
   // GENERATION (optional): when evals.generate.cmd is set, produce the candidate from the prompt.
-  // Don't overwrite an existing candidate unless --generate is passed. Degrade-safe: a failure just
-  // leaves whatever candidate exists (or none).
   const genCmd = cfg.evals?.generate?.cmd;
   const forceGen = process.argv.includes('--generate');
   const ctxPath = resolve(ROOT, cfg.contracts?.llmsOut || join(outDir === 'contracts' ? outDir : 'contracts', 'llms.txt'));
-  const genTimes = {};   // case id -> generation time (ms), for the completion-time metric (S16)
-  if (genCmd) {
-    for (const c of cases) {
-      const target = resolve(ROOT, outDir, `${c.id}.${ext}`);
-      if (!forceGen && existsSync(target)) continue;
-      const t0 = Date.now();
-      const code = generateCandidate(c, genCmd, existsSync(ctxPath) ? ctxPath : '');
-      genTimes[c.id] = Date.now() - t0;
-      if (code) { try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, code); console.log(`   ↻ generated ${c.id} via evals.generate.cmd (${genTimes[c.id]}ms)`); } catch { /* keep going */ } }
-    }
-  }
+  const ctxArg = () => (existsSync(ctxPath) ? ctxPath : '');
+  const genTimes = {};   // case id -> avg generation time (ms), for the completion-time metric (S16)
+  // N runs (S16): generation is non-deterministic, so run each case `runs` times and measure how
+  // reliably it comes out clean. Only meaningful with a generate.cmd (a static file is identical every
+  // time). Clamped; 3–5 gives signal, 10+ is definitive.
+  const runs = (genCmd && Number.isInteger(cfg.evals?.runs) && cfg.evals.runs > 1) ? Math.min(cfg.evals.runs, 20) : 1;
 
-  const { results, summary } = runEvals(cases, ctx, fileLoader(ROOT, outDir));
+  let results, summary;
+  if (runs > 1) {
+    results = cases.map((c) => {
+      let cleanRuns = 0, totalMs = 0, rep = null;
+      for (let k = 0; k < runs; k++) {
+        const t0 = Date.now();
+        const code = generateCandidate(c, genCmd, ctxArg()) || '';
+        totalMs += Date.now() - t0;
+        const chk = evalConformance(code, ctx);
+        if (chk.metrics.clean) cleanRuns++;
+        if (!rep) rep = { code, ...chk };
+      }
+      genTimes[c.id] = Math.round(totalMs / runs);
+      try { const target = resolve(ROOT, outDir, `${c.id}.${ext}`); mkdirSync(dirname(target), { recursive: true }); if (rep.code) writeFileSync(target, rep.code); } catch { /* optional */ }
+      return { id: c.id, prompt: c.prompt || '', component: c.component ?? null, code: rep.code, metrics: rep.metrics, violations: rep.violations, runs, cleanRuns };
+    });
+    summary = summarize(results);
+    console.log(`   ↻ generated ${cases.length} case(s) × ${runs} run(s) via evals.generate.cmd`);
+  } else {
+    // Single run: generate once (unless a candidate exists and no --generate), then read from disk.
+    if (genCmd) {
+      for (const c of cases) {
+        const target = resolve(ROOT, outDir, `${c.id}.${ext}`);
+        if (!forceGen && existsSync(target)) continue;
+        const t0 = Date.now();
+        const code = generateCandidate(c, genCmd, ctxArg());
+        genTimes[c.id] = Date.now() - t0;
+        if (code) { try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, code); console.log(`   ↻ generated ${c.id} via evals.generate.cmd (${genTimes[c.id]}ms)`); } catch { /* keep going */ } }
+      }
+    }
+    ({ results, summary } = runEvals(cases, ctx, fileLoader(ROOT, outDir)));
+  }
 
   // LLM-JUDGE (optional, advisory): score each produced candidate. Never gates.
   const judgeCmd = cfg.evals?.judge?.cmd;
@@ -162,14 +191,16 @@ async function main() {
   const avgGenMs = gennedMs.length ? Math.round(gennedMs.reduce((a, b) => a + b, 0) / gennedMs.length) : null;
 
   console.log(`\n─── DS-conformance evals ─────────────────────────────────────────`);
-  console.log(`   context: ${ctx.cssVars.size} DS vars · ${ctx.dsClasses.size} DS classes · candidates in ${outDir}/${genCmd ? ' · generate:on' : ''}${judgeCmd ? ' · judge:on' : ''}\n`);
+  console.log(`   context: ${ctx.cssVars.size} DS vars · ${ctx.dsClasses.size} DS classes · candidates in ${outDir}/${genCmd ? ' · generate:on' : ''}${runs > 1 ? ` · ${runs} runs/case` : ''}${judgeCmd ? ' · judge:on' : ''}\n`);
   for (const r of results) {
-    const icon = !r.metrics.produced ? '⏭' : r.metrics.clean ? '✅' : '❌';
-    const note = !r.metrics.produced ? 'no candidate file' :
-      r.metrics.clean ? 'clean (zero-fix)' :
-      `${r.violations.length} violation(s): ` + r.violations.slice(0, 6).map((v) => `${v.type} ${v.value}`).join(', ');
+    const allClean = (r.cleanRuns ?? (r.metrics.clean ? 1 : 0)) === (r.runs || 1);
+    const icon = !r.metrics.produced ? '⏭' : allClean ? '✅' : '❌';
+    const runNote = r.runs > 1 ? ` (${r.cleanRuns}/${r.runs} runs clean)` : '';
+    const base = !r.metrics.produced ? 'no candidate file' :
+      r.violations.length ? `${r.violations.length} violation(s): ` + r.violations.slice(0, 6).map((v) => `${v.type} ${v.value}`).join(', ')
+      : 'clean (zero-fix)';
     const judge = r.judge ? `   ${r.judge.ok ? '⚖️ ok' : '⚖️ review'}${r.judge.notes ? ` — ${r.judge.notes}` : ''}` : '';
-    console.log(`  ${icon} ${r.id}${r.component ? ` [${r.component}]` : ''} — ${note}${judge}`);
+    console.log(`  ${icon} ${r.id}${r.component ? ` [${r.component}]` : ''} — ${base}${runNote}${judge}`);
   }
   console.log(`\n   ${summary.produced}/${summary.cases} produced · ${summary.clean}/${summary.cases} zero-fix (${summary.zeroFixRate}%) · ${summary.violations} violation(s) · ${summary.inlineStyles} inline-style(s)${judged ? ` · judge ${judgePass}/${judged} ok` : ''}${avgGenMs != null ? ` · avg gen ${avgGenMs}ms` : ''}`);
   console.log(`   Advisory: evals measure agent output, they never gate the repo.\n`);
