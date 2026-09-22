@@ -22,6 +22,7 @@ test('runEvals aggregates produced / zero-fix / violations across cases', () => 
   assert.equal(summary.clean, 1);               // only ok is clean
   assert.equal(summary.zeroFixRate, 33);        // 1/3
   assert.ok(summary.violations >= 2);           // bad has a raw color + a raw dimension
+  assert.equal(summary.inlineStyles, 2);         // ok + bad each carry one style= attribute
   const bad = results.find((r) => r.id === 'bad');
   assert.ok(bad.violations.some((v) => v.type === 'raw-color'));
 });

@@ -87,6 +87,7 @@ export function runEvals(cases, ctx, loadCandidate) {
   const produced = results.filter((r) => r.metrics.produced).length;
   const clean = results.filter((r) => r.metrics.clean).length;
   const violations = results.reduce((s, r) => s + r.violations.length, 0);
+  const inlineStyles = results.reduce((s, r) => s + (r.metrics.inlineStyles || 0), 0);
   return {
     results,
     summary: {
@@ -95,6 +96,7 @@ export function runEvals(cases, ctx, loadCandidate) {
       clean,
       zeroFixRate: n ? Math.round((clean / n) * 100) : null,
       violations,
+      inlineStyles,
     },
   };
 }
@@ -130,12 +132,15 @@ async function main() {
   const genCmd = cfg.evals?.generate?.cmd;
   const forceGen = process.argv.includes('--generate');
   const ctxPath = resolve(ROOT, cfg.contracts?.llmsOut || join(outDir === 'contracts' ? outDir : 'contracts', 'llms.txt'));
+  const genTimes = {};   // case id -> generation time (ms), for the completion-time metric (S16)
   if (genCmd) {
     for (const c of cases) {
       const target = resolve(ROOT, outDir, `${c.id}.${ext}`);
       if (!forceGen && existsSync(target)) continue;
+      const t0 = Date.now();
       const code = generateCandidate(c, genCmd, existsSync(ctxPath) ? ctxPath : '');
-      if (code) { try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, code); console.log(`   ↻ generated ${c.id} via evals.generate.cmd`); } catch { /* keep going */ } }
+      genTimes[c.id] = Date.now() - t0;
+      if (code) { try { mkdirSync(dirname(target), { recursive: true }); writeFileSync(target, code); console.log(`   ↻ generated ${c.id} via evals.generate.cmd (${genTimes[c.id]}ms)`); } catch { /* keep going */ } }
     }
   }
 
@@ -152,6 +157,9 @@ async function main() {
   }
   const judged = results.filter((r) => r.judge).length;
   const judgePass = results.filter((r) => r.judge?.ok).length;
+  for (const r of results) if (genTimes[r.id] != null) r.genMs = genTimes[r.id];
+  const gennedMs = Object.values(genTimes);
+  const avgGenMs = gennedMs.length ? Math.round(gennedMs.reduce((a, b) => a + b, 0) / gennedMs.length) : null;
 
   console.log(`\n─── DS-conformance evals ─────────────────────────────────────────`);
   console.log(`   context: ${ctx.cssVars.size} DS vars · ${ctx.dsClasses.size} DS classes · candidates in ${outDir}/${genCmd ? ' · generate:on' : ''}${judgeCmd ? ' · judge:on' : ''}\n`);
@@ -163,14 +171,14 @@ async function main() {
     const judge = r.judge ? `   ${r.judge.ok ? '⚖️ ok' : '⚖️ review'}${r.judge.notes ? ` — ${r.judge.notes}` : ''}` : '';
     console.log(`  ${icon} ${r.id}${r.component ? ` [${r.component}]` : ''} — ${note}${judge}`);
   }
-  console.log(`\n   ${summary.produced}/${summary.cases} produced · ${summary.clean}/${summary.cases} zero-fix (${summary.zeroFixRate}%) · ${summary.violations} violation(s)${judged ? ` · judge ${judgePass}/${judged} ok (advisory)` : ''}`);
+  console.log(`\n   ${summary.produced}/${summary.cases} produced · ${summary.clean}/${summary.cases} zero-fix (${summary.zeroFixRate}%) · ${summary.violations} violation(s) · ${summary.inlineStyles} inline-style(s)${judged ? ` · judge ${judgePass}/${judged} ok` : ''}${avgGenMs != null ? ` · avg gen ${avgGenMs}ms` : ''}`);
   console.log(`   Advisory: evals measure agent output, they never gate the repo.\n`);
 
   // History (best-effort; capped)
   try {
     const hp = join(ROOT, 'evals-history.json');
     let hist = []; try { hist = JSON.parse(readFileSync(hp, 'utf8')); } catch { /* first run */ }
-    hist.push({ timestamp: new Date().toISOString(), ...summary, judged, judgePass });
+    hist.push({ timestamp: new Date().toISOString(), ...summary, judged, judgePass, avgGenMs });
     if (hist.length > 100) hist = hist.slice(-100);
     writeFileSync(hp, JSON.stringify(hist, null, 2) + '\n');
   } catch { /* optional */ }

@@ -415,8 +415,8 @@ can measure whether agents actually follow the DS. Configure in `ds-config.json 
 Run: `node eval-run.mjs`. For each case it reads the candidate `outDir/<id>.<ext>` and flags the same
 mechanical failures the gates catch — raw color/dimension literals that should be tokens, `var(--x)` not
 in the DS var universe (invented) — and reports per-case + aggregate metrics (produced?, zero-fix rate,
-violations), appending to `evals-history.json`. **Advisory** (exit 0 unless `evals.strict`), and it
-**never gates the repo audit**.
+violations, **inline-style count**, and, when generating, **avg generation time**), appending to
+`evals-history.json`. **Advisory** (exit 0 unless `evals.strict`), and it **never gates the repo audit**.
 
 **Generation and the judge are pluggable commands** (any agent/CLI, no provider lock-in):
 - `evals.generate.cmd` — run with `--generate` (or when a candidate is missing): the prompt is piped on

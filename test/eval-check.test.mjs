@@ -43,3 +43,10 @@ test('empty output reports produced:false', () => {
   const r = evalConformance('   ', ctx);
   assert.equal(r.metrics.produced, false);
 });
+
+test('counts inline style attributes (S16 metric), independent of violations', () => {
+  // both inline styles use var() → no raw-literal violation, but inlineStyles is still counted
+  const r = evalConformance('<div style="color: var(--color-bg)"><span style={{margin:0}}>x</span></div>', ctx);
+  assert.equal(r.metrics.inlineStyles, 2);
+  assert.equal(r.metrics.clean, true, JSON.stringify(r.violations));
+});

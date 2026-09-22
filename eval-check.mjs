@@ -16,6 +16,7 @@ const HEX = /#[0-9a-fA-F]{3,8}\b/g;
 const RGB_HSL = /\b(?:rgb|hsl)a?\([^)]*\)/gi;
 const DIMENSION = /\b\d+(?:\.\d+)?(?:px|rem|em)\b/g;
 const VAR_USE = /var\(\s*(--[a-zA-Z][\w-]*)/g;
+const INLINE_STYLE = /\bstyle\s*=\s*["'{]/gi;   // style="…" (HTML) or style={…} (JSX): a hardcoded-styling smell
 
 // Zero-length dimensions are fine unitless, and a bare "0px" carries no design decision.
 const isBenignDim = (d) => /^0(?:px|rem|em)$/.test(d);
@@ -62,6 +63,7 @@ export function evalConformance(code, ctx = {}) {
       rawDimensions: rawDims.length,
       inventedVars: inventedVars.length,
       dsClassesUsed: usedDsClasses.length,
+      inlineStyles: (src.match(INLINE_STYLE) || []).length,   // metric (S16): fewer is better
     },
   };
 }
