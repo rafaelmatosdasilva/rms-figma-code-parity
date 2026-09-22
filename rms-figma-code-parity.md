@@ -358,7 +358,9 @@ exist in code but not in Figma, surfaced as a "sync back to the design" advisory
 is visible; the engine only surfaces it, the designer decides; totals each run, full list with
 `--code-drift`); and **token layering** (a structure-agnostic check: it imposes no
 tier model, only measures the DS's own aliasing rate and, when references are the DS's norm, surfaces
-the few tokens that hold a raw value instead); **declared token tiers** (opt-in — only when
+the few tokens that hold a raw value instead); **token contrast** (opt-in — only when
+`ds-config.json → a11y.tokenPairs: [{text, bg, large?}]` is set: computes WCAG contrast from the token
+values, per mode, and flags pairs below AA; a no-browser complement to the render a11y gate); **declared token tiers** (opt-in — only when
 `ds-config.json → tiers: [{ name, match, mayReference? }]` is set: classifies each token by the
 project's own regexes and flags a token that aliases a tier its `mayReference` disallows; never imposes
 a tier model, zero config = does not run); and an **AI-readiness scorecard** (a running R/Y/G

@@ -2698,6 +2698,37 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // ── Token contrast (I28, project-DECLARED, advisory, no browser) ────────────
+  // Runs only when ds-config declares a11y.tokenPairs: [{text, bg, large?, name?}]. Computes WCAG
+  // contrast from the DS's own token values, PER mode, and flags any pair below AA. Complements the
+  // render-based a11y gate (works in CI without Chrome). Advisory; never fails, never imposed.
+  {
+    const pairs = cfg.a11y?.tokenPairs;
+    if (Array.isArray(pairs) && pairs.length) {
+      try {
+        const { tokenContrastFindings } = await import('./contrast-check.mjs');
+        const vPath = cfg.paths?.snapshotVars ? join(ROOT, cfg.paths.snapshotVars) : join(ROOT, 'figma-vars.snapshot.json');
+        const vsnap = JSON.parse(readFileSync(vPath, 'utf8'));
+        const modes = Object.keys(vsnap.color || {});
+        const all = [];
+        let anyChecked = 0;
+        for (const mode of modes) {
+          const resolve = (t) => vsnap.color[mode]?.[t] ?? vsnap.color[mode]?.[`${t}/color`] ?? null;
+          const { findings, checked } = tokenContrastFindings(pairs, resolve);
+          anyChecked += checked;
+          for (const f of findings) all.push({ ...f, mode });
+        }
+        if (all.length) {
+          console.log(C.yellow(`\n⚠️  Token contrast: ${all.length} pair(s) below WCAG AA (from token values, per mode).`));
+          for (const f of all.slice(0, 20)) console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}`));
+          console.log('   Advisory: you declared these pairs (ds-config → a11y.tokenPairs); the engine only surfaces the math.');
+        } else if (anyChecked) {
+          console.log(`\nℹ️  Token contrast: all declared pairs meet WCAG AA across ${modes.length} mode(s).`);
+        }
+      } catch { /* advisory: never fails */ }
+    }
+  }
+
   // ── Token tiers (I10b, project-DECLARED, advisory) ──────────────────────────
   // Runs ONLY when ds-config.json declares `tiers` (never imposes a tier model). Classifies each
   // token by the project's own regexes and flags a token that aliases a token in a tier its
