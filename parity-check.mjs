@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadTokensDict, tokenSource } from './fix-hint.mjs';
+import { parseVarBlock, stripAtRules } from './mode-resolver.mjs';   // single source of truth (identical copies removed)
 
 const ROOT     = process.cwd();
 const FIX_MODE  = process.argv.includes('--fix');
@@ -123,20 +124,7 @@ const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
   .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n');
 const css = rawCss.replace(/\/\*[\s\S]*?\*\//g, '');
 
-function parseVarBlock(block) {
-  const vars = {};
-  for (const m of block.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*):\s*([^;]+);/g))
-    vars['--' + m[1].trim()] = m[2].trim();
-  return vars;
-}
-
-// Base :root must come from a TOP-LEVEL :root, not the first :root in file order - an
-// @media/@supports block physically preceding it would otherwise poison every base value.
-function stripAtRules(s) {
-  let out = s, prev;
-  do { prev = out; out = out.replace(/@[a-zA-Z-]+[^{};]*\{(?:[^{}]|\{[^{}]*\})*\}/g, ' '); } while (out !== prev);
-  return out;
-}
+// parseVarBlock + stripAtRules are imported from mode-resolver.mjs (identical copies removed - one home).
 function parseSelectorVars(css, selector) {
   let m;
   if (selector === 'root') {

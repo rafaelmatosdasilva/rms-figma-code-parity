@@ -71,7 +71,7 @@ export function parseVarBlock(block) {
 
 // Base :root must come from a TOP-LEVEL :root, not the first :root in file order - an
 // @media/@supports block physically preceding it would otherwise poison every base value.
-function stripAtRules(s) {
+export function stripAtRules(s) {
   let out = s, prev;
   do { prev = out; out = out.replace(/@[a-zA-Z-]+[^{};]*\{(?:[^{}]|\{[^{}]*\})*\}/g, ' '); } while (out !== prev);
   return out;
