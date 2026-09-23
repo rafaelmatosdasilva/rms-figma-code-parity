@@ -18,6 +18,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 
@@ -95,6 +96,8 @@ const hasVar = (v) => declared.has(v) || declaredLower.has(v.toLowerCase()) || u
 // ── Coverage check ────────────────────────────────────────────────────────────
 function normalize(token) { return token.replace(/\/color$/, ''); }
 
+const NAMING = resolveNamingSpec(cfg);
+
 function isCovered(token) {
   const t = normalize(token);
   if (t.startsWith('primitives/')) return true;
@@ -102,9 +105,8 @@ function isCovered(token) {
   if (COVERED_PREFIX.some(p => t.startsWith(p))) return true;
   if (EXPLICIT[t] && hasVar(EXPLICIT[t])) return true;
   if (EXPLICIT_SIZING[t] && hasVar(EXPLICIT_SIZING[t])) return true;
-  const v = '--' + t.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-');
-  if (hasVar(v)) return true;
-  if (hasVar('--' + t.replace(/\//g, '-'))) return true;
+  if (hasVar(tokenToVar(t, NAMING))) return true;
+  if (hasVar(tokenToVar(t, NAMING, { raw: true }))) return true;
   return false;
 }
 

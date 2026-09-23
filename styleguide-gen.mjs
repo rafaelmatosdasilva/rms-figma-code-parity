@@ -23,6 +23,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
+import { resolveNamingSpec, tokenToVar, DEFAULT_NAMING } from './naming-convention.mjs';
 
 // ── DS-derived colour-mode CSS ────────────────────────────────────────────────
 // The DS expresses colour mode ONLY as @media (prefers-color-scheme: dark). The
@@ -144,7 +145,7 @@ export function deriveModeCSS(raw) {
 // `padding/m` maps to the CSS var `--padding-m`. When the snapshot has no such
 // data (sizing captured single-mode), this returns '' - the styleguide keeps
 // whatever the template already carries. Nothing invented, all from the DS.
-export function deriveSizeCSS(modeVariants) {
+export function deriveSizeCSS(modeVariants, spec = DEFAULT_NAMING) {
   const mv = modeVariants || {};
   let out = '';
   for (const def of Object.values(mv)) {
@@ -157,7 +158,7 @@ export function deriveSizeCSS(modeVariants) {
       const decls = scalar.map(([token, v]) => {
         const val = v.values?.[m.snapshotKey];
         if (val == null || val === v.values?.[baseKey]) return null;   // unchanged from base
-        return '    --' + String(token).replace(/\//g, '-') + ': ' + val + ';';
+        return '    ' + tokenToVar(String(token), spec, { raw: true }) + ': ' + val + ';';
       }).filter(Boolean);
       if (decls.length) out += `  [data-size="${m.snapshotKey}"] {\n${decls.join('\n')}\n  }\n`;
     }
@@ -186,7 +187,7 @@ export async function generateStyleguide(ROOT, cfg, opts = {}) {
     let sizeCSS = '';
     try {
       const snapPath = cfg.paths?.snapshotVars ? resolve(ROOT, cfg.paths.snapshotVars) : null;
-      if (snapPath && existsSync(snapPath)) sizeCSS = deriveSizeCSS(JSON.parse(readFileSync(snapPath, 'utf8')).modeVariants);
+      if (snapPath && existsSync(snapPath)) sizeCSS = deriveSizeCSS(JSON.parse(readFileSync(snapPath, 'utf8')).modeVariants, resolveNamingSpec(cfg));
     } catch {}
     return deriveModeCSS(css) + sizeCSS;
   }

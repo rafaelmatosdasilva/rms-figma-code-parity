@@ -17,6 +17,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
+import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 
@@ -102,16 +103,17 @@ const hasVar = (v) => declared.has(v) || declaredLower.has(v.toLowerCase()) || u
 // ── Coverage check ────────────────────────────────────────────────────────────
 function normalize(token) { return token.replace(/\/color$/, ''); }
 
+const NAMING = resolveNamingSpec(cfg);
+
 function isCovered(token) {
   const t = normalize(token);
   if (t.startsWith('primitives/')) return true;
   if (COVERED.has(t)) return true;
   if (COVERED_PREFIX.some(p => t.startsWith(p))) return true;
   if (EXPLICIT[t] && hasVar(EXPLICIT[t])) return true;
-  // Convention: /iconText/ → /text/, drop /default, / → -
-  const v = '--' + t.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-');
-  if (hasVar(v)) return true;
-  if (hasVar('--' + t.replace(/\//g, '-'))) return true;
+  // Convention (from ds-config → figma.namingConvention): iconText→text, drop /default, / → sep.
+  if (hasVar(tokenToVar(t, NAMING))) return true;
+  if (hasVar(tokenToVar(t, NAMING, { raw: true }))) return true;
   return false;
 }
 
@@ -156,7 +158,7 @@ if (UNCOVERED.length) {
     const ORPHAN_SKIP = new Set(cfg.knownOrphanExceptions ?? []);
     const derivedVar = t => {
       const n = normalize(t);
-      return EXPLICIT[n] ?? ('--' + n.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-'));
+      return EXPLICIT[n] ?? tokenToVar(n, NAMING);
     };
 
     const orphanUsed = [], orphanBenign = [];

@@ -18,6 +18,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { rawGapMatches } from './raw-gap.mjs';
+import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 
@@ -465,14 +466,11 @@ if (themeCSS) {
 
 // Convert a Figma token name → expected CSS var name via EXPLICIT map + convention.
 // Returns null if the token should be skipped (EXPLICIT null, SKIP_TOKENS, or rgba-only).
+const NAMING = resolveNamingSpec(cfg);
 function tokenToExpectedVar(token) {
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, token)) return EXPLICIT[token]; // null means skip
   if (SKIP_TOKENS.has(token)) return null;
-  return '--' + token
-    .replace(/\/iconText\//g, '/text/')
-    .replace(/\/color$/, '')
-    .replace(/\/default$/, '')
-    .replace(/\//g, '-');
+  return tokenToVar(token, NAMING);
 }
 
 // extractPropVar for border-color: falls back to border: shorthand (returns last var).

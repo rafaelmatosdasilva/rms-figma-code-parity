@@ -17,6 +17,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildResolver } from './mode-resolver.mjs';
+import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -41,11 +42,12 @@ const { resolveRaw } = buildResolver(rawCss, [{ name: 'Base', snapshotKey: 'root
 
 const explicit = mcfg.explicit || {};
 const skip     = new Set(mcfg.skip || []);
+const NAMING   = resolveNamingSpec(cfg);
 const norm     = (s) => String(s).trim().replace(/\s+/g, '').toLowerCase();
 function tokenToVar(t) {
   if (skip.has(t)) return null;
   if (Object.prototype.hasOwnProperty.call(explicit, t)) return explicit[t];
-  return '--' + t.replace(/\//g, '-');
+  return toVar(t, NAMING, { raw: true });
 }
 
 const OK = [], BAD = [], SKIPPED = [];

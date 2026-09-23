@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from '
 import { join } from 'path';
 import { loadTokensDict, tokenSource } from './fix-hint.mjs';
 import { parseVarBlock, stripAtRules } from './mode-resolver.mjs';   // single source of truth (identical copies removed)
+import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';   // shared Figma↔code naming convention
 
 const ROOT     = process.cwd();
 const FIX_MODE  = process.argv.includes('--fix');
@@ -78,6 +79,10 @@ const DROP_SEGMENTS   = cfg.figma?.namingConvention?.dropSegments   ?? ['color',
 // When true (default), /iconText/ in token path is normalized to /text/ for CSS var derivation.
 // Set to false in ds-config.json → figma.namingConvention.iconTextAlias when CSS keeps "iconText".
 const ICON_TEXT_ALIAS = cfg.figma?.namingConvention?.iconTextAlias  ?? true;
+// The shared convention (naming-convention.mjs) reads these SAME ds-config keys. DROP_SEGMENTS /
+// ICON_TEXT_ALIAS above stay for the alias-chain + primitive specifics below that need the
+// intermediate (pre-hyphen) form; the plain token→var derivations route through NAMING.
+const NAMING = resolveNamingSpec(cfg);
 
 let EXPLICIT = {}, NULL_TOKENS = new Set(), SKIP_TOKENS = new Set(),
     KNOWN_NULL = new Set(), EXPLICIT_SIZING = {}, SIZING_SKIP = new Map(), TYPO = {},
@@ -300,7 +305,7 @@ function aliasHopToVar(hop) {
   // hop, since EXPLICIT keys may be written either way.
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, v))   return EXPLICIT[v];
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, hop)) return EXPLICIT[hop];
-  return '--' + v.replace(/\//g, '-');
+  return toVar(hop, NAMING);   // final derivation via the shared convention (honours separator/case)
 }
 
 // ── Fix hint helpers ──────────────────────────────────────────────────────────
@@ -334,15 +339,13 @@ function sizingFixHint(cssVar, figmaVal) {
 function tokenToVar(token) {
   if (SKIP_TOKENS.has(token) || NULL_TOKENS.has(token)) return null;
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, token)) return EXPLICIT[token];
-  let v = ICON_TEXT_ALIAS ? token.replace(/\/iconText\//g, '/text/') : token;
-  if (DROP_SEGMENTS.includes('default')) v = v.replace(/\/default$/, '');
-  return '--' + v.replace(/\//g, '-');
+  return toVar(token, NAMING);
 }
 
 function sizingTokenToVar(token) {
   if (SIZING_SKIP.has(token)) return null;
   if (EXPLICIT_SIZING[token]) return EXPLICIT_SIZING[token];
-  return '--' + token.replace(/\//g, '-');
+  return toVar(token, NAMING, { raw: true });
 }
 
 // ── Breakpoint media-query parser ─────────────────────────────────────────────
@@ -690,7 +693,7 @@ if (bpModeNames.length > 0) {
       if (tokenName.startsWith('viewport/')) continue; // viewport vars define breakpoints, not CSS props
       if (expected === 'true' || expected === 'false') {
         if (!BOOLEAN_SKIP.has(tokenName)) {
-          const cssVar = sizingTokenToVar(tokenName) ?? '--' + tokenName.replace(/\//g, '-');
+          const cssVar = sizingTokenToVar(tokenName) ?? toVar(tokenName, NAMING, { raw: true });
           BOOL_INFO.push({ token: tokenName, cssVar, breakpoint: modeName });
         }
         continue;
@@ -726,7 +729,7 @@ for (const [modeName, tokens] of Object.entries(boolSnap)) {
   for (const [tokenName] of Object.entries(tokens)) {
     if (!boolSeen.has(tokenName) && !BOOLEAN_SKIP.has(tokenName)) {
       boolSeen.add(tokenName);
-      const cssVar = sizingTokenToVar(tokenName) ?? '--' + tokenName.replace(/\//g, '-');
+      const cssVar = sizingTokenToVar(tokenName) ?? toVar(tokenName, NAMING, { raw: true });
       BOOL_INFO.push({ token: tokenName, cssVar, breakpoint: modeName });
     }
   }

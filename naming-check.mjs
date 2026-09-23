@@ -16,6 +16,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
+import { resolveNamingSpec, tokenToVar, varToToken } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 
@@ -62,9 +63,8 @@ for (const cssVar of Object.values(EXPLICIT_SIZING)) if (cssVar) knownCSSVars.ad
 if (typoMap) { for (const cssVar of Object.keys(typoMap)) knownCSSVars.add(cssVar); }
 
 // Convention-derived vars from every Figma token
-function conventionVar(token) {
-  return '--' + token.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-');
-}
+const NAMING = resolveNamingSpec(cfg);
+const conventionVar = (token) => tokenToVar(token, NAMING);
 for (const token of figmaTokens) {
   if (SKIP_TOKENS.has(token)) continue;
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, token) || Object.prototype.hasOwnProperty.call(EXPLICIT_SIZING, token)) continue;
@@ -129,7 +129,7 @@ for (const cssVar of declared) {
   // defeats the whole "every var traces back to a REAL token" guarantee. Legitimate convention
   // vars are already registered by the forward pass above (knownCSSVars), so requiring an exact
   // match here loses no real coverage while closing the invented-sub-variant hole.
-  const asToken = cssVar.slice(2).replace(/-/g, '/');
+  const asToken = varToToken(cssVar, NAMING);
   if (figmaTokens.has(asToken) || figmaTokens.has(asToken + '/color')) { OK.push(cssVar); continue; }
 
   UNKNOWN.push(cssVar);

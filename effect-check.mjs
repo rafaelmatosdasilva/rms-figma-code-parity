@@ -18,6 +18,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildResolver } from './mode-resolver.mjs';
+import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -42,10 +43,11 @@ const { resolveRaw } = buildResolver(rawCss, [{ name: 'Base', snapshotKey: 'root
 
 const explicit = ecfg.explicit || {};
 const skip     = new Set(ecfg.skip || []);
+const NAMING   = resolveNamingSpec(cfg);
 function styleToVar(name) {
   if (skip.has(name)) return null;
   if (Object.prototype.hasOwnProperty.call(explicit, name)) return explicit[name];
-  return '--' + name.replace(/\//g, '-');
+  return tokenToVar(name, NAMING, { raw: true });
 }
 
 // Canonicalise a box-shadow so equivalent colour/space forms compare equal:

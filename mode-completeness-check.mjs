@@ -26,6 +26,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { loadModes, loadCollections, allModes, buildResolver } from './mode-resolver.mjs';
+import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
 
@@ -58,16 +59,17 @@ const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
   .replace(/\/\*[\s\S]*?\*\//g, '');
 const { resolve, resolveRaw } = buildResolver(rawCss, allModes(cfg), { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE });
 
-// ── token → CSS var ───────────────────────────────────────────────────────────
+// ── token → CSS var (via the shared, DS-declarable convention) ─────────────────
+const NAMING = resolveNamingSpec(cfg);
 function colorTokenToVar(token) {
   if (SKIP_TOKENS.has(token)) return null;
   if (Object.prototype.hasOwnProperty.call(EXPLICIT, token)) return EXPLICIT[token];
-  return '--' + token.replace(/\/iconText\//g, '/text/').replace(/\/default$/, '').replace(/\//g, '-');
+  return tokenToVar(token, NAMING);
 }
 function nonColorTokenToVar(col, token) {
   if (col.skip && col.skip.includes(token)) return null;
   if (col.explicit && Object.prototype.hasOwnProperty.call(col.explicit, token)) return col.explicit[token];
-  return '--' + token.replace(/\//g, '-');
+  return tokenToVar(token, NAMING, { raw: true });
 }
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
