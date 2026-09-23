@@ -439,14 +439,20 @@ a render target.
 **Render targets are agnostic — it does not assume a Figma plugin, and aims for zero questions.** It checks
 whatever surface the project serves, in this order:
 1. **Configured / built** — `--url <route>` (repeatable/comma; runs with **no `ds-config.json`** at all),
-   `ds-config.json → a11y.urls`, or, for a static DS, the built HTML (e.g. `apps/*/ui.html`) — one shape
-   among others, not the assumed one.
-2. **Auto-discovery (the default when nothing is configured)** — it reads `package.json`, **starts the
+   or `ds-config.json → a11y.urls`.
+2. **The generated styleguide** (the preferred default when it exists) — `ds-config.json → styleguide.out`
+   (default `apps/styleguide/index.html`), opened via `file://`. It renders **every component × every
+   state on one static page**, so the sweep is deterministic, complete and needs **no dev server**, and —
+   because each state is its own instance in the resting DOM — the existing checks get **per-state coverage
+   for free** (a disabled/checked/error instance is measured directly). `a11y.styleguide:false` opts out;
+   `a11y.regenerateStyleguide:true` rebuilds it first (via `styleguide-gen.mjs`) so a11y never audits a
+   stale one. Falls through to the built plugin UIs (`apps/*/ui.html`) when there is no styleguide.
+3. **Auto-discovery (the default when nothing is configured)** — it reads `package.json`, **starts the
    project's dev server** (`storybook` / `dev` / `serve` / `start` / `preview`, or `a11y.serve`), reads the
    URL it prints, and **enumerates the pages itself**: Storybook stories → else static router routes → else
    the base page. Override the base with `a11y.baseUrl`, delay the sweep for SPA hydration with
    `a11y.waitFor`, or turn the whole thing off with `a11y.discover: false`.
-3. **Ask (last resort)** — only when auto-discovery finds nothing does the skill ask the user for the one
+4. **Ask (last resort)** — only when auto-discovery finds nothing does the skill ask the user for the one
    render URL. It **never fabricates a config or crawls the repo**; with no target it skips cleanly and says
    how to provide one.
 

@@ -6,10 +6,15 @@
 //
 // Render targets — NO project shape is imposed. It loads, in priority order: a live page from
 // `--url <page>` (repeatable/comma), then `ds-config.json → a11y.urls` (any project that serves
-// its components — a Vue/Vite SPA, Storybook, a deployed styleguide), then the built plugin UIs
-// via file:// (the Figma-plugin shape). So a non-plugin DS is checked by pointing it at a running
-// dev server; `--url` even runs with no ds-config.json at all. `a11y.waitFor` (a selector) delays
-// the sweep until an SPA has rendered.
+// its components — a Vue/Vite SPA, Storybook, a deployed styleguide), then the **generated
+// styleguide** (`ds-config.json → styleguide.out`, default `apps/styleguide/index.html`) via
+// file:// — one static page that renders every component × every state, so the sweep gets
+// deterministic, per-state coverage with no dev server; then the built plugin UIs via file://
+// (the Figma-plugin shape); then AUTO-DISCOVERY (start the dev server + enumerate pages). So a
+// non-plugin DS is checked by pointing it at a running dev server; `--url` even runs with no
+// ds-config.json at all. `a11y.waitFor` (a selector) delays the sweep until an SPA has rendered.
+// `a11y.styleguide:false` opts out of the styleguide target; `a11y.regenerateStyleguide:true`
+// rebuilds it first (via styleguide-gen.mjs) so a11y never audits a stale one.
 //
 // It checks:
 //   1. Contrast   — WCAG 2.1 AA ratio of each text leaf's computed color vs its EFFECTIVE
@@ -34,8 +39,9 @@
 //
 // NOT yet (v2, by design):
 //   - Non-text / component contrast (WCAG 1.4.11, >= 3:1) — borders, icons, focus-ring contrast.
-//   - Per-interaction-state a11y across live hover/checked states (the state-exposure check above
-//     reads the resting DOM; forcing each interaction state is the next step, reusing the state walk).
+//   - Live pseudo-class states (:hover / :active) — the styleguide target below renders every
+//     variant state (disabled / checked / selected / error) as its OWN instance, so those are
+//     covered in the resting DOM; forcing true interaction pseudo-states is the remaining step.
 //   - Reading order, skip links, landmark completeness — and anything the render cannot reveal:
 //     only when the project declares it in ds-config.json, never imposed (No-imposed-structure).
 
@@ -180,6 +186,18 @@ function argValues(flag, argv) {
   return out.flatMap((v) => v.split(',')).map((s) => s.trim()).filter(Boolean);
 }
 
+// ── The generated styleguide as a render target ─────────────────────────────────
+// styleguide-gen.mjs writes one static page rendering every component × every state. As a
+// file:// a11y target it is deterministic, complete and needs no dev server — and because
+// each state is its own instance in the resting DOM, the existing sweep gets per-state
+// coverage for free. Returns the target or null (missing, or opted out via a11y.styleguide:false).
+export function styleguideTarget(cfg, ROOT, exists = existsSync) {
+  if (cfg?.a11y?.styleguide === false) return null;
+  const rel = cfg?.styleguide?.out ?? 'apps/styleguide/index.html';
+  const abs = join(ROOT, rel);
+  return exists(abs) ? { label: rel, url: pathToFileURL(abs).href, styleguide: true } : null;
+}
+
 // ── Chrome discovery (mirrors rendered-check.mjs) ───────────────────────────────
 function findChrome() {
   const abs = [process.env.CHROME_PATH, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].filter(Boolean);
@@ -307,13 +325,30 @@ async function main() {
     return join(ROOT, src ? src.replace(/\.src\.html$/, '.html') : `apps/${plugin}/ui.html`);
   };
 
-  // Render targets — no project shape imposed. Priority: --url > ds-config a11y.urls > built
-  // static HTML (the plugin shape) > AUTO-DISCOVERY (start the dev server + enumerate pages).
+  // Render targets — no project shape imposed. Priority: --url / a11y.urls > the generated
+  // styleguide (every component × state, no dev server) > built plugin UIs > AUTO-DISCOVERY.
   const urlList = [...cliUrls, ...(cfg.a11y?.urls ?? [])];
   let stopServer = null;
-  let targets = urlList.length
-    ? urlList.map((u) => ({ label: u, url: u }))
-    : plugins.map(builtUiPath).filter((f) => existsSync(f)).map((f) => ({ label: f.replace(ROOT + '/', ''), url: pathToFileURL(f).href }));
+
+  // Opt-in: (re)generate the styleguide first so a11y never audits a stale one.
+  if (!urlList.length && cfg.a11y?.regenerateStyleguide && cfg.styleguide?.template) {
+    try {
+      const { generateStyleguide } = await import('./styleguide-gen.mjs');
+      const r = await generateStyleguide(ROOT, cfg);
+      console.log(`ℹ️  [a11y] regenerated styleguide → ${r.out.replace(ROOT + '/', '')}`);
+    } catch (e) { console.log(`ℹ️  [a11y] styleguide regeneration skipped: ${e.message}`); }
+  }
+
+  const sg = urlList.length ? null : styleguideTarget(cfg, ROOT);
+  let targets;
+  if (urlList.length) {
+    targets = urlList.map((u) => ({ label: u, url: u }));
+  } else if (sg) {
+    targets = [sg];
+    console.log(`ℹ️  [a11y] target: the generated styleguide — every component × state on one page, no dev server (${sg.label})`);
+  } else {
+    targets = plugins.map(builtUiPath).filter((f) => existsSync(f)).map((f) => ({ label: f.replace(ROOT + '/', ''), url: pathToFileURL(f).href }));
+  }
 
   // Nothing configured or built → be as automatic as possible: start the project's dev server
   // and discover pages (Storybook stories, else static router routes, else the base page). This

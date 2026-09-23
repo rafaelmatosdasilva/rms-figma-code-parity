@@ -6,9 +6,28 @@ import assert from 'node:assert/strict';
 import {
   parseColor, over, effectiveBg, relLuminance, contrastRatio,
   isLargeText, aaThreshold, contrastFindings, INTERACTIVE_ROLES,
+  styleguideTarget,
 } from '../a11y-check.mjs';
 
 const approx = (a, b, eps = 0.02) => Math.abs(a - b) <= eps;
+
+// ── styleguideTarget (I35): the generated-styleguide render target ──
+test('[styleguide] returns the target when the file exists (default path)', () => {
+  const t = styleguideTarget({}, '/proj', (p) => p === '/proj/apps/styleguide/index.html');
+  assert.equal(t.label, 'apps/styleguide/index.html');
+  assert.equal(t.styleguide, true);
+  assert.ok(t.url.startsWith('file://'));
+});
+test('[styleguide] null when the file is absent', () => {
+  assert.equal(styleguideTarget({}, '/proj', () => false), null);
+});
+test('[styleguide] honours a custom styleguide.out', () => {
+  const t = styleguideTarget({ styleguide: { out: 'dist/sg.html' } }, '/proj', (p) => p === '/proj/dist/sg.html');
+  assert.equal(t.label, 'dist/sg.html');
+});
+test('[styleguide] opt-out via a11y.styleguide:false', () => {
+  assert.equal(styleguideTarget({ a11y: { styleguide: false } }, '/proj', () => true), null);
+});
 
 test('contrastRatio: black on white is 21, white on white is 1', () => {
   assert.ok(approx(contrastRatio({ r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }), 21));
