@@ -1,10 +1,10 @@
-// showroom-gen.mjs — generate the living style-guide HTML from the design system.
+// styleguide-gen.mjs — generate the living styleguide HTML from the design system.
 //
-// The showroom is a GENERATED VIEW over canonical sources — nothing is hand-kept.
+// The styleguide is a GENERATED VIEW over canonical sources — nothing is hand-kept.
 // A template (structure + per-component render patterns, DS-specific, private)
 // carries `{{markers}}`; this generator fills each marker with data gathered LIVE
 // from Figma + code, then writes the HTML. Because it only ever renders what the
-// DS actually contains, the showroom can never drift from — or invent — anything
+// DS actually contains, the styleguide can never drift from — or invent — anything
 // the system doesn't have (the same guarantee the docs-truth gate checks).
 //
 // Sources gathered:
@@ -15,7 +15,7 @@
 //   • DOCS_CODE  — per-component code notes, from the design-intent layer.
 //   • DOCS       — Figma component descriptions/annotations, from design-intent.
 //
-// Config (ds-config.json → showroom):
+// Config (ds-config.json → styleguide):
 //   { template: "<path to .template.html>", out: "<path to write index.html>",
 //     iconSource: "<plugin ui.html to lift the icon sheet from>" }
 //
@@ -26,7 +26,7 @@ import { join, dirname, resolve } from 'path';
 
 // ── DS-derived colour-mode CSS ────────────────────────────────────────────────
 // The DS expresses colour mode ONLY as @media (prefers-color-scheme: dark). The
-// showroom needs a MANUAL, per-component toggle, so we derive [data-color] rules
+// styleguide needs a MANUAL, per-component toggle, so we derive [data-color] rules
 // straight from those @media blocks - nothing is hand-copied and no value is
 // invented. Each @media block is ALSO gated to :root:not([data-color]) so the
 // manual toggle always wins over the OS preference (and a per-component override
@@ -136,13 +136,13 @@ export function deriveModeCSS(raw) {
 }
 
 // ── DS-derived size axis (e.g. Desktop/Phone) ─────────────────────────────────
-// The showroom toggles size with a [data-size] attribute, exactly like colour.
+// The styleguide toggles size with a [data-size] attribute, exactly like colour.
 // The per-mode values come from the DS sizing collection's OWN modes, captured
 // into the snapshot's `modeVariants` (the engine's per-mode, non-colour axis).
 // Each non-base mode becomes a [data-size="<key>"] block; only vars that DIFFER
 // from the base are emitted (base already lives in :root). A Figma token like
 // `padding/m` maps to the CSS var `--padding-m`. When the snapshot has no such
-// data (sizing captured single-mode), this returns '' - the showroom keeps
+// data (sizing captured single-mode), this returns '' - the styleguide keeps
 // whatever the template already carries. Nothing invented, all from the DS.
 export function deriveSizeCSS(modeVariants) {
   const mv = modeVariants || {};
@@ -165,11 +165,11 @@ export function deriveSizeCSS(modeVariants) {
   return out ? '\n\n  /* == Size axis - generated from the DS sizing-collection modes (no hand-copied values) == */\n' + out : '';
 }
 
-export async function generateShowroom(ROOT, cfg, opts = {}) {
-  const sh = cfg.showroom || {};
-  const templatePath = resolve(ROOT, sh.template || 'apps/style-guide/showroom.template.html');
-  const outPath = resolve(ROOT, sh.out || 'apps/style-guide/index.html');
-  if (!existsSync(templatePath)) throw new Error('showroom template not found: ' + templatePath);
+export async function generateStyleguide(ROOT, cfg, opts = {}) {
+  const sh = cfg.styleguide || {};
+  const templatePath = resolve(ROOT, sh.template || 'apps/styleguide/styleguide.template.html');
+  const outPath = resolve(ROOT, sh.out || 'apps/styleguide/index.html');
+  if (!existsSync(templatePath)) throw new Error('styleguide template not found: ' + templatePath);
   let html = readFileSync(templatePath, 'utf8');
 
   const themeFiles = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
@@ -226,7 +226,7 @@ export async function generateShowroom(ROOT, cfg, opts = {}) {
   // ── USAGE — which plugins use each component ────────────────────────────────────
   function usageMap(intent) {
     // Plugin label ← short code, derived from the plugin source path.
-    const PLUGS = (cfg.showroom?.plugins) || [
+    const PLUGS = (cfg.styleguide?.plugins) || [
       { key: 'IA', match: 'impact-atlas' }, { key: 'TTI', match: 'tokens-to-ink' }, { key: 'FSL', match: 'font-scaling-lab' },
     ];
     const sources = pluginHTML.concat(pluginCSS).map((p) => ({ p, m: PLUGS.find((g) => p.includes(g.match)), txt: (() => { const abs = resolve(ROOT, p); return existsSync(abs) ? readFileSync(abs, 'utf8') : ''; })() })).filter((s) => s.m);

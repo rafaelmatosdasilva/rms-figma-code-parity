@@ -9,7 +9,7 @@
 //
 // Opt-in and generic: runs only on surfaces the project DECLARES as hand-maintained
 //   ds-config.json → "duplication": { "surfaces": ["AGENTS.md", ".cursorrules", …], "minCluster": 5 }
-// Generated surfaces (the showroom, llms.txt) are NOT listed here - listing all components is their
+// Generated surfaces (the styleguide, llms.txt) are NOT listed here - listing all components is their
 // job. Pure + testable.
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -1,11 +1,11 @@
-// Regression tests for showroom-gen's deriveModeCSS: the showroom drives colour
+// Regression tests for styleguide-gen's deriveModeCSS: the styleguide drives colour
 // mode with a manual per-component [data-color] toggle, generated ENTIRELY from
 // the DS @media (prefers-color-scheme: dark) blocks - nothing hand-copied, no
 // value invented. These tests pin the behaviour that fixes the reported bug
 // ("a per-component light override does not win under a global dark mode").
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveModeCSS, deriveSizeCSS } from '../showroom-gen.mjs';
+import { deriveModeCSS, deriveSizeCSS } from '../styleguide-gen.mjs';
 
 // A DS token file: neutrals flip by mode, semantics ride on them, plus a
 // size-axis var and a typography var (which must NOT leak into colour blocks),
@@ -39,31 +39,31 @@ const block = (sel) => {
   return null;
 };
 
-test('[showroom] a manual [data-color="light"] block is generated from :root', () => {
+test('[styleguide] a manual [data-color="light"] block is generated from :root', () => {
   const light = block('[data-color="light"]');
   assert.ok(light, 'light block missing');
   assert.match(light, /--neutral-900:\s*#f7f7f7/);
   assert.match(light, /--bg:\s*var\(--neutral-900\)/);
 });
 
-test('[showroom] a manual [data-color="dark"] block carries the dark ramp values', () => {
+test('[styleguide] a manual [data-color="dark"] block carries the dark ramp values', () => {
   const dark = block('[data-color="dark"]');
   assert.ok(dark, 'dark block missing');
   assert.match(dark, /--neutral-900:\s*#212121/);   // dark override
   assert.match(dark, /--neutral-100:\s*#f5f5f5/);
 });
 
-test('[showroom] the OS @media path is gated to :root:not([data-color]) so the toggle wins', () => {
+test('[styleguide] the OS @media path is gated to :root:not([data-color]) so the toggle wins', () => {
   assert.match(out, /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-color\]\)/);
 });
 
-test('[showroom] component-scoped dark rules become [data-color="dark"] .selector', () => {
+test('[styleguide] component-scoped dark rules become [data-color="dark"] .selector', () => {
   assert.match(out, /\[data-color="dark"\] \.buttonTertiary \{[^}]*color:\s*var\(--text\)/);
   // and its OS-media form is gated too, so it never fires against the toggle
   assert.match(out, /:root:not\(\[data-color\]\) \.buttonTertiary/);
 });
 
-test('[showroom bugfix] size- and typography-axis vars never leak into colour blocks', () => {
+test('[styleguide bugfix] size- and typography-axis vars never leak into colour blocks', () => {
   // --padding-m (size axis) and --m-size (typography) do not reference a colour
   // primitive, so the closure must exclude them - otherwise a [data-color] scope
   // would fight the [data-size] axis in nested previews.
@@ -76,7 +76,7 @@ test('[showroom bugfix] size- and typography-axis vars never leak into colour bl
   assert.match(light, /--text:/);
 });
 
-test('[showroom bugfix] an orphan brace in the DS file is balanced before appending', () => {
+test('[styleguide bugfix] an orphan brace in the DS file is balanced before appending', () => {
   // Net brace depth must be 0, or the first appended [data-color] rule is
   // swallowed by the unbalanced tail (the exact bug that dropped the light rule).
   let d = 0, inC = false, inS = null;
@@ -92,7 +92,7 @@ test('[showroom bugfix] an orphan brace in the DS file is balanced before append
 });
 
 // ── Size axis (Desktop/Phone) generated from the DS sizing-collection modes ──
-test('[showroom] deriveSizeCSS emits [data-size] blocks from per-mode sizing (modeVariants)', () => {
+test('[styleguide] deriveSizeCSS emits [data-size] blocks from per-mode sizing (modeVariants)', () => {
   const mv = { Sizing: {
     modes: [{ name: 'Desktop', snapshotKey: 'desktop' }, { name: 'Phone', snapshotKey: 'phone' }],
     vars: {
@@ -109,15 +109,15 @@ test('[showroom] deriveSizeCSS emits [data-size] blocks from per-mode sizing (mo
   assert.doesNotMatch(css, /\[data-size="desktop"\]/); // base mode is :root, no block
 });
 
-test('[showroom] deriveSizeCSS is a no-op when sizing was captured single-mode', () => {
+test('[styleguide] deriveSizeCSS is a no-op when sizing was captured single-mode', () => {
   // The current real state: no modeVariants -> no phone data -> nothing emitted,
-  // so the showroom keeps whatever the template already carries (no invention).
+  // so the styleguide keeps whatever the template already carries (no invention).
   assert.equal(deriveSizeCSS(undefined), '');
   assert.equal(deriveSizeCSS({}), '');
   assert.equal(deriveSizeCSS({ Sizing: { modes: [{ snapshotKey: 'desktop' }], vars: {} } }), '');
 });
 
-test('[showroom bugfix] a MID-FILE orphan brace is dropped at its position, not by trimming the tail', () => {
+test('[styleguide bugfix] a MID-FILE orphan brace is dropped at its position, not by trimming the tail', () => {
   // A stray top-level `}` in the middle (after :root already closed). A naive
   // trailing-strip would delete .card's real closing brace and corrupt it; the
   // position-aware balancer drops the stray one and leaves everything else intact.

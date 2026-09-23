@@ -1,6 +1,6 @@
 // docs-truth-check.mjs - Gate: documentation surfaces reference ONLY DS truth.
 //
-// A living style guide / component showroom / DS doc must never invent tokens,
+// A living styleguide or any DS doc must never invent tokens,
 // vars, or values. This gate verifies that every DS reference in a configured
 // documentation surface actually EXISTS in the DS:
 //
@@ -16,7 +16,7 @@
 //      sizing snapshot. An invented `radii/whatever` → FAIL.
 //
 // Scope is OPT-IN and generic: it runs only when ds-config declares
-//   "docs": { "surfaces": ["apps/style-guide/index.html", …] }
+//   "docs": { "surfaces": ["apps/styleguide/index.html", …] }
 // With no `docs.surfaces`, the gate is a no-op PASS (projects without a doc
 // surface are unaffected, byte-identical).
 //
@@ -149,7 +149,7 @@ for (const surface of SURFACES) {
     if (handDrawn) advisories.push({ surface, kind: 'hand-drawn-icon', count: handDrawn });
   }
 
-  // 4. CSS hygiene — construction rules for a DS doc/showroom:
+  // 4. CSS hygiene — construction rules for a DS doc/styleguide:
   //    (a) NO ALL-CAPS: the DS has none, so `text-transform: uppercase` is invented
   //        styling → FAIL.
   //    (b) COLOURS ARE VARIABLES: a colour literal (#hex / rgb() / hsl()) as the

@@ -5,7 +5,7 @@
 // styling that drifts from Figma (real case: a `.section-label` "uppercase group
 // heading" that had no Figma text style behind it, and spread into two plugins).
 // This catches that class of drift at the source — the same "no all-caps" rule
-// the docs-truth gate enforces on a showroom, applied to the DS CSS itself.
+// the docs-truth gate enforces on a styleguide, applied to the DS CSS itself.
 //
 // A DS that genuinely defines an upper/lower/title text style (Figma textCase)
 // exempts it via `ds-config.json → knownTextTransforms` — either the casing word
