@@ -22,13 +22,22 @@
 //   2. Name/role  — every interactive node in the accessibility tree has a non-empty accessible
 //                   name and a resolvable role (a component not exposing aria / an icon-button
 //                   with no label).
-//   3. Focus      — every focusable element shows a computed style change when focused.
+//   3. Focus      — every focusable element shows a computed style change when focused, AND that
+//                   change is actually visible: the focus ring's colour has >= 3:1 contrast against
+//                   its background (WCAG 1.4.11 for focus — a ring that "changes" but is nearly the
+//                   same colour is still invisible).
 //   4. State expo — an element whose STATE is shown only by a CSS class (selected / checked /
 //                   expanded / disabled / invalid / pressed / …) but never through the matching
 //                   aria/native state, so assistive tech never hears it. State-class → aria map
 //                   is common-English by default; extend via ds-config.json → a11y.stateClasses.
 //   5. Keyboard   — an interactive control that cannot be reached by keyboard (an interactive
 //                   role on a non-focusable element, or a native control with tabindex=-1).
+//
+// Output is plain language, no jargon: each issue says what is wrong, why it matters, and what to
+// do. `--a11y` adds the exact elements; `--json` emits a machine-readable record for an agent/CI.
+// `--axe` (or ds-config a11y.axe:true) also runs axe-core (fetched from a CDN, no npm dep) for the
+// broader WCAG rules the five checks above do not cover — non-text contrast, target size, duplicate
+// ids, ARIA validity, heading order, labels — reported as an extra advisory section.
 //
 // Advisory by default (never fails the audit); `ds-config.json → a11yStrict: true` promotes
 // findings to a hard fail (exit 1). Skips cleanly (exit 0) when no browser is available — never
@@ -38,7 +47,8 @@
 // come from measured pixels and the accessibility tree, not from any presumed token/tier model.
 //
 // NOT yet (v2, by design):
-//   - Non-text / component contrast (WCAG 1.4.11, >= 3:1) — borders, icons, focus-ring contrast.
+//   - Non-text / component contrast (WCAG 1.4.11, >= 3:1): the FOCUS RING is now checked natively
+//     (see check 3); the rest (control borders, icons, graphics) comes from --axe.
 //   - Live pseudo-class states (:hover / :active) — the styleguide target below renders every
 //     variant state (disabled / checked / selected / error) as its OWN instance, so those are
 //     covered in the resting DOM; forcing true interaction pseudo-states is the remaining step.
@@ -145,6 +155,11 @@ export const A11Y_GUIDE = {
     why: 'When someone moves through the page with the Tab key, nothing lights up, so they cannot tell which control they are on.',
     fix: 'Add a visible outline (a focus ring) on the control itself when it is focused — not only on a box around it.',
   },
+  focuscontrast: {
+    title: (n) => `${plural(n, 'focus outline is', 'focus outlines are')} too faint to see`,
+    why: 'The control does light up when focused, but the outline is so close in colour to its background that a keyboard user still cannot tell where they are.',
+    fix: 'Make the focus outline stand out clearly — a stronger colour or a thicker ring, so it is at least three times the contrast of whatever is behind it.',
+  },
   ariastate: {
     title: (n) => `${plural(n, 'control shows', 'controls show')} their state only by looks`,
     why: 'Something is marked selected, checked or open only with colour or a CSS class, so a screen reader never announces that state.',
@@ -163,6 +178,7 @@ export function a11yItemLine(kind, f) {
     const what = f.text ? `the text "${f.text}"` : (f.desc || 'text');
     return `${what} — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold} (${f.theme} theme)`;
   }
+  if (kind === 'focuscontrast') return `${f.desc} — its focus outline scores ${f.ratio} out of 21, needs at least ${f.threshold}`;
   if (kind === 'name') return `${A11Y_ROLE_WORD[f.role] || `A ${f.role || 'control'}`} with no label`;
   return f.desc;   // focus / ariastate / keyboard — the CSS selector locates the element
 }
@@ -171,8 +187,19 @@ export function a11yItemLine(kind, f) {
 export function a11yFindingRecord(kind, f) {
   const rec = { issue: kind, selector: f.desc ?? null, fix: A11Y_GUIDE[kind]?.fix ?? null };
   if (kind === 'contrast') { rec.theme = f.theme ?? null; rec.text = f.text ?? null; rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
+  if (kind === 'focuscontrast') { rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
   if (kind === 'name') rec.role = f.role ?? null;
   return rec;
+}
+// Collapse axe-core's per-node violations into one row per rule (highest count first).
+export function summarizeAxe(violations) {
+  const byId = {};
+  for (const v of violations || []) {
+    const e = (byId[v.id] ??= { id: v.id, help: v.help, impact: v.impact, helpUrl: v.helpUrl, count: 0, targets: [] });
+    e.count += v.count || 0;
+    for (const t of v.targets || []) if (e.targets.length < 8 && !e.targets.includes(t)) e.targets.push(t);
+  }
+  return Object.values(byId).sort((a, b) => b.count - a.count);
 }
 
 // ── Auto-discovery: start the project's dev server and enumerate render pages ────
@@ -294,7 +321,7 @@ function sweepExpression(roots, doFocus, stateMap) {
         bgImage: !!(cs.backgroundImage && cs.backgroundImage !== 'none'),
       });
     }
-    let noFocus = [], ariaState = [], notKeyboard = [];
+    let noFocus = [], faintFocus = [], ariaState = [], notKeyboard = [];
     if (${doFocus ? 'true' : 'false'}) {
       const STATE_MAP = ${JSON.stringify(stateMap || {})};
       const stateWords = Object.keys(STATE_MAP);
@@ -306,13 +333,32 @@ function sweepExpression(roots, doFocus, stateMap) {
         const desc = (el.tagName.toLowerCase()+(el.id?('#'+el.id):'')).slice(0,60);
         const role = el.getAttribute('role');
         const isInteractive = el.matches(INTERACTIVE);
-        // 3. Visible focus — a native focusability style change.
+        // 3. Visible focus — does focusing change the look, and is that change actually visible?
         if (!disabled(el) && el.matches('a[href],button,input:not([type=hidden]),select,textarea,[tabindex],[role=button],[role=link]')) {
           const b = getComputedStyle(el); const before = b.outlineStyle+'|'+b.outlineWidth+'|'+b.boxShadow+'|'+b.borderColor+'|'+b.borderWidth;
           try { el.focus(); } catch(e){}
           const a = getComputedStyle(el); const after = a.outlineStyle+'|'+a.outlineWidth+'|'+a.boxShadow+'|'+a.borderColor+'|'+a.borderWidth;
+          if (before === after) { noFocus.push(desc); }
+          else {
+            // Something changed — capture the focus-indicator colour + its background so Node can
+            // check it is perceivable (WCAG 1.4.11, >= 3:1). A ring that "changes" but is nearly the
+            // same colour as its background is still invisible to a keyboard user.
+            let ind = null;
+            if (a.outlineStyle !== 'none' && parseFloat(a.outlineWidth) > 0) ind = a.outlineColor;
+            else if (a.boxShadow !== b.boxShadow && a.boxShadow !== 'none') { const m = a.boxShadow.match(/rgba?\\([^)]+\\)/); ind = m ? m[0] : null; }
+            else if (a.borderColor !== b.borderColor) ind = a.borderColor;
+            if (ind) {
+              const layers = []; let node = el;
+              while (node && node.nodeType===1) {
+                const bg = getComputedStyle(node).backgroundColor; layers.push(bg);
+                const mm = bg.match(/^rgba?\\(([^)]+)\\)/); const parts = mm ? mm[1].split(',') : null;
+                const al = parts ? (parts[3]!==undefined ? parseFloat(parts[3]) : 1) : 0;
+                if (al === 1) break; node = node.parentElement;
+              }
+              faintFocus.push({ desc, color: ind, bgLayers: layers });
+            }
+          }
           try { el.blur(); } catch(e){}
-          if (before === after) noFocus.push(desc);
         }
         // 4. State communicated ONLY by a CSS class — a state word in the class list with no
         //    matching aria/native state, so assistive tech never hears the state.
@@ -336,8 +382,33 @@ function sweepExpression(roots, doFocus, stateMap) {
         }
       }
     }
-    return { textEls, noFocus, ariaState, notKeyboard };
+    return { textEls, noFocus, faintFocus, ariaState, notKeyboard };
   })()`;
+}
+
+// ── axe-core (opt-in, I32): broaden coverage toward full WCAG rule set ───────────
+// Fetch the scanner source once (any CDN, pinned; no npm dependency), inject it into the
+// already-open page and run it. Adds the rules our own five checks do not cover — non-text
+// contrast, target size, duplicate ids, ARIA validity, and more — mapped to plain findings.
+// Degrades to null on any failure (offline, blocked), so the core check is never affected.
+async function fetchAxeSource() {
+  try {
+    const r = await fetch('https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.2/axe.min.js', { signal: AbortSignal.timeout(15000) });
+    return r.ok ? await r.text() : null;
+  } catch { return null; }
+}
+async function runAxe(send, sessionId, axeSource) {
+  if (!axeSource) return null;
+  try {
+    await send('Runtime.evaluate', { expression: axeSource, returnByValue: false }, sessionId);
+    const expr = `axe.run(document, { resultTypes: ['violations'] })
+      .then(r => JSON.stringify(r.violations.map(v => ({ id: v.id, help: v.help, impact: v.impact, helpUrl: v.helpUrl, count: v.nodes.length, targets: v.nodes.slice(0, 4).map(n => (n.target || []).join(' ')) }))))
+      .catch(e => 'ERR:' + e.message)`;
+    const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId);
+    const val = r.result?.value;
+    if (typeof val !== 'string' || val.startsWith('ERR:')) return null;
+    return JSON.parse(val);
+  } catch { return null; }
 }
 
 async function main() {
@@ -345,6 +416,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const VERBOSE = argv.includes('--a11y');
   const JSON_MODE = argv.includes('--json');   // structured output for an agent/CI that fixes the code
+  const RUN_AXE = argv.includes('--axe') || cfg.a11y?.axe === true;   // broaden coverage with axe-core (opt-in)
   const components = argValues('--component', argv).concat(argValues('--components', argv));
   const cliUrls = argValues('--url', argv);   // check a live page directly (any project that serves it)
 
@@ -469,7 +541,14 @@ async function main() {
   });
 
   const findings = [];   // { kind, theme?, desc, ... }
+  const axeViolations = [];
   let sweptPlugins = 0;
+
+  let axeSource = null;
+  if (RUN_AXE) {
+    axeSource = await fetchAxeSource();
+    if (!axeSource) console.log('ℹ️  [a11y] --axe: could not load axe-core (offline or blocked) — the broader scan was skipped; the core checks still ran.');
+  }
 
   for (const target of targets) {
     const label = target.label;
@@ -505,15 +584,24 @@ async function main() {
     for (const mode of modes) {
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode.scheme }] }, sessionId);
       const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, first, STATE_MAP), returnByValue: true }, sessionId);
-      const { textEls = [], noFocus = [], ariaState = [], notKeyboard = [] } = r.result.value || {};
+      const { textEls = [], noFocus = [], faintFocus = [], ariaState = [], notKeyboard = [] } = r.result.value || {};
       for (const f of contrastFindings(textEls, mode.name)) findings.push({ plugin: label, ...f });
       if (first) {
         for (const desc of noFocus) findings.push({ kind: 'focus', plugin: label, desc });
         for (const desc of ariaState) findings.push({ kind: 'ariastate', plugin: label, desc });
         for (const desc of notKeyboard) findings.push({ kind: 'keyboard', plugin: label, desc });
+        // Focus indicator visible? (WCAG 1.4.11 for the focus ring — computed in Node)
+        for (const f of faintFocus) {
+          const raw = parseColor(f.color); if (!raw) continue;
+          const bg = effectiveBg(f.bgLayers);
+          const fg = raw.a < 1 ? over(raw, bg) : raw;
+          const ratio = contrastRatio(fg, bg);
+          if (ratio + 1e-9 < 3) findings.push({ kind: 'focuscontrast', plugin: label, desc: f.desc, ratio: Math.round(ratio * 100) / 100, threshold: 3 });
+        }
       }
       first = false;
     }
+    if (axeSource) { const v = await runAxe(send, sessionId, axeSource); if (v) for (const row of v) axeViolations.push(row); }
     await send('Target.closeTarget', { targetId });
   }
 
@@ -526,13 +614,16 @@ async function main() {
   const cannot   = findings.filter((f) => f.kind === 'contrast' && f.cannotCompute);
   const names    = findings.filter((f) => f.kind === 'name');
   const focus    = findings.filter((f) => f.kind === 'focus');
+  const focusCon = findings.filter((f) => f.kind === 'focuscontrast');
   const state    = findings.filter((f) => f.kind === 'ariastate');
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  const buckets = [['contrast', contrast], ['name', names], ['focus', focus], ['ariastate', state], ['keyboard', keyboard]].filter(([, l]) => l.length);
+  const buckets = [['contrast', contrast], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard]].filter(([, l]) => l.length);
   const total = buckets.reduce((n, [, l]) => n + l.length, 0);
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';
+
+  const axe = RUN_AXE ? summarizeAxe(axeViolations) : [];
 
   // ── Machine lane (--json): precise, parseable — for an agent/CI that fixes the code ──
   if (JSON_MODE) {
@@ -541,6 +632,7 @@ async function main() {
       target: targets.map((t) => t.label),
       usedStyleguide: !!sg,
       themes, strict: STRICT, total, cannotMeasure: cannot.length, issues,
+      ...(RUN_AXE ? { axe } : {}),
     }, null, 2));
     process.exit(STRICT && total ? 1 : 0);
   }
@@ -567,6 +659,20 @@ async function main() {
   }
   if (cannot.length) {
     console.log(`\n${cannot.length === 1 ? 'One piece of text sits' : `${cannot.length} pieces of text sit`} on an image or gradient background, so its readability could not be measured automatically — please check ${cannot.length === 1 ? 'it' : 'them'} by eye.`);
+  }
+
+  // ── Broader scan (axe-core, opt-in) — the rules our own checks do not cover ──
+  if (RUN_AXE && axeSource) {
+    if (axe.length) {
+      console.log(`\nA broader scanner (axe-core) also found ${plural(axe.length, 'other kind of problem', 'other kinds of problem')}:`);
+      for (const v of axe) {
+        console.log(`• ${v.help} — in ${plural(v.count, 'place', 'places')}${v.impact ? ` (severity: ${v.impact})` : ''}`);
+        if (VERBOSE) for (const t of v.targets.slice(0, 5)) console.log(`       - ${t}`);
+      }
+      if (!VERBOSE) console.log(`Run with --a11y to see where each one is.`);
+    } else {
+      console.log(`\nThe broader scanner (axe-core) found nothing beyond the above.`);
+    }
   }
 
   // ── Smart nudge: how to get deeper results (only when a styleguide wasn't the target) ──

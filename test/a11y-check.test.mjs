@@ -6,12 +6,24 @@ import assert from 'node:assert/strict';
 import {
   parseColor, over, effectiveBg, relLuminance, contrastRatio,
   isLargeText, aaThreshold, contrastFindings, INTERACTIVE_ROLES,
-  styleguideTarget, A11Y_GUIDE, a11yItemLine, a11yFindingRecord,
+  styleguideTarget, A11Y_GUIDE, a11yItemLine, a11yFindingRecord, summarizeAxe,
 } from '../a11y-check.mjs';
+
+test('[axe] summarizeAxe collapses per-node rows into one per rule, busiest first', () => {
+  const s = summarizeAxe([
+    { id: 'color-contrast', help: 'Elements must have sufficient color contrast', impact: 'serious', count: 2, targets: ['.a', '.b'] },
+    { id: 'button-name', help: 'Buttons must have discernible text', impact: 'critical', count: 1, targets: ['button'] },
+    { id: 'color-contrast', help: 'Elements must have sufficient color contrast', impact: 'serious', count: 3, targets: ['.c'] },
+  ]);
+  assert.equal(s.length, 2);
+  assert.equal(s[0].id, 'color-contrast');
+  assert.equal(s[0].count, 5);
+  assert.deepEqual(s[0].targets, ['.a', '.b', '.c']);
+});
 
 // ── Plain-language reporting + machine record ──
 test('[plain] every issue kind has a title/why/fix, and no raw jargon in the guidance', () => {
-  for (const kind of ['contrast', 'name', 'focus', 'ariastate', 'keyboard']) {
+  for (const kind of ['contrast', 'name', 'focus', 'focuscontrast', 'ariastate', 'keyboard']) {
     const g = A11Y_GUIDE[kind];
     assert.equal(typeof g.title(1), 'string');
     assert.ok(g.why.length > 10 && g.fix.length > 10);
@@ -32,6 +44,7 @@ test('[plain] a11yItemLine reads as a sentence, not a raw selector dump', () => 
   assert.match(c, /Light theme/);
   assert.equal(a11yItemLine('name', { role: 'button' }), 'A button with no label');
   assert.equal(a11yItemLine('name', { role: 'textbox' }), 'An input field with no label');
+  assert.match(a11yItemLine('focuscontrast', { desc: 'button.x', ratio: 1.5, threshold: 3 }), /focus outline scores 1\.5 out of 21, needs at least 3/);
 });
 test('[json] a11yFindingRecord carries the exact facts + the fix for a machine', () => {
   const c = a11yFindingRecord('contrast', { theme: 'Dark', desc: '.err', text: 'Oops', ratio: 2.1, threshold: 4.5 });

@@ -422,7 +422,7 @@ per-project with `ds-config.json → baseline.enabled: false` (path via `baselin
 A mechanical, agnostic accessibility pass (`a11y-check.mjs`) that reuses the Gate 22 CDP/headless-Chrome
 flow. It reports **WCAG AA contrast** per theme (computed `color` vs the effective composited background),
 **accessible name + role** (interactive nodes from the accessibility tree — a component that never exposes
-aria), **visible focus** (a computed style change when focused), **state exposure** (an element whose state
+aria), **visible focus** (a computed style change when focused **and** that change actually visible — the focus ring's colour has ≥ 3:1 contrast against its background, WCAG 1.4.11), **state exposure** (an element whose state
 is shown only by a CSS class — `.selected` / `.checked` / `.disabled` / `.invalid` / … — with no matching
 `aria-*` or native state, so assistive tech never hears it; the state-class→aria map is common-English by
 default, extend via `a11y.stateClasses`), and **keyboard reachability** (an interactive control that cannot
@@ -435,7 +435,7 @@ the default is the plain human summary; **`--a11y`** adds the exact elements (st
 the same findings as a machine-readable record (selector, contrast ratio, theme, role, and the fix) for an
 agent or CI. When it runs against anything other than the styleguide it ends with a one-line tip on how to
 get the deepest, per-state result. `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It
-runs inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y|--json]`
+runs inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y|--json] [--axe]`
 (`--component` scopes the sweep and accepts a raw CSS selector too). **Skips cleanly** (exit 0) with no
 browser, never a false fail. Deps: Node >= 22 (built-in WebSocket), Chrome/Chromium (or `CHROME_PATH`), and
 a render target.
@@ -463,10 +463,11 @@ whatever surface the project serves, in this order:
 So a Storybook or router-based DS runs fully automatically the first time — no config, no questions; a
 bespoke app that exposes no page index is the only case that needs a `--url` / `a11y.urls` hint (set once).
 
+**Broader coverage via `--axe`:** opt in and it also runs **axe-core** (fetched from a CDN, no npm dependency) against the same rendered page, adding the rules the five native checks do not cover — **non-text / component contrast** (WCAG 1.4.11 for borders, icons, graphics), **target size**, **duplicate ids**, **ARIA validity**, **heading order**, **form labels** — reported as an extra plain-language advisory section (and under `axe` in `--json`). The **focus-ring** part of 1.4.11 is already covered natively (check 3 above).
+
 **Not yet (v2, by design):**
-- **Non-text / component contrast** (WCAG 1.4.11, ≥ 3:1) — borders, icons, focus-ring contrast.
 - **Live interaction-state a11y** — the state-exposure check reads the resting DOM; forcing each
-  hover/checked/expanded state and re-checking is the next step (reusing the state walk).
+  hover/checked/expanded pseudo-state and re-checking is the next step (reusing the state walk).
 - **Reading order, skip links, landmark completeness** — and anything the render cannot reveal: only when
   the project **declares** it in `ds-config.json`, never imposed (No-imposed-structure).
 
