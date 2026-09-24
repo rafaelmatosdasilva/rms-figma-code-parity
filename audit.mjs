@@ -3020,24 +3020,39 @@ function reportFull(label, items, shown) {
   }
 
   // ── External guidelines: optional live capture (Phase-1-style) ──────────────
-  // When ds-config.json declares guidelines.source.notion (the page link, committed, NOT secret) and
-  // NOTION_TOKEN is in the environment (per-person, in .env, gitignored), fetch the page and WRITE it
-  // to the committed guidelines file (sources[0]) BEFORE intent-gen reads it. Degrade-safe: no token /
-  // not shared / network / rate limit -> keep the committed file, never fail the audit. The token is
-  // read inside notion-fetch and never logged.
+  // Links in ds-config.json → guidelines.source (committed, NOT secret) are fetched and WRITTEN to their
+  // committed files BEFORE intent-gen reads them, so the written guidelines reach the design intent.
+  //   • notion: one page → guidelines.sources[0]              (token: NOTION_TOKEN in .env)
+  //   • gitlab: one or several wiki pages / Markdown files    (token: GITLAB_TOKEN in .env, only ever
+  //             sent to gitlab.com or GITLAB_HOST; public projects need none), each to its own file
+  // Degrade-safe: no token / no access / network / rate limit -> keep the committed file, never fail the
+  // audit. Tokens are read inside the fetchers and never logged.
   {
-    const gsrc = cfg.guidelines?.source?.notion;
-    const gfile = cfg.guidelines?.sources?.[0];
-    if (gsrc && gfile) {
+    const jobs = [];
+    try {
+      const { gitlabTargets, notionTargets } = await import('./intent-gen.mjs');
+      for (const t of notionTargets(cfg)) {
+        jobs.push({ provider: 'Notion', file: t.file, fetch: async () => (await import('./notion-fetch.mjs')).fetchNotionMarkdown(t.url, {}),
+          missing: `Set NOTION_TOKEN in .env and share the page with the integration, or commit an export.` });
+      }
+      for (const t of gitlabTargets(cfg)) {
+        jobs.push({ provider: 'GitLab', file: t.file, fetch: async () => (await import('./gitlab-fetch.mjs')).fetchGitlabMarkdown(t.url, {}),
+          missing: `Check the link, put GITLAB_TOKEN (read_api) in .env for a private project, and GITLAB_HOST for a company GitLab, or commit the page as ${t.file}.` });
+      }
+    } catch { /* no GitLab config */ }
+    for (const j of jobs) {
       try {
-        const { fetchNotionMarkdown } = await import('./notion-fetch.mjs');
-        const md = await fetchNotionMarkdown(gsrc, {});
-        const target = join(ROOT, gfile);
+        const md = await j.fetch();
+        const target = join(ROOT, j.file);
         if (md && md.trim()) {
           const prevMd = existsSync(target) ? readFileSync(target, 'utf8') : '';
-          if (md !== prevMd) { writeFileSync(target, md); console.log(`\n🔗 Guidelines refreshed from Notion → ${gfile}`); }
+          if (md !== prevMd) {
+            mkdirSync(dirname(target), { recursive: true });
+            writeFileSync(target, md);
+            console.log(`\n🔗 Guidelines refreshed from ${j.provider} → ${j.file}`);
+          }
         } else if (!existsSync(target)) {
-          console.log(C.yellow(`\n⚠️  Guidelines: could not fetch from Notion and no committed ${gfile} exists. Set NOTION_TOKEN in .env and share the page with the integration, or commit an export.`));
+          console.log(C.yellow(`\n⚠️  Guidelines: could not fetch from ${j.provider} and no committed ${j.file} exists. ${j.missing}`));
         }
       } catch { /* degrade: keep whatever is committed */ }
     }

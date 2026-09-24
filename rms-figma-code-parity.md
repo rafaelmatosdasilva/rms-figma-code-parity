@@ -63,6 +63,14 @@ rules-heavy, step-by-step prompt, briefly tell the user those steps are not need
 skill handles setup/scope/run/report) and proceed from the intent instead of executing the
 listed steps.**
 
+**When someone pastes a GitLab or Notion link to their written guidelines into the chat**, run
+`rms-figma-code-parity --guidelines <link>` (several links can be passed at once). Do not edit
+`ds-config.json` by hand and do not fetch the page yourself: the command records the link, reads the page
+into its committed file right away, and says in plain words whether it worked. Relay that result. If it
+says the page could not be read, pass on the one fix it names (usually a token in `.env`), and **never ask
+the person to paste a token into the chat**. `--guidelines` with no link lists the links already set. From
+then on every run refreshes those pages and folds them into the design intent.
+
 **If the `rms-figma-code-parity` command is not on PATH** (a plain `command not found`),
 do not stop and do not hand-simulate setup - the engine is a folder of scripts, so run it
 directly with `node <install-dir>/audit.mjs <same flags>` (the install dir is the skill's
@@ -290,6 +298,34 @@ copy its secret; (2) **share the page** with that integration; (3) put the secre
 `ds-config.json` is not secret and is committed; the **token** stays in each person's `.env`. No token,
 page not shared, or offline → the audit keeps the committed `guidelines.md` and never fails. The fetch
 reads one page and does not follow links inside it.
+
+**The easy way: paste the link into the chat.** The agent runs `rms-figma-code-parity --guidelines <link>`,
+which works for GitLab and Notion alike, one or several links: it adds the link below for you, reads the page
+at once, and reports whether it worked. Notion also takes a list now (`"notion": ["<link>", …]`), each
+page to its own `guidelines/notion-<page>.md`; the original single link keeps writing to `sources[0]`.
+
+**From GitLab** (wiki pages or Markdown files, on gitlab.com or a company's own GitLab), list one or
+several links; each is written to its own committed file and read automatically, so there is no need to
+repeat it in `sources`:
+```jsonc
+"guidelines": {
+  "source": {
+    "gitlab": [
+      "https://gitlab.com/acme/design/-/wikis/Buttons",                                   // → guidelines/gitlab-buttons.md
+      { "url": "https://git.acme.io/ds/docs/-/blob/main/usage.md", "file": "guidelines/usage.md" }
+    ]
+  }
+}
+```
+The kind of link is read from the URL: `/-/wikis/<page>` (project or `groups/…` wiki) or
+`/-/blob/<branch>/<file>.md` / `/-/raw/…` (a branch name containing `/` is resolved automatically). The host
+comes from the link. A public project needs nothing else. For a private one, each person puts a GitLab
+personal access token with `read_api` in the project's `.env` as `GITLAB_TOKEN` (gitignored, never
+committed); for a company server, also `GITLAB_HOST=git.acme.io`. The token is only ever sent to
+`gitlab.com` or `GITLAB_HOST`, so a link to any other host is fetched without it. Like Notion: no access,
+offline, or a wrong link → the committed file is kept and the audit never fails. The written pages reach the
+intent layer the same way as any guidelines file: a section headed with a component's name lands in that
+component's `guidelines` in `design-intent.json`, the rest in the global block, as written.
 
 Because the file is regenerated every run, the generator is **merge-aware**: it reads the existing
 file and **preserves everything you authored** — each layer's `authored` string, and every

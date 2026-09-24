@@ -52,6 +52,9 @@
     "secret": "YOUR_WEBHOOK_SECRET"
   },
 
+  "_guidelines_note": "Optional. Written guidelines for the design intent. sources = committed md/json files. source.notion = one page link (NOTION_TOKEN in .env). source.gitlab = wiki page or Markdown file links, gitlab.com or your own GitLab (GITLAB_TOKEN with read_api in .env for private projects, GITLAB_HOST for a company server).",
+  "guidelines": { "sources": [], "source": { "gitlab": [] } },
+
   "knownUnusedVars": [],
   "knownHardcodedExceptions": [],
 
