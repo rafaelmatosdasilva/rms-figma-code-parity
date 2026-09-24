@@ -635,8 +635,20 @@ there, never a failure.
   drawn outside the element is measured against the parent's background.
 - **Target size (2.5.8)** — a control under 24×24 with another control inside its 24px circle. Links in
   running text, and inputs whose label is the target, are exempt.
-- **Keyboard walk** — a real Tab walk: a focus trap, and any positive `tabindex` (visits out of order).
+- **Keyboard walk** — a real Tab walk: a focus trap, any positive `tabindex` (visits out of order), and a
+  focused control completely covered by other content such as a sticky header (2.4.11; on real pages,
+  not on the styleguide, whose sticky header is its own chrome).
+- **Keyboard activation** — a control built from a plain element (`role="button"`, `checkbox`, `switch`,
+  `tab`, `link`…) that does nothing on Enter (and Space for buttons, checkboxes and switches). The click is
+  caught before the element's own handler, so the check never navigates or submits.
+- **Arrow keys** — a radio group, tab list, menu or list box whose items do not move with the arrow keys.
 - **Dialogs and Escape** — an open dialog that does not close on Escape.
+- **Zoom to 200% (1.4.4)** — text that becomes cut off when the page is shown at twice its size.
+- **Focus ring thickness (2.4.13, AAA, advisory)** — a focus ring thinner than 2 CSS pixels. The browser's
+  own ring is not counted.
+- **Figma accessibility annotations** — a note on the component that states a role (`Role: button`), a
+  name (`aria-label: Close`), a heading level (`Heading level 2`, `H2`) or alt text (`Alt: …`) is checked
+  against what the component renders. Other notes stay notes.
 - **Reduced motion (2.3.3)** — under `prefers-reduced-motion: reduce`, anything that still transitions or
   animates.
 - **Forced colours** — under `forced-colors: active` (Windows high contrast), a focus indicator that
@@ -663,6 +675,9 @@ there, never a failure.
   sets it to each mode it measures, so dark is really measured in dark.
 - **One element failing the same way in many places is one finding**, with the number of places and a few
   of its texts, and each element names the design-system component it sits in.
+- **axe-core** must match a pinned SHA-384 hash before it is ever injected into a page (from the CDN, or
+  from the npm registry's package when a CDN is blocked). With `a11yStrict`, its serious and critical
+  findings count toward failing the check.
 - **axe-core** is cached in `~/.cache/rms-figma-code-parity` after the first download (or `a11y.axePath`
   points at a local copy), runs the WCAG 2.0/2.1/2.2 A and AA rules explicitly, and is scoped to the
   checked components.
@@ -896,8 +911,9 @@ gate's own reason, and `Not run` in the summary. It never fails the run and is n
 says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PASS`.
 
 **Since the last run.** The report ends with what changed since the previous run with the same scope:
-findings that are new, findings that are gone, and findings whose count or value moved. The findings are
-kept in `.parity-out/last-findings.json`. A long report still says at a glance what this change did.
+findings that are new, findings that are gone, and findings whose count or value moved. Accessibility
+findings are compared element by element (the check also writes `.parity-out/a11y.json`). The findings
+are kept in `.parity-out/last-findings.json`. A long report still says at a glance what this change did.
 
 **Reading a finding.** A measured difference names the component and field, the Figma value, the
 rendered value and its token, the winning rule with its `file:line`, and what to write there

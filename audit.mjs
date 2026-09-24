@@ -2372,7 +2372,9 @@ function reportFull(label, items, shown) {
 
   // Accessibility gate (I18) args: forward the --component scope and --a11y verbosity so the
   // audit's a11y advisory covers the same components the user scoped the run to.
-  const a11yArgs = [...SCOPE_COMPONENTS.flatMap((c) => ['--component', c]), ...(process.argv.includes('--a11y') ? ['--a11y'] : [])];
+  const A11Y_JSON = join(ROOT, '.parity-out', 'a11y.json');
+  try { unlinkSync(A11Y_JSON); } catch { /* not there */ }
+  const a11yArgs = [...SCOPE_COMPONENTS.flatMap((c) => ['--component', c]), ...(process.argv.includes('--a11y') ? ['--a11y'] : []), '--json-out', A11Y_JSON];
 
   // Code capture: the code side read once per run (code-capture.mjs), the mirror of the Figma
   // capture. Cached by content, so an unchanged project reuses it at once. Gates that need facts
@@ -3438,6 +3440,11 @@ function reportFull(label, items, shown) {
     try { ledger = JSON.parse(readFileSync(ledgerPath, 'utf8')); } catch { /* first run */ }
     const scopeKey = _scopeNames.slice().sort().join(',') || '(all)';
     const now = collectFindings(_reportLines);
+    // Accessibility, element by element (the report shows counts): from the check's structured result.
+    try {
+      const a = JSON.parse(readFileSync(A11Y_JSON, 'utf8'));
+      for (const i of a.issues ?? []) now.push(`Accessibility :: ${i.issue} ${i.selector ?? ''}${i.theme ? ` (${i.theme})` : ''}${i.contrast != null ? ` ${i.contrast}:1` : ''}`);
+    } catch { /* no browser this run: nothing to add */ }
     const prev = ledger.scopes?.[scopeKey];
     if (!prev) console.log(C.dim(`\nℹ️  Since the last run: this is the first recorded run${_scopeNames.length ? ' for this scope' : ''}; the next one lists what is new, gone or changed.`));
     else {

@@ -98,3 +98,53 @@ test('the same element failing the same way in many places is one finding with a
   assert.match(a11yItemLine('contrast', g[0]), /"a", "b", "c".*in 4 places/);
   assert.equal(g[1].places, 1);
 });
+
+test('keyboard, zoom, focus hidden or thin, and Figma annotations', { skip: HAS_CHROME ? false : 'no Chrome available' }, () => {
+  const page = `<!doctype html><html><head><style>
+    body { font: 14px sans-serif; margin: 0; }
+    header { position: fixed; top: 0; left: 0; right: 0; height: 120px; background: #fff; z-index: 9; }
+    .under { position: absolute; top: 20px; left: 10px; }
+    main { margin-top: 140px; }
+    .zbox { width: 50vw; height: 18px; overflow: hidden; line-height: 18px; }
+    .thin:focus { outline: 1px solid #000; }
+    .fake, .good { display: inline-block; padding: 8px; }
+  </style></head><body>
+    <header>Sticky</header><button class="under">Under the header</button>
+    <main>
+      <div role="button" tabindex="0" class="fake">Fake</div>
+      <div role="button" tabindex="0" class="good" onkeydown="if (event.key === 'Enter' || event.key === ' ') this.click()">Good</div>
+      <div role="radiogroup" class="rg" aria-label="r"><div role="radio" tabindex="0" aria-checked="true">A</div><div role="radio" tabindex="-1" aria-checked="false">B</div></div>
+      <div class="zbox">A sentence long enough to fit on one line at full width but not at double zoom</div>
+      <button class="thin">Thin ring</button>
+      <div class="chip">Chip</div>
+    </main>
+  </body></html>`;
+  const dir = makeFixture({ 'page.html': page, 'figma-component-props.snapshot.json': { chip: { nodeId: '1:2', annotations: [{ label: 'Role: button' }] } }, 'ds-config.json': { componentSelectors: { chip: '.chip' } } });
+  let out = '';
+  try { out = execFileSync(process.execPath, [join(ENGINE, 'a11y-check.mjs'), '--url', pathToFileURL(join(dir, 'page.html')).href, '--json'], { cwd: dir, encoding: 'utf8', timeout: 120000, env: { ...process.env, CHROME_PATH: CHROME } }); }
+  catch (e) { out = e.stdout ?? ''; }
+  const d = JSON.parse(out.slice(out.indexOf('{')));
+  const kinds = (k) => d.issues.filter((i) => i.issue === k).map((i) => i.selector);
+  assert.ok(kinds('activate').includes('div.fake [role=button] (Enter)'), out);
+  assert.ok(!kinds('activate').some((x) => /good/.test(x)), out);            // handles the keys
+  assert.equal(kinds('arrows').length, 1, out);
+  assert.ok(kinds('obscured').some((s) => /under/.test(s)), out);
+  assert.ok(kinds('zoom').some((s) => /zbox/.test(s)), out);
+  assert.deepEqual(kinds('focusthin'), ['button'], out);                     // not the browser's own ring
+  assert.deepEqual(kinds('annotation'), ['chip: Figma says role "button", it renders as "generic"'], out);
+});
+
+test('annotations: role, name, heading level and alt text are read from the note; other notes stay notes', async () => {
+  const { annotationFacts, annotationMismatches, axeIntact, fileFromTgz } = await import('../a11y-check.mjs');
+  assert.deepEqual(annotationFacts([{ label: 'Role: button. aria-label: Close dialog' }]), { role: 'button', name: 'Close dialog' });
+  assert.deepEqual(annotationFacts([{ label: 'Heading level 2' }]), { level: 2, role: 'heading' });
+  assert.deepEqual(annotationFacts([{ label: 'Alt text: Sales chart' }]), { name: 'Sales chart', role: 'img' });
+  assert.deepEqual(annotationFacts([{ label: 'Icon can change depending on the feature' }]), {});
+  assert.deepEqual(annotationMismatches({ level: 2, role: 'heading' }, { role: 'heading', level: 3 }), ['Figma says heading level 2, it renders as level 3']);
+  // axe is only ever run when it matches the pinned hash.
+  assert.equal(axeIntact('axe.run = () => {}'), false);
+  const { gzipSync } = await import('node:zlib');
+  const header = Buffer.alloc(512); header.write('package/axe.min.js'); header.write('00000000005\0', 124);
+  const tgz = gzipSync(Buffer.concat([header, Buffer.from('hello'.padEnd(512, '\0')), Buffer.alloc(1024)]));
+  assert.equal(fileFromTgz(tgz, 'package/axe.min.js'), 'hello');
+});

@@ -59,6 +59,8 @@
 
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
+import { createHash } from 'crypto';
+import { gunzipSync } from 'zlib';
 import { join, resolve, dirname } from 'path';
 import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
@@ -215,6 +217,36 @@ export const A11Y_GUIDE = {
     title: (n) => `${plural(n, 'piece of text gets', 'pieces of text get')} cut off with wider text spacing`,
     why: 'People who need more space between letters, words and lines (a common reading aid) lose part of this text.',
     fix: 'Do not fix the height or hide the overflow of text boxes; let them grow with their text.',
+  },
+  activate: {
+    title: (n) => `${plural(n, 'control does', 'controls do')} nothing when Enter or Space is pressed`,
+    why: 'A control built from a plain element (a div with role="button") only responds to the mouse unless it also listens for the keys, so a keyboard user can reach it but not use it.',
+    fix: 'Use a real <button> (or <a href>), or handle Enter (and Space for buttons, checkboxes and switches) on the element.',
+  },
+  arrows: {
+    title: (n) => `${plural(n, 'group does', 'groups do')} not move with the arrow keys`,
+    why: 'In a radio group, tab list, menu or list box, keyboard users expect the arrow keys to move between the items; Tab moves out of the group.',
+    fix: 'Move focus to the next and previous item on the arrow keys (a roving tabindex), or use native radio buttons.',
+  },
+  zoom: {
+    title: (n) => `${plural(n, 'piece of text is', 'pieces of text are')} cut off at 200% zoom`,
+    why: 'People who zoom the page to twice its size need all the text to stay readable; here it is clipped.',
+    fix: 'Let the box grow with its text (no fixed height with overflow hidden), or allow the text to wrap.',
+  },
+  obscured: {
+    title: (n) => `${plural(n, 'control is', 'controls are')} hidden under other content when focused`,
+    why: 'When someone tabs to it, the control is completely covered (by a sticky header or a banner, for example), so they cannot see where they are.',
+    fix: 'Keep sticky content from covering focused controls: add scroll-padding for the sticky area, or move the content.',
+  },
+  focusthin: {
+    title: (n) => `${plural(n, 'focus ring is', 'focus rings are')} thinner than 2 pixels`,
+    why: 'A thin focus ring is easy to miss. The enhanced level of WCAG (AAA) asks for at least 2 CSS pixels.',
+    fix: 'Draw the focus ring at least 2px thick (outline-width: 2px).',
+  },
+  annotation: {
+    title: (n) => `${plural(n, 'component does', 'components do')} not render what its Figma accessibility note says`,
+    why: 'A Figma annotation on the component states its role, name, heading level or alt text; the rendered page says something else.',
+    fix: 'Render what the annotation says, or update the annotation in Figma if the design changed.',
   },
   reflow: {
     title: (n) => `${plural(n, 'page scrolls', 'pages scroll')} sideways on a narrow screen`,
@@ -395,7 +427,7 @@ function sweepExpression(roots, doFocus, stateMap) {
         bgImage: !!(cs.backgroundImage && cs.backgroundImage !== 'none'),
       });
     }
-    let noFocus = [], faintFocus = [], ariaState = [], notKeyboard = [];
+    let noFocus = [], faintFocus = [], thinFocus = [], ariaState = [], notKeyboard = [];
     if (${doFocus ? 'true' : 'false'}) {
       const STATE_MAP = ${JSON.stringify(stateMap || {})};
       const stateWords = Object.keys(STATE_MAP);
@@ -421,10 +453,13 @@ function sweepExpression(roots, doFocus, stateMap) {
             // Something changed — capture the focus-indicator colour + its background so Node can
             // check it is perceivable (WCAG 1.4.11, >= 3:1). A ring that "changes" but is nearly the
             // same colour as its background is still invisible to a keyboard user.
-            let ind = null, outside = false;
-            if (a.outlineStyle !== 'none' && parseFloat(a.outlineWidth) > 0) { ind = a.outlineColor; outside = parseFloat(a.outlineOffset || '0') >= 0; }
-            else if (a.boxShadow !== b.boxShadow && a.boxShadow !== 'none') { const m = a.boxShadow.match(/rgba?\\([^)]+\\)/); ind = m ? m[0] : null; outside = !/inset/.test(a.boxShadow); }
-            else if (a.borderColor !== b.borderColor) ind = a.borderColor;
+            let ind = null, outside = false, px = null;
+            if (a.outlineStyle !== 'none' && parseFloat(a.outlineWidth) > 0) { ind = a.outlineColor; outside = parseFloat(a.outlineOffset || '0') >= 0; px = parseFloat(a.outlineWidth); }
+            else if (a.boxShadow !== b.boxShadow && a.boxShadow !== 'none') { const m = a.boxShadow.match(/rgba?\\([^)]+\\)/); ind = m ? m[0] : null; outside = !/inset/.test(a.boxShadow); const lens = a.boxShadow.replace(/rgba?\\([^)]+\\)/g, '').match(/-?[\\d.]+px/g) || []; px = Math.max(parseFloat(lens[2] || '0'), parseFloat(lens[3] || '0')); }
+            else if (a.borderColor !== b.borderColor) { ind = a.borderColor; px = parseFloat(a.borderTopWidth); }
+            // WCAG 2.4.13 (AAA, advisory): a focus indicator at least 2 CSS pixels thick.
+            // The browser's own ring (outline-style: auto) is drawn by the browser, not by this width.
+            if (px != null && px < 2 && a.outlineStyle !== 'auto') thinFocus.push({ desc, px: Math.round(px * 10) / 10 });
             if (ind) {
               // A ring drawn outside the element sits on what surrounds it: measure against the parent.
               const layers = []; let node = outside && el.parentElement ? el.parentElement : el;
@@ -461,7 +496,7 @@ function sweepExpression(roots, doFocus, stateMap) {
         }
       }
     }
-    return { textEls, noFocus, faintFocus, ariaState, notKeyboard };
+    return { textEls, noFocus, faintFocus, thinFocus, ariaState, notKeyboard };
   })()`;
 }
 
@@ -478,6 +513,44 @@ export function contractSemantics(ROOT, cfg = {}) {
     const role = s.aria?.role ?? IMPLICIT_ROLE[String(s.element ?? '').toLowerCase()] ?? null;
     if (role) out[name] = String(role).toLowerCase();
   }
+  return out;
+}
+// Figma accessibility annotations as checkable facts. An annotation is free text; the facts it states
+// in a recognisable form are kept: role: button · aria-label: Close · heading level 2 (or H2) ·
+// alt: A red chart. Anything else stays a note for people.
+export function annotationFacts(annotations = []) {
+  const f = {};
+  for (const a of annotations ?? []) {
+    const t = String(a?.label ?? a?.labelMarkdown ?? '').replace(/[*_`]/g, '');
+    const role = t.match(/\brole\s*[:=]\s*["'“]?([a-z]+)/i);
+    if (role) f.role = role[1].toLowerCase();
+    const name = t.match(/\b(?:aria-label|accessible name|screen reader label)\s*[:=]\s*["'“]?([^"'”\n]+?)["'”]?\s*(?:$|\.\s)/i);
+    if (name) f.name = name[1].trim();
+    const heading = t.match(/\bheading(?:\s+level)?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? t.match(/\b[Hh]([1-6])\b/);
+    if (heading) { f.level = Number(heading[1]); f.role ??= 'heading'; }
+    const alt = t.match(/\balt(?:\s+text)?\s*[:=]\s*["'“]?([^"'”\n]+?)["'”]?\s*(?:$|\.\s)/i);
+    if (alt) { f.name ??= alt[1].trim(); f.role ??= 'img'; }
+  }
+  return f;
+}
+// { component: facts } from the component-props snapshot's annotations.
+export function annotationFactsFor(ROOT, cfg = {}) {
+  let snap = {};
+  try { snap = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.compPropsSnapshot ?? 'figma-component-props.snapshot.json'), 'utf8')); } catch { return {}; }
+  const out = {};
+  for (const [name, v] of Object.entries(snap)) {
+    if (name.startsWith('_') || !Array.isArray(v?.annotations)) continue;
+    const f = annotationFacts(v.annotations);
+    if (Object.keys(f).length) out[name] = f;
+  }
+  return out;
+}
+// What the rendered node says against the annotation's facts, as readable differences.
+export function annotationMismatches(f, got) {
+  const out = [];
+  if (f.role && got.role && !sameRole(got.role, f.role)) out.push(`Figma says role "${f.role}", it renders as "${got.role}"`);
+  if (f.name && String(got.name ?? '').trim().toLowerCase() !== f.name.toLowerCase()) out.push(`Figma says its name is "${f.name}", it is announced as "${got.name ?? ''}"`);
+  if (f.level && got.level != null && Number(got.level) !== f.level) out.push(`Figma says heading level ${f.level}, it renders as level ${got.level}`);
   return out;
 }
 // Chrome's accessibility tree names a few roles differently from ARIA.
@@ -512,6 +585,36 @@ export function deepSweepExpression(roots, what) {
         if (near) out.push({ desc: desc(el), size: Math.round(r.width) + '×' + Math.round(r.height) });
       });
       return out;
+    }
+    if (what === 'widgets') {
+      // Controls built from a non-native element (a div with role=button): each is marked so Node
+      // can focus it and press Enter or Space. Native controls handle the keys themselves.
+      const SEL = '[role=button],[role=link],[role=checkbox],[role=switch],[role=tab],[role=menuitem],[role=option],[role=radio]';
+      const NATIVE = 'button,a[href],input,select,textarea,summary';
+      return scope.filter(el => el.matches(SEL) && !el.matches(NATIVE) && vis(el) && el.getAttribute('aria-disabled') !== 'true').slice(0, 60)
+        .map((el, i) => { el.setAttribute('data-parity-kbd', String(i)); return { i, role: el.getAttribute('role'), desc: desc(el) }; });
+    }
+    if (what === 'composites') {
+      // ARIA composite widgets move focus between their items with the arrow keys (radio groups,
+      // tab lists, menus, list boxes). Native radio buttons do it themselves.
+      const ITEM = { radiogroup: '[role=radio]', tablist: '[role=tab]', menu: '[role=menuitem]', menubar: '[role=menuitem]', listbox: '[role=option]' };
+      return scope.filter(el => ITEM[el.getAttribute('role')] && vis(el)).slice(0, 30).map((el, i) => {
+        const items = [...el.querySelectorAll(ITEM[el.getAttribute('role')])].filter(x => vis(x) && !x.matches('input'));
+        if (items.length < 2) return null;
+        el.setAttribute('data-parity-group', String(i));
+        return { i, role: el.getAttribute('role'), desc: desc(el), items: items.length };
+      }).filter(Boolean);
+    }
+    if (what === 'obscured') {
+      // WCAG 2.4.11: the focused element must not be entirely hidden by other content (a sticky
+      // header, a banner). Its centre and four inner corners are all covered by something else.
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.top > innerHeight) return null;
+      const pts = [[r.left + r.width / 2, r.top + r.height / 2], [r.left + 1, r.top + 1], [r.right - 1, r.top + 1], [r.left + 1, r.bottom - 1], [r.right - 1, r.bottom - 1]];
+      const hidden = pts.every(([x, y]) => { const t = document.elementFromPoint(x, y); return t && t !== el && !el.contains(t) && !t.contains(el); });
+      return hidden ? desc(el) : null;
     }
     if (what === 'clipped') {
       const out = [];
@@ -555,21 +658,43 @@ export function deepSweepExpression(roots, what) {
 // contrast, target size, duplicate ids, ARIA validity, and more — mapped to plain findings.
 // Degrades to null on any failure (offline, blocked), so the core check is never affected.
 // The pinned version is kept in ~/.cache after the first download (or a11y.axePath points at a
-// local copy), so later runs are fast and work offline. A cached file that no longer looks like
-// axe-core is ignored and fetched again.
+// local copy), so later runs are fast and work offline. Every copy, downloaded or cached, must match
+// the pinned SHA-384 of axe.min.js: a file that does not is never injected into a page. Sources, in
+// order: the CDN, then the npm registry's package (where a CDN is blocked). a11y.axePath is the
+// project's own copy and is trusted as given.
 const AXE_VERSION = '4.10.2';
+export const AXE_SHA384 = '3NYxCdpLKVHfNs2FHPtg3qqaYuhq85m4mMnlHBlN0JzSpKYKct2PMGYfsKGaKIj4';
+export const axeIntact = (s) => typeof s === 'string' && createHash('sha384').update(s).digest('base64') === AXE_SHA384;
+// One file out of an npm .tgz (gzip + tar): enough tar to find a regular file by name.
+export function fileFromTgz(buf, wanted) {
+  const tar = gunzipSync(buf);
+  for (let off = 0; off + 512 <= tar.length;) {
+    const name = tar.subarray(off, off + 100).toString('utf8').replace(/\0.*$/s, '');
+    if (!name) break;
+    const size = parseInt(tar.subarray(off + 124, off + 136).toString('utf8').replace(/\0.*$/s, '').trim() || '0', 8);
+    if (name === wanted) return tar.subarray(off + 512, off + 512 + size).toString('utf8');
+    off += 512 + Math.ceil(size / 512) * 512;
+  }
+  return null;
+}
 async function fetchAxeSource(cfg = {}) {
   const looksLikeAxe = (s) => typeof s === 'string' && s.length > 100000 && s.includes('axe.run');
   if (cfg.a11y?.axePath) { try { const s = readFileSync(resolve(cfg.a11y.axePath), 'utf8'); if (looksLikeAxe(s)) return s; } catch { /* fall through */ } }
   const cacheDir = join(homedir(), '.cache', 'rms-figma-code-parity');
   const cached = join(cacheDir, `axe-${AXE_VERSION}.min.js`);
-  try { const s = readFileSync(cached, 'utf8'); if (looksLikeAxe(s)) return s; } catch { /* not cached yet */ }
-  try {
-    const r = await fetch(`https://cdnjs.cloudflare.com/ajax/libs/axe-core/${AXE_VERSION}/axe.min.js`, { signal: AbortSignal.timeout(15000) });
-    const s = r.ok ? await r.text() : null;
-    if (looksLikeAxe(s)) { try { mkdirSync(cacheDir, { recursive: true }); writeFileSync(cached, s); } catch { /* cache is optional */ } return s; }
-    return null;
-  } catch { return null; }
+  try { const s = readFileSync(cached, 'utf8'); if (axeIntact(s)) return s; } catch { /* not cached yet */ }
+  const sources = [
+    async () => { const r = await fetch(`https://cdnjs.cloudflare.com/ajax/libs/axe-core/${AXE_VERSION}/axe.min.js`, { signal: AbortSignal.timeout(15000) }); return r.ok ? r.text() : null; },
+    async () => { const r = await fetch(`https://registry.npmjs.org/axe-core/-/axe-core-${AXE_VERSION}.tgz`, { signal: AbortSignal.timeout(30000) }); return r.ok ? fileFromTgz(Buffer.from(await r.arrayBuffer()), 'package/axe.min.js') : null; },
+  ];
+  for (const get of sources) {
+    let s = null;
+    try { s = await get(); } catch { continue; }
+    if (!axeIntact(s)) continue;   // not the pinned file: never run it
+    try { mkdirSync(cacheDir, { recursive: true }); writeFileSync(cached, s); } catch { /* cache is optional */ }
+    return s;
+  }
+  return null;
 }
 // Runs the WCAG 2.0/2.1/2.2 A and AA rules explicitly (so target size and friends are always on),
 // scoped to the checked components when there are any.
@@ -593,6 +718,8 @@ async function main() {
   const argv = process.argv.slice(2);
   const VERBOSE = argv.includes('--a11y');
   const JSON_MODE = argv.includes('--json');   // structured output for an agent/CI that fixes the code
+  // --json-out <file>: the same structured result written to a file, beside the plain-language report.
+  const JSON_OUT = argv.includes('--json-out') ? argv[argv.indexOf('--json-out') + 1] : null;
   const components = argValues('--component', argv).concat(argValues('--components', argv));
   const cliUrls = argValues('--url', argv);   // check a live page directly (any project that serves it)
 
@@ -750,8 +877,8 @@ async function main() {
 
     // A real Tab key press first: script focus then counts as keyboard focus, so :focus-visible
     // styles show exactly as a keyboard user sees them.
-    const pressKey = async (key, code, keyCode) => {
-      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode }, sessionId);
+    const pressKey = async (key, code, keyCode, text) => {
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode, ...(text ? { text } : {}) }, sessionId);
       await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode }, sessionId);
     };
     try { await pressKey('Tab', 'Tab', 9); } catch { /* input domain unavailable: script focus only */ }
@@ -779,7 +906,8 @@ async function main() {
       await send('Emulation.setEmulatedMedia', { features: mode.sw.media }, sessionId);
       if (mode.sw.apply) await send('Runtime.evaluate', { expression: mode.sw.apply }, sessionId);
       const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, true, STATE_MAP), returnByValue: true }, sessionId);
-      const { textEls = [], noFocus = [], faintFocus = [], ariaState = [], notKeyboard = [] } = r.result.value || {};
+      const { textEls = [], noFocus = [], faintFocus = [], thinFocus = [], ariaState = [], notKeyboard = [] } = r.result.value || {};
+      for (const t of thinFocus) note('focusthin', t.desc, mode.name, { px: t.px });
       for (const f of contrastFindings(textEls, mode.name)) findings.push({ plugin: label, ...f });
       for (const desc of noFocus) note('focus', desc, mode.name);
       // Focus indicator visible? (WCAG 1.4.11 for the focus ring — computed in Node)
@@ -834,7 +962,15 @@ async function main() {
       for (const d of positive ?? []) findings.push({ kind: 'tabindex', plugin: label, desc: d });
       await evalv(`document.activeElement && document.activeElement.blur && document.activeElement.blur()`);
       const seq = [];
-      for (let i = 0; i < 60; i++) { await pressKey('Tab', 'Tab', 9); seq.push(await evalv(deepSweepExpression(null, 'active'))); }
+      const obscured = new Set();
+      for (let i = 0; i < 60; i++) {
+        await pressKey('Tab', 'Tab', 9);
+        seq.push(await evalv(deepSweepExpression(null, 'active')));
+        // On the styleguide a sticky header is the page's own chrome, not the design system's.
+        const ob = target.styleguide ? null : await evalv(deepSweepExpression(null, 'obscured'));
+        if (ob) obscured.add(ob);
+      }
+      for (const d of obscured) findings.push({ kind: 'obscured', plugin: label, desc: d });
       const distinct = new Set(seq.filter(Boolean));
       for (let i = 2; i < seq.length; i++) {
         if (seq[i] && seq[i] === seq[i - 1] && seq[i] === seq[i - 2] && distinct.size > 1) { findings.push({ kind: 'tabtrap', plugin: label, desc: seq[i].split('|').slice(1).join('|') }); break; }
@@ -873,6 +1009,14 @@ async function main() {
       await send('Emulation.clearDeviceMetricsOverride', {}, sessionId);
     });
     await step(async () => {
+      // WCAG 1.4.4: at 200% zoom (half the CSS width) no text newly cut off.
+      await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+      const before = new Set((await evalv(deepSweepExpression(roots, 'clipped'))) ?? []);
+      await send('Emulation.setDeviceMetricsOverride', { width: 640, height: 450, deviceScaleFactor: 2, mobile: false }, sessionId);
+      for (const d of (await evalv(deepSweepExpression(roots, 'clipped'))) ?? []) if (!before.has(d)) findings.push({ kind: 'zoom', plugin: label, desc: d });
+      await send('Emulation.clearDeviceMetricsOverride', {}, sessionId);
+    });
+    await step(async () => {
       // Rendered role against the contract's authored semantics (contract.authored.json).
       const want = contractSemantics(ROOT, cfg);
       if (!Object.keys(want).length) return;
@@ -886,6 +1030,54 @@ async function main() {
         const ax = await send('Accessibility.getPartialAXTree', { nodeId: q.nodeId, fetchRelatives: false }, sessionId);
         const got = String(ax?.nodes?.[0]?.role?.value ?? '').toLowerCase();
         if (got && !sameRole(got, role)) findings.push({ kind: 'semantics', plugin: label, desc: `${comp} (${selOf(comp)})`, got, want: role });
+      }
+    });
+    await step(async () => {
+      // Figma accessibility annotations as facts: the role, name, heading level or alt text a note
+      // states, against what the component renders.
+      const facts = annotationFactsFor(ROOT, cfg);
+      if (!Object.keys(facts).length) return;
+      await send('DOM.enable', {}, sessionId);
+      const doc = await send('DOM.getDocument', { depth: 0 }, sessionId);
+      for (const [comp, f] of Object.entries(facts)) {
+        if (components.length && !components.includes(comp)) continue;
+        let q;
+        try { q = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: selOf(comp) }, sessionId); } catch { continue; }
+        if (!q?.nodeId) continue;
+        const ax = (await send('Accessibility.getPartialAXTree', { nodeId: q.nodeId, fetchRelatives: false }, sessionId))?.nodes?.[0];
+        if (!ax) continue;
+        const role = String(ax.role?.value ?? '').toLowerCase(), name = String(ax.name?.value ?? '');
+        const level = ax.properties?.find((p) => p.name === 'level')?.value?.value;
+        for (const d of annotationMismatches(f, { role, name, level })) findings.push({ kind: 'annotation', plugin: label, desc: `${comp}: ${d}` });
+      }
+    });
+    await step(async () => {
+      // Composite widgets move with the arrow keys.
+      for (const g of (await evalv(deepSweepExpression(roots, 'composites'))) ?? []) {
+        const started = await evalv(`(() => { const g = document.querySelector('[data-parity-group="${g.i}"]'); if (!g) return false; const items = [...g.querySelectorAll('[role=radio],[role=tab],[role=menuitem],[role=option]')]; const s = items.find((x) => x.tabIndex >= 0) || items[0]; s.focus(); window.__parityStart = s; return document.activeElement === s; })()`);
+        if (!started) continue;
+        const vertical = ['menu', 'listbox'].includes(g.role);
+        await pressKey(vertical ? 'ArrowDown' : 'ArrowRight', vertical ? 'ArrowDown' : 'ArrowRight', vertical ? 40 : 39);
+        const moved = await evalv(`(() => { const g = document.querySelector('[data-parity-group="${g.i}"]'); return !!g && document.activeElement !== window.__parityStart && g.contains(document.activeElement); })()`);
+        if (!moved) findings.push({ kind: 'arrows', plugin: label, desc: `${g.desc} [role=${g.role}]` });
+      }
+    });
+    await step(async () => {
+      // Controls built from plain elements respond to Enter (and Space). Last, since it presses keys
+      // on the page: the click is caught before the element's own handler, so nothing navigates.
+      for (const w of (await evalv(deepSweepExpression(roots, 'widgets'))) ?? []) {
+        const keys = ['checkbox', 'switch', 'radio', 'option'].includes(w.role) ? [[' ', 'Space', 32, ' ']] : w.role === 'button' ? [['Enter', 'Enter', 13, '\r'], [' ', 'Space', 32, ' ']] : [['Enter', 'Enter', 13, '\r']];
+        for (const [key, code, kc, text] of keys) {
+          const armed = await evalv(`(() => { const el = document.querySelector('[data-parity-kbd="${w.i}"]'); if (!el) return false;
+            const aria = () => [...el.attributes].filter((a) => /^aria-(checked|pressed|selected|expanded)$/.test(a.name)).map((a) => a.name + '=' + a.value).join();
+            window.__parityHit = 0; window.__parityAria = aria; window.__parityWas = aria();
+            el.__parityOn = (e) => { window.__parityHit++; e.preventDefault(); e.stopImmediatePropagation(); };
+            el.addEventListener('click', el.__parityOn, true); el.focus(); return document.activeElement === el; })()`);
+          if (!armed) break;   // not focusable: the keyboard check already reports it
+          await pressKey(key, code, kc, text);
+          const hit = await evalv(`(() => { const el = document.querySelector('[data-parity-kbd="${w.i}"]'); if (!el) return true; el.removeEventListener('click', el.__parityOn, true); return window.__parityHit > 0 || window.__parityAria() !== window.__parityWas; })()`);
+          if (!hit) { findings.push({ kind: 'activate', plugin: label, desc: `${w.desc} [role=${w.role}] (${code})` }); break; }
+        }
       }
     });
 
@@ -908,23 +1100,27 @@ async function main() {
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'motion', 'forcedfocus', 'spacing', 'reflow', 'semantics'].map((k) => [k, findings.filter((f) => f.kind === k)]);
+  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'activate', 'arrows', 'obscured', 'zoom', 'motion', 'forcedfocus', 'focusthin', 'spacing', 'reflow', 'semantics', 'annotation'].map((k) => [k, findings.filter((f) => f.kind === k)]);
   const buckets = [['contrast', contrast], ['hovercontrast', hoverCon], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard], ...more].filter(([, l]) => l.length);
   const total = buckets.reduce((n, [, l]) => n + l.length, 0);
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';
 
   const axe = RUN_AXE ? summarizeAxe(axeViolations) : [];
+  // Must-pass (a11yStrict) also counts axe's serious and critical violations, not only this check's own.
+  const severeAxe = axe.filter((v) => v.impact === 'serious' || v.impact === 'critical').length;
 
   // ── Machine lane (--json): precise, parseable — for an agent/CI that fixes the code ──
+  const machine = () => ({
+    target: targets.map((t) => t.label),
+    usedStyleguide: !!sg,
+    themes, strict: STRICT, total, cannotMeasure: cannot.length,
+    issues: buckets.flatMap(([kind, list]) => list.map((f) => a11yFindingRecord(kind, f))),
+    ...(RUN_AXE ? { axe, severeAxe } : {}),
+  });
+  if (JSON_OUT) { try { mkdirSync(dirname(resolve(JSON_OUT)), { recursive: true }); writeFileSync(resolve(JSON_OUT), JSON.stringify(machine(), null, 2) + '\n'); } catch { /* the file is a convenience */ } }
   if (JSON_MODE) {
-    const issues = buckets.flatMap(([kind, list]) => list.map((f) => a11yFindingRecord(kind, f)));
-    console.log(JSON.stringify({
-      target: targets.map((t) => t.label),
-      usedStyleguide: !!sg,
-      themes, strict: STRICT, total, cannotMeasure: cannot.length, issues,
-      ...(RUN_AXE ? { axe } : {}),
-    }, null, 2));
-    process.exit(STRICT && total ? 1 : 0);
+    console.log(JSON.stringify(machine(), null, 2));
+    process.exit(STRICT && (total || severeAxe) ? 1 : 0);
   }
 
   // ── Human lane (default): plain language, no jargon ──
@@ -976,8 +1172,8 @@ async function main() {
     }
   }
 
-  if (STRICT && total) {
-    console.log(`\nThis check is set to must-pass, so the run stops here until these are fixed.`);
+  if (STRICT && (total || severeAxe)) {
+    console.log(`\nThis check is set to must-pass, so the run stops here until these are fixed${severeAxe ? ` (including ${severeAxe} serious or critical axe-core finding${severeAxe === 1 ? '' : 's'})` : ''}.`);
     process.exit(1);
   }
   process.exit(0);
