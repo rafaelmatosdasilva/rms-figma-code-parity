@@ -646,9 +646,34 @@ there, never a failure.
 - **Zoom to 200% (1.4.4)** — text that becomes cut off when the page is shown at twice its size.
 - **Focus ring thickness (2.4.13, AAA, advisory)** — a focus ring thinner than 2 CSS pixels. The browser's
   own ring is not counted.
-- **Figma accessibility annotations** — a note on the component that states a role (`Role: button`), a
-  name (`aria-label: Close`), a heading level (`Heading level 2`, `H2`) or alt text (`Alt: …`) is checked
-  against what the component renders. Other notes stay notes.
+- **Figma accessibility annotations** — a note that states a role, a name, a heading level or alt text is
+  checked against what the component renders (see *Writing accessibility notes in Figma* below). Other notes
+  stay notes.
+
+**Writing accessibility notes in Figma.** Use Figma's annotation tool on the component (the component set or
+a standalone component). A category such as "Accessibility" helps people find them; the skill reads the text.
+One fact per line, or per sentence ending in `. ` or `;`. Keywords in English or Portuguese; the value in any
+language.
+
+| Note | Checked against the rendered component |
+|---|---|
+| `Role: button` · `Papel: botão` | The role a screen reader announces. ARIA roles, or common words: botão, link, caixa de seleção, botão de opção, interruptor, aba, título, imagem, diálogo, campo de texto, campo de busca, menu, item de menu, lista, opção, controle deslizante, lista suspensa |
+| `Role: togglebutton` · `Papel: botão de alternância` | A button that also exposes `aria-pressed` |
+| `aria-label: Close dialog` · `Rótulo: Fechar diálogo` | The accessible name, ignoring case (also `Accessible name:`, `Screen reader label:`, `Nome acessível:`) |
+| `Heading level 2` · `H2` · `Título nível 2` | A heading, at that level |
+| `Alt: Sales chart` · `Texto alternativo: Gráfico de vendas` | An image whose text alternative is that text |
+
+Example of one note: `Papel: botão. Rótulo: Fechar diálogo`.
+
+- **On an inner layer.** A note on a layer inside the component's default variant (the first one) is checked on
+  the part the contract names the same way: `CONTRACT[component].children` with that `name` and a
+  `cssSelector`. A layer with no such part is listed as not checked, with what to add.
+- **No Gate [10g] entry needed.** A note the accessibility check can verify passes Gate [10g] on its own; only
+  prose notes still need `CONTRACT.annotations`.
+- **Where the notes come from.** The component-props snapshot, refreshed with `FIGMA_TOKEN` or the Plugin API
+  capture below (both record `annotations` on the component and `layerAnnotations` on its inner layers).
+- **A name that changes with content** ("3 items") is compared as written, so it is reported as a difference.
+  Describe such names in prose instead.
 - **Reduced motion (2.3.3)** — under `prefers-reduced-motion: reduce`, anything that still transitions or
   animates.
 - **Forced colours** — under `forced-colors: active` (Windows high contrast), a focus indicator that
@@ -2062,7 +2087,7 @@ Every Figma annotation attached to a component node is a design specification. T
 ### How it works
 
 1. **`audit.mjs` refresh** - `refreshComponentProps()` fetches `doc.annotations[]` alongside `componentPropertyDefinitions` for every component node. Nodes with either properties **or** annotations are included in the snapshot. (`/nodes` works on any plan with a token.)
-2. **Gate [10g] check** - for every component in the snapshot that has annotations, `structure-check.mjs` looks up `CONTRACT[key].annotations` and verifies each annotation label is present. Missing label → `FAIL`. If a CSS selector is provided, it must exist in the CSS - not found → `FAIL`.
+2. **Gate [10g] check** - for every component in the snapshot that has annotations, `structure-check.mjs` looks up `CONTRACT[key].annotations` and verifies each annotation label is present. Missing label → `FAIL`. If a CSS selector is provided, it must exist in the CSS - not found → `FAIL`. An accessibility note the accessibility check verifies (a role, name, heading level or alt text, see *Writing accessibility notes in Figma*) passes without an entry.
 3. **`anyFail`** - annotation failures count the same as property failures; the gate exits non-zero.
 
 ### Plugin API capture (no token, any plan)
@@ -2077,8 +2102,12 @@ for (const node of sets) {
   let props = {};
   try { props = node.componentPropertyDefinitions ?? {}; } catch { /* variant child - skip */ }
   const anns = node.annotations ?? [];
-  if (Object.keys(props).length || anns.length)
-    result[node.name] = { nodeId: node.id, properties: props, annotations: anns };
+  // Notes on inner layers of the default variant (the first one; a standalone component is its own).
+  const base = node.type === 'COMPONENT_SET' ? node.children[0] : node;
+  const layerAnnotations = (base.findAll?.((n) => (n.annotations ?? []).length > 0) ?? []).slice(0, 50)
+    .map((n) => ({ layer: n.name, nodeId: n.id, annotations: n.annotations }));
+  if (Object.keys(props).length || anns.length || layerAnnotations.length)
+    result[node.name] = { nodeId: node.id, properties: props, annotations: anns, ...(layerAnnotations.length ? { layerAnnotations } : {}) };
 }
 return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2);
 ```

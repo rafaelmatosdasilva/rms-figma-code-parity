@@ -395,6 +395,21 @@ async function analyseCollections() {
 // FIGMA_TOKEN is set. Queries /component_sets (names + nodeIds) then
 // /nodes?ids=... (componentPropertyDefinitions). Safe to skip: gate [3g]
 // falls back to reading an existing snapshot and warns if it's missing.
+// Notes on a component's inner layers ("this layer is the label"), from its default variant (the first
+// one; a standalone component is its own). [{ layer, nodeId, annotations }], at most 50.
+function layerAnnotationsOf(doc) {
+  const root = doc?.type === 'COMPONENT_SET' ? doc.children?.[0] : doc;
+  const out = [];
+  const walk = (n, depth) => {
+    for (const c of n?.children ?? []) {
+      if (out.length >= 50) return;
+      if (c.annotations?.length) out.push({ layer: c.name, nodeId: c.id, annotations: c.annotations });
+      if (depth < 8) walk(c, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return out;
+}
 async function refreshComponentProps(fileKey, token, outPath) {
   try {
     const h = { 'X-Figma-Token': token };
@@ -444,8 +459,9 @@ async function refreshComponentProps(fileKey, token, outPath) {
         const doc   = data?.document;
         const props = doc?.componentPropertyDefinitions ?? {};
         const anns  = doc?.annotations ?? [];
-        if (Object.keys(props).length || anns.length) {
-          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props, annotations: anns };
+        const layerAnns = layerAnnotationsOf(doc);
+        if (Object.keys(props).length || anns.length || layerAnns.length) {
+          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props, annotations: anns, ...(layerAnns.length ? { layerAnnotations: layerAnns } : {}) };
         }
       }
     }

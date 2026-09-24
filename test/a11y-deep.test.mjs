@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { makeFixture } from './helpers.mjs';
+import { makeFixture, runGate } from './helpers.mjs';
 import { contractSemantics, sameRole, A11Y_GUIDE, groupSame, a11yItemLine } from '../a11y-check.mjs';
 import { stateContrastFindings, tokenContrastFindings } from '../contrast-check.mjs';
 import { deriveContrastPairs } from '../pair-derive.mjs';
@@ -147,4 +147,50 @@ test('annotations: role, name, heading level and alt text are read from the note
   const header = Buffer.alloc(512); header.write('package/axe.min.js'); header.write('00000000005\0', 124);
   const tgz = gzipSync(Buffer.concat([header, Buffer.from('hello'.padEnd(512, '\0')), Buffer.alloc(1024)]));
   assert.equal(fileFromTgz(tgz, 'package/axe.min.js'), 'hello');
+});
+
+test('annotations in Portuguese, composite roles, notes on inner layers; verifiable notes need no Gate 10g entry', async () => {
+  const { annotationFacts, annotationMismatches, annotationFactsFor } = await import('../a11y-check.mjs');
+  assert.deepEqual(annotationFacts([{ label: 'Papel: botão. Rótulo: Fechar diálogo' }]), { role: 'button', name: 'Fechar diálogo' });
+  assert.deepEqual(annotationFacts([{ label: 'Título nível 2' }]), { level: 2, role: 'heading' });
+  assert.deepEqual(annotationFacts([{ label: 'Texto alternativo: Gráfico de vendas' }]), { name: 'Gráfico de vendas', role: 'img' });
+  assert.deepEqual(annotationFacts([{ label: 'role:togglebutton' }]), { role: 'button', pressed: true });
+  assert.deepEqual(annotationFacts([{ label: 'Papel: caixa de seleção' }]), { role: 'checkbox' });
+  assert.deepEqual(annotationMismatches({ role: 'button', pressed: true }, { role: 'button' }), ['Figma says it is a toggle button, it has no aria-pressed']);
+  assert.deepEqual(annotationMismatches({ role: 'button', pressed: true }, { role: 'button', pressed: 'false' }), []);
+  const dir = makeFixture({ 'figma-component-props.snapshot.json': { chip: { nodeId: '1:2', annotations: [{ label: 'O ícone muda conforme a funcionalidade' }], layerAnnotations: [{ layer: 'Label', annotations: [{ label: 'Rótulo: Remover filtro' }] }] } } });
+  assert.deepEqual(annotationFactsFor(dir), { chip: { facts: {}, layers: [{ layer: 'Label', facts: { name: 'Remover filtro' } }] } });
+});
+
+test('Gate 10g: a note the accessibility check verifies passes without a contract entry; prose still needs one', () => {
+  const r = runGate('structure-check.mjs', {
+    'ds-config.json': { paths: { themeCSS: 'theme.css', snapshotStructure: 's.json', pluginCSS: ['app.css'], compPropsSnapshot: 'props.json' } },
+    's.json': { components: { chip: {} } },
+    'app.css': '.chip {}',
+    'theme.css': ':root {}',
+    'structure-contract.mjs': "export const CONTRACT = { chip: {} };\nexport const COMPONENT_CSS_SELECTORS = { chip: { main: '.chip' } };\nexport const FIGMA_LAYOUT_TO_CSS = {};",
+    'props.json': { chip: { nodeId: '1:2', properties: {}, annotations: [{ label: 'Papel: botão' }, { label: 'Only on wide screens' }] } },
+  });
+  assert.match(r.out, /"Papel: botão" is checked by the accessibility check|1\/2 Figma annotation/, r.out);
+  assert.match(r.out, /annotation "Only on wide screens" not acknowledged/, r.out);
+});
+
+test('annotations in the browser: a toggle button without aria-pressed, and a note on an inner layer', { skip: HAS_CHROME ? false : 'no Chrome available' }, () => {
+  const page = `<!doctype html><html><body>
+    <button class="fav" aria-label="Favorito"><span class="lbl" aria-label="Salvar">★</span></button>
+  </body></html>`;
+  const dir = makeFixture({
+    'page.html': page,
+    'figma-component-props.snapshot.json': { fav: { nodeId: '1:2', annotations: [{ label: 'role:togglebutton' }], layerAnnotations: [{ layer: 'Icon', annotations: [{ label: 'Rótulo: Favoritar' }] }, { layer: 'Badge', annotations: [{ label: 'Role: status' }] }] } },
+    'structure-contract.mjs': "export const CONTRACT = { fav: { children: [{ name: 'Icon', cssSelector: '.fav .lbl' }] } };",
+    'ds-config.json': { componentSelectors: { fav: '.fav' } },
+  });
+  let out = '';
+  try { out = execFileSync(process.execPath, [join(ENGINE, 'a11y-check.mjs'), '--url', pathToFileURL(join(dir, 'page.html')).href, '--json'], { cwd: dir, encoding: 'utf8', timeout: 120000, env: { ...process.env, CHROME_PATH: CHROME } }); }
+  catch (e) { out = e.stdout ?? ''; }
+  const d = JSON.parse(out.slice(out.indexOf('{')));
+  const got = d.issues.filter((i) => i.issue === 'annotation').map((i) => i.selector);
+  assert.ok(got.includes('fav: Figma says it is a toggle button, it has no aria-pressed'), out);
+  assert.ok(got.some((x) => /^fav › Icon: Figma says its name is "Favoritar", it is announced as "Salvar"/.test(x)), out);
+  assert.ok(got.some((x) => /^fav › Badge: not checked, the contract has no part named "Badge"/.test(x)), out);
 });

@@ -516,32 +516,56 @@ export function contractSemantics(ROOT, cfg = {}) {
   return out;
 }
 // Figma accessibility annotations as checkable facts. An annotation is free text; the facts it states
-// in a recognisable form are kept: role: button · aria-label: Close · heading level 2 (or H2) ·
-// alt: A red chart. Anything else stays a note for people.
+// in a recognisable form are kept, in English or Portuguese, one per clause (a line, or a sentence
+// ending in ". " or ";"):
+//   role: button · papel: botão              the role a screen reader announces
+//   aria-label: Close · rótulo: Fechar        the accessible name (also "accessible name", "nome acessível")
+//   heading level 2 · H2 · título nível 2     a heading and its level
+//   alt: A red chart · texto alternativo: …   an image's text alternative
+// Composite roles from spec tooling are read as what they mean: togglebutton is a button with
+// aria-pressed, textinput a text box. Anything else stays a note for people.
+const ROLE_WORDS = {
+  'botão': 'button', 'botao': 'button', 'link': 'link', 'caixa de seleção': 'checkbox', 'caixa de selecao': 'checkbox', 'checkbox': 'checkbox',
+  'botão de opção': 'radio', 'botao de opcao': 'radio', 'rádio': 'radio', 'radio': 'radio', 'interruptor': 'switch', 'switch': 'switch', 'toggle': 'switch',
+  'aba': 'tab', 'guia': 'tab', 'lista de abas': 'tablist', 'título': 'heading', 'titulo': 'heading', 'imagem': 'img', 'image': 'img',
+  'diálogo': 'dialog', 'dialogo': 'dialog', 'caixa de diálogo': 'dialog', 'campo de texto': 'textbox', 'text field': 'textbox', 'textfield': 'textbox',
+  'textinput': 'textbox', 'text input': 'textbox', 'campo de busca': 'searchbox', 'searchinput': 'searchbox', 'search input': 'searchbox',
+  'menu': 'menu', 'item de menu': 'menuitem', 'lista': 'list', 'item de lista': 'listitem', 'opção': 'option', 'opcao': 'option',
+  'controle deslizante': 'slider', 'slider': 'slider', 'iconbutton': 'button', 'icon button': 'button', 'botão de ícone': 'button', 'botao de icone': 'button',
+  'lista suspensa': 'combobox', 'dropdown': 'combobox', 'select': 'combobox', 'alerta': 'alert', 'navegação': 'navigation', 'navegacao': 'navigation',
+};
+const PRESSED_ROLES = new Set(['togglebutton', 'toggle button', 'botão de alternância', 'botao de alternancia', 'botão alternável', 'botao alternavel']);
+export function roleOf(word) {
+  const w = String(word ?? '').trim().toLowerCase().replace(/["'“”]/g, '');
+  if (PRESSED_ROLES.has(w)) return { role: 'button', pressed: true };
+  return { role: ROLE_WORDS[w] ?? w };
+}
 export function annotationFacts(annotations = []) {
   const f = {};
-  for (const a of annotations ?? []) {
-    const t = String(a?.label ?? a?.labelMarkdown ?? '').replace(/[*_`]/g, '');
-    const role = t.match(/\brole\s*[:=]\s*["'“]?([a-z]+)/i);
-    if (role) f.role = role[1].toLowerCase();
-    const name = t.match(/\b(?:aria-label|accessible name|screen reader label)\s*[:=]\s*["'“]?([^"'”\n]+?)["'”]?\s*(?:$|\.\s)/i);
-    if (name) f.name = name[1].trim();
-    const heading = t.match(/\bheading(?:\s+level)?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? t.match(/\b[Hh]([1-6])\b/);
+  const clauses = (annotations ?? []).flatMap((a) => String(a?.label ?? a?.labelMarkdown ?? '').replace(/[*_`]/g, '').split(/\n|;|\.\s+/));
+  const value = (v) => v.trim().replace(/^["'“]|["'”.]$/g, '').trim();
+  for (const c of clauses) {
+    const kv = c.match(/^\s*([^:=]+?)\s*[:=]\s*(.+)$/);
+    const key = kv ? kv[1].trim().toLowerCase() : '';
+    if (/^(role|papel|função|funcao)$/.test(key)) { const r = roleOf(value(kv[2])); if (r.role) f.role = r.role; if (r.pressed) f.pressed = true; continue; }
+    if (/^(aria-label|accessible name|screen reader label|nome acessível|nome acessivel|rótulo|rotulo|rótulo do leitor de tela)$/.test(key)) { f.name = value(kv[2]); continue; }
+    if (/^(alt|alt text|texto alternativo)$/.test(key)) { f.name ??= value(kv[2]); f.role ??= 'img'; continue; }
+    const heading = c.match(/\b(?:heading|título|titulo|nível de título|nivel de titulo)(?:\s+(?:level|nível|nivel))?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? c.match(/(?:^|\s)[Hh]([1-6])\b/);
     if (heading) { f.level = Number(heading[1]); f.role ??= 'heading'; }
-    const alt = t.match(/\balt(?:\s+text)?\s*[:=]\s*["'“]?([^"'”\n]+?)["'”]?\s*(?:$|\.\s)/i);
-    if (alt) { f.name ??= alt[1].trim(); f.role ??= 'img'; }
   }
   return f;
 }
-// { component: facts } from the component-props snapshot's annotations.
+// From the component-props snapshot: { component: { facts, layers: [{ layer, facts }] } }. Facts on
+// the component node, and on its inner layers (layerAnnotations) when the capture recorded them.
 export function annotationFactsFor(ROOT, cfg = {}) {
   let snap = {};
   try { snap = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.compPropsSnapshot ?? 'figma-component-props.snapshot.json'), 'utf8')); } catch { return {}; }
   const out = {};
   for (const [name, v] of Object.entries(snap)) {
-    if (name.startsWith('_') || !Array.isArray(v?.annotations)) continue;
-    const f = annotationFacts(v.annotations);
-    if (Object.keys(f).length) out[name] = f;
+    if (name.startsWith('_') || !v || typeof v !== 'object') continue;
+    const facts = annotationFacts(v.annotations ?? []);
+    const layers = (v.layerAnnotations ?? []).map((l) => ({ layer: l.layer, facts: annotationFacts(l.annotations ?? []) })).filter((l) => Object.keys(l.facts).length);
+    if (Object.keys(facts).length || layers.length) out[name] = { facts, layers };
   }
   return out;
 }
@@ -549,6 +573,7 @@ export function annotationFactsFor(ROOT, cfg = {}) {
 export function annotationMismatches(f, got) {
   const out = [];
   if (f.role && got.role && !sameRole(got.role, f.role)) out.push(`Figma says role "${f.role}", it renders as "${got.role}"`);
+  if (f.pressed && got.pressed == null) out.push('Figma says it is a toggle button, it has no aria-pressed');
   if (f.name && String(got.name ?? '').trim().toLowerCase() !== f.name.toLowerCase()) out.push(`Figma says its name is "${f.name}", it is announced as "${got.name ?? ''}"`);
   if (f.level && got.level != null && Number(got.level) !== f.level) out.push(`Figma says heading level ${f.level}, it renders as level ${got.level}`);
   return out;
@@ -1034,21 +1059,35 @@ async function main() {
     });
     await step(async () => {
       // Figma accessibility annotations as facts: the role, name, heading level or alt text a note
-      // states, against what the component renders.
+      // states, against what the component (or the named inner part) renders.
       const facts = annotationFactsFor(ROOT, cfg);
       if (!Object.keys(facts).length) return;
+      let contract = {};
+      try { contract = (await import(pathToFileURL(resolve(ROOT, cfg.paths?.structureContract ?? 'structure-contract.mjs')).href)).CONTRACT ?? {}; } catch { /* parts are optional */ }
       await send('DOM.enable', {}, sessionId);
       const doc = await send('DOM.getDocument', { depth: 0 }, sessionId);
-      for (const [comp, f] of Object.entries(facts)) {
-        if (components.length && !components.includes(comp)) continue;
+      const axOf = async (selector) => {
         let q;
-        try { q = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: selOf(comp) }, sessionId); } catch { continue; }
-        if (!q?.nodeId) continue;
+        try { q = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selector }, sessionId); } catch { return null; }
+        if (!q?.nodeId) return null;
         const ax = (await send('Accessibility.getPartialAXTree', { nodeId: q.nodeId, fetchRelatives: false }, sessionId))?.nodes?.[0];
-        if (!ax) continue;
-        const role = String(ax.role?.value ?? '').toLowerCase(), name = String(ax.name?.value ?? '');
-        const level = ax.properties?.find((p) => p.name === 'level')?.value?.value;
-        for (const d of annotationMismatches(f, { role, name, level })) findings.push({ kind: 'annotation', plugin: label, desc: `${comp}: ${d}` });
+        if (!ax) return null;
+        const prop = (n) => ax.properties?.find((p) => p.name === n)?.value?.value;
+        return { role: String(ax.role?.value ?? '').toLowerCase(), name: String(ax.name?.value ?? ''), level: prop('level'), pressed: prop('pressed') };
+      };
+      for (const [comp, { facts: f, layers }] of Object.entries(facts)) {
+        if (components.length && !components.includes(comp)) continue;
+        if (Object.keys(f).length) {
+          const got = await axOf(selOf(comp));
+          if (got) for (const d of annotationMismatches(f, got)) findings.push({ kind: 'annotation', plugin: label, desc: `${comp}: ${d}` });
+        }
+        // A note on an inner layer is checked on the part the contract names the same way.
+        for (const { layer, facts: lf } of layers) {
+          const part = (contract[comp]?.children ?? []).find((c) => String(c.name ?? '').toLowerCase() === String(layer).toLowerCase());
+          if (!part?.cssSelector) { findings.push({ kind: 'annotation', plugin: label, desc: `${comp} › ${layer}: not checked, the contract has no part named "${layer}" (add it to children with its cssSelector)` }); continue; }
+          const got = await axOf(part.cssSelector);
+          if (got) for (const d of annotationMismatches(lf, got)) findings.push({ kind: 'annotation', plugin: label, desc: `${comp} › ${layer}: ${d}` });
+        }
       }
     });
     await step(async () => {

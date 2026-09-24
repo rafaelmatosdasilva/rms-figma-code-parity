@@ -1333,6 +1333,7 @@ for (const [comp, contract] of Object.entries(CONTRACT)) {
 // Every Figma annotation on a component set must be acknowledged in CONTRACT.annotations.
 // Acknowledged annotations with a CSS selector are verified to exist in the codebase.
 const CANN_PASS = [], CANN_FAIL = [], CANN_WARN = [];
+const { annotationFacts } = await import('./a11y-check.mjs');
 
 for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
   if (figmaName === '_updated' || !entry?.annotations?.length) continue;
@@ -1346,6 +1347,12 @@ for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
   const contractAnns = CONTRACT[contractKey]?.annotations ?? {};
   for (const ann of entry.annotations) {
     const annLabel = ann.label ?? ann.name ?? String(ann);
+    // An accessibility note the accessibility check reads as facts (role, name, heading level, alt
+    // text) is verified against the rendered page there; it needs no acknowledgement here.
+    if (!(annLabel in contractAnns) && Object.keys(annotationFacts([ann])).length) {
+      CANN_PASS.push(`${contractKey}: "${annLabel}" is checked by the accessibility check`);
+      continue;
+    }
     if (!(annLabel in contractAnns)) {
       CANN_FAIL.push(`${contractKey}: annotation "${annLabel}" not acknowledged in CONTRACT.annotations`);
       continue;
