@@ -48,3 +48,28 @@ test('components: padding of icon-only instances is not compared with a labelled
   assert.equal(r.differ.length, 0);
   assert.match(r.notComparable[0].why, /icon-only/);
 });
+
+test('icons: compared by viewBox and path data; missing and code-only icons counted', async () => {
+  const { compareIcons } = await import('../capture-compare.mjs');
+  const { pathHash } = await import('../icon-source.mjs');
+  const code = { icons: {
+    'icon-a': { viewBox: '0 0 16 16', paths: 1, pathHash: pathHash(['M1']), definedAt: ['a.html:3'] },
+    'icon-b': { viewBox: '0 0 24 24', paths: 1, pathHash: pathHash(['M2']), definedAt: ['a.html:4'] },
+    'icon-app': { viewBox: '0 0 16 16', paths: 1, pathHash: 'x' },
+  } };
+  const r = compareIcons(code, { _updated: 'x', 'icon-a': { viewBox: '0 0 16 16', paths: ['M1'] }, 'icon-b': { viewBox: '0 0 16 16', paths: ['M9'] }, 'icon-c': { viewBox: '0 0 16 16', paths: [] } });
+  assert.equal(r.match, 1);
+  assert.deepEqual(r.differ, [{ id: 'icon-b', what: 'viewBox Figma 0 0 16 16, code 0 0 24 24 · path data differs (Figma 1 path(s), code 1)', at: 'a.html:4' }]);
+  assert.deepEqual(r.missingInCode, ['icon-c']);
+  assert.equal(r.codeOnly, 1);
+});
+
+test('nesting: Figma sub-components against what the code nests', async () => {
+  const { compareNesting } = await import('../capture-compare.mjs');
+  const code = { nesting: { Card: { instancesSeen: 2, contains: { Badge: { renderedIn: ['app'] }, Avatar: { inSource: true } } } } };
+  const r = compareNesting(code, { Card: ['Badge', 'Button', 'Icon/Star'], Modal: ['Button'] });
+  assert.equal(r.match, 1);
+  assert.deepEqual(r.differ, [{ parent: 'Card', child: 'Button', figma: 'nests it', code: 'not inside any of 2 rendered instance(s)' }]);
+  assert.deepEqual(r.notComparable, [{ parent: 'Modal', why: 'not seen in the code' }]);
+  assert.deepEqual(r.codeOnly, [{ parent: 'Card', child: 'Avatar' }]);
+});

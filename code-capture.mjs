@@ -22,7 +22,7 @@
 // Config (all optional): ds-config.json → codeReading: { browser: "auto" | "off", pages: [paths or URLs],
 //                                                       out: ".parity-out/code.snapshot.json" }
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -30,9 +30,10 @@ import { allModes } from './mode-resolver.mjs';
 import { loadCssSources, rootTokens, resolveVars, canonValue } from './css-source.mjs';
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
 import { captureComponents, staticComponentReading } from './component-capture.mjs';
-import { createLocator } from './component-locator.mjs';
+import { createLocator, loadLocator } from './component-locator.mjs';
+import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles } from './structure-capture.mjs';
 
-export const CAPTURE_VERSION = 1;
+export const CAPTURE_VERSION = 2;
 const ENGINE_DIR = dirname(fileURLToPath(import.meta.url));
 
 // ── Inputs ────────────────────────────────────────────────────────────────────
@@ -49,19 +50,49 @@ export function captureInputs(ROOT, cfg) {
     const built = src ? src.replace(/\.src\.html$/, '.html') : `apps/${app}/ui.html`;
     pages.push({ label: app, path: built });
   });
-  const sg = cfg.styleguide?.out ?? 'apps/styleguide/index.html';
-  pages.push({ label: 'styleguide', path: sg });
+  // The styleguide shows every component and state on one page, so it is the capture's first place
+  // to measure. With a template configured, the capture builds its own private copy (never the
+  // project's page); a configured template that is missing is reported with the one found nearby.
+  const styleguide = styleguidePlan(ROOT, cfg);
+  if (!styleguide.generate) pages.push({ label: 'styleguide', path: cfg.styleguide?.out ?? 'apps/styleguide/index.html' });
   for (const p of cfg.codeReading?.pages ?? []) pages.push({ label: String(p), path: p });
   const present = pages.filter((p) => /^https?:\/\//.test(p.path) || existsSync(resolve(ROOT, p.path)));
-  return { themeEntries, pages: present };
+  if (styleguide.generate) present.push({ label: 'styleguide', path: styleguide.out, generated: true });
+  return { themeEntries, pages: present, styleguide };
+}
+
+// { generate, template, out, note } for the styleguide. `out` is the private copy in .parity-out.
+export function styleguidePlan(ROOT, cfg) {
+  const sg = cfg.styleguide;
+  const outDir = dirname(cfg.codeReading?.out ?? '.parity-out/code.snapshot.json');
+  if (!sg?.template) return { generate: false, note: sg ? null : 'no styleguide configured (ds-config.json → styleguide.template)' };
+  if (existsSync(resolve(ROOT, sg.template))) return { generate: true, template: sg.template, out: join(outDir, 'styleguide.html') };
+  const found = findTemplates(ROOT);
+  return { generate: false, template: sg.template, note: `styleguide template not found at ${sg.template}${found.length ? ` (found ${found.join(', ')}: set ds-config.json → styleguide.template)` : ''}` };
+}
+function findTemplates(ROOT) {
+  const out = [];
+  const walk = (dir, depth) => {
+    if (depth > 4 || out.length >= 5) return;
+    let entries = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || ['node_modules', 'dist', 'build', 'coverage'].includes(e.name)) continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (/\.template\.html?$/i.test(e.name)) out.push(relative(ROOT, p));
+    }
+  };
+  walk(ROOT, 0);
+  return out;
 }
 
 function hashInputs(ROOT, cfg, files, pages, opts) {
   const h = createHash('sha256');
-  h.update(`v${CAPTURE_VERSION}|${opts.browser ? 'browser' : 'static'}|${JSON.stringify(cfg.figma?.modes ?? null)}|${JSON.stringify(cfg.figma?.collections ?? null)}|${JSON.stringify(cfg.codeReading ?? null)}`);
-  for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
+  h.update(`v${CAPTURE_VERSION}|${JSON.stringify(cfg.figma?.modes ?? null)}|${JSON.stringify(cfg.figma?.collections ?? null)}|${JSON.stringify(cfg.codeReading ?? null)}`);
+  for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs', 'structure-capture.mjs', 'component-api.mjs', 'component-source.mjs', 'icon-source.mjs', 'markup-source.mjs', 'codeconnect-check.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
   for (const extra of opts.extraFiles ?? []) { try { h.update(extra); h.update(readFileSync(extra)); } catch { /* optional */ } }
-  for (const abs of [...files.map((f) => f.abs), ...pages.filter((p) => !/^https?:/.test(p.path)).map((p) => resolve(ROOT, p.path))].sort()) {
+  for (const abs of [...files.map((f) => f.abs), ...pages.filter((p) => !/^https?:/.test(p.path) && !p.generated).map((p) => resolve(ROOT, p.path))].sort()) {
     try { h.update(abs); h.update(readFileSync(abs)); } catch { /* vanished */ }
   }
   return h.digest('hex').slice(0, 16);
@@ -312,30 +343,84 @@ export function componentCoverage(specs, components, comp) {
   };
 }
 
+export const nestingLabel = (n) => n.rendered && n.source ? 'rendered page + source' : n.rendered ? 'rendered page only' : n.source ? 'source only' : 'not read';
+
+export function apiCoverage(api, note, sources) {
+  const all = Object.values(api);
+  const props = all.flatMap((a) => Object.values(a.props ?? {}));
+  const by = (c) => props.filter((p) => p.confidence === c).length;
+  return {
+    components: all.filter((a) => a.file || Object.keys(a.props ?? {}).length).length,
+    noFile: Object.entries(api).filter(([, a]) => !a.file && !Object.keys(a.props ?? {}).length).map(([n, a]) => `${n} (${a.how})`),
+    props: { total: props.length, verified: by('verified'), 'single-source': by('single-source'), uncertain: by('uncertain') },
+    sources: sources ?? [],
+    ...(note ? { note } : {}),
+  };
+}
+
 // ── Capture ───────────────────────────────────────────────────────────────────
-export async function captureCode(ROOT, cfg, { force = false, browser: wantBrowser = true, log = () => {} } = {}) {
+// Everything the capture reads, and the content hash of it (the cache key). Shared by captureCode
+// and readFreshSnapshot so both agree on what "unchanged" means.
+async function prepareCapture(ROOT, cfg) {
   const outPath = resolve(ROOT, cfg.codeReading?.out ?? '.parity-out/code.snapshot.json');
   const modes = allModes(cfg);
-  const { themeEntries, pages } = captureInputs(ROOT, cfg);
+  const { themeEntries, pages, styleguide } = captureInputs(ROOT, cfg);
   const { files, missing, remote } = loadCssSources(ROOT, themeEntries);
+  const locator = await loadLocator(ROOT, cfg);
+  let figmaStructure = {};
+  try { figmaStructure = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {}; } catch { /* optional */ }
+  const nodeIds = Object.fromEntries(Object.entries(figmaStructure).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
+  const apiReader = apiReaderFor(ROOT, cfg, { classFor: locator.classFor, nodeIds });
+  const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
+  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles });
+  return { outPath, modes, themeEntries, pages, styleguide, files, missing, remote, locator, apiReader, inputHash };
+}
+
+// The saved code snapshot, only when it still describes the code as it is now (same inputs, same
+// engine). Gates use it for facts only the capture has (the browser reading, rendered nesting);
+// a missing or stale snapshot returns null and the gate keeps its own reading.
+export async function readFreshSnapshot(ROOT, cfg) {
+  const outPath = resolve(ROOT, cfg.codeReading?.out ?? '.parity-out/code.snapshot.json');
+  if (!existsSync(outPath)) return null;
+  let prev;
+  try { prev = JSON.parse(readFileSync(outPath, 'utf8')); } catch { return null; }
+  try { return prev._inputHash === (await prepareCapture(ROOT, cfg)).inputHash ? prev : null; } catch { return null; }
+}
+
+export async function captureCode(ROOT, cfg, { force = false, browser: wantBrowser = true, log = () => {} } = {}) {
+  const { outPath, modes, pages: plannedPages, styleguide, files, missing, remote, locator, apiReader, inputHash } = await prepareCapture(ROOT, cfg);
+  let pages = plannedPages;
 
   const browserOff = !wantBrowser || cfg.codeReading?.browser === 'off';
   const chromePath = browserOff ? null : findChrome({ playwright: true });
   const canBrowse = !!chromePath && typeof WebSocket !== 'undefined';
   const browserNote = browserOff ? 'browser reading switched off' : !chromePath ? 'Chrome not found (set CHROME_PATH)' : typeof WebSocket === 'undefined' ? 'Node >= 22 required for the browser reading' : null;
 
-  const extraFiles = [cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p));
-  const inputHash = hashInputs(ROOT, cfg, files, pages, { browser: canBrowse, extraFiles });
   if (!force && existsSync(outPath)) {
     try {
       const prev = JSON.parse(readFileSync(outPath, 'utf8'));
-      if (prev._inputHash === inputHash) { log('code capture unchanged since last run (cache hit)'); return { snapshot: prev, outPath, cached: true }; }
+      // Reuse only a capture made the same way: a static-only capture is redone once a browser is available.
+      if (prev._inputHash === inputHash && !!prev._sources?.browser === canBrowse) { log('code capture unchanged since last run (cache hit)'); return { snapshot: prev, outPath, cached: true }; }
     } catch { /* recapture */ }
   }
 
+  // Build the private styleguide copy the capture measures (the browser reading only).
+  const sgNotes = [];
+  if (styleguide.generate) {
+    if (!canBrowse) pages = pages.filter((p) => !p.generated);
+    else {
+      try {
+        const { generateStyleguide } = await import('./styleguide-gen.mjs');
+        await generateStyleguide(ROOT, cfg, { out: styleguide.out });
+      } catch (e) {
+        pages = pages.filter((p) => !p.generated);
+        sgNotes.push(`styleguide not built: ${e.message.split('\n')[0]}`);
+      }
+    }
+  } else if (styleguide.note && cfg.styleguide) sgNotes.push(styleguide.note);
   const staticByMode = staticTokenReading(files, modes);
-  let browser = null, comp = null;
-  const notRead = [...missing.map((m) => `${m}: file not found`), ...remote.map((r) => `${r}: remote stylesheet (static reading skips it; the browser reads it)`)];
+  let browser = null, comp = null, nestingRendered = null;
+  const notRead = [...sgNotes, ...missing.map((m) => `${m}: file not found`), ...remote.map((r) => `${r}: remote stylesheet (static reading skips it; the browser reads it)`)];
   const specs = await componentSpecs(ROOT, cfg);
   // Static sources for component rules: the theme plus every app's own CSS (<style> blocks).
   const appSources = loadCssSources(ROOT, cfg.paths?.pluginCSS ?? []).files;
@@ -348,12 +433,13 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
       chrome = await launchChrome(chromePath, { tmpPrefix: 'code-capture-' });
       const cdp = await connectCDP(chrome.wsUrl);
       try {
-        browser = await browserTokenReading(ROOT, { files, pages, modes, send: cdp.send, tmpDir });
+        // A generated styleguide is a view of the DS (with its own mode toggle), not an app: its tokens are not app facts.
+        browser = await browserTokenReading(ROOT, { files, pages: pages.filter((p) => !p.generated), modes, send: cdp.send, tmpDir });
         notRead.push(...browser.notRead);
         // Components: the styleguide first (every component and state on one page), then the apps;
         // the theme-only page last, as a clean place for probes and bare elements.
         const ordered = [...pages].sort((a, b) => (b.label === 'styleguide') - (a.label === 'styleguide'));
-        const compPages = ordered.map((p) => ({ label: p.label, url: /^https?:/.test(p.path) ? p.path : pathToFileURL(resolve(ROOT, p.path)).href }));
+        const compPages = ordered.map((p) => ({ label: p.label, generated: !!p.generated, url: /^https?:/.test(p.path) ? p.path : pathToFileURL(resolve(ROOT, p.path)).href }));
         if (!compPages.length && files.length) {
           const tp = join(tmpDir, 'theme-page.html');
           if (existsSync(tp)) compPages.push({ label: '(theme)', url: pathToFileURL(tp).href });
@@ -365,6 +451,9 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
           staticRootVars: rootTokens(componentSources, modes[0]),
           openPage: (url) => openLoaded(cdp.send, url),
         });
+        const nest = await renderedNesting({ send: cdp.send, pages: compPages, specs, openLoaded });
+        nestingRendered = nest.rendered;
+        notRead.push(...nest.notRead);
       } finally { cdp.close(); }
     } catch (e) { notRead.push(`browser reading failed: ${e.message.split('\n')[0]}`); }
     finally { chrome?.kill(); }
@@ -373,6 +462,11 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
   const { tokens, appTokens, counts } = mergeTokenReadings({ staticByMode, browser, modes, browserNote: browser ? null : browserNote });
   const components = comp?.components ?? staticComponents(specs, componentSources, modes, browserNote);
   const compCoverage = componentCoverage(specs, components, comp);
+  const { api, note: apiNote, sources: apiSources } = captureApis(ROOT, specs, apiReader);
+  const icons = captureIcons(ROOT, cfg);
+  const markup = captureMarkup(ROOT, cfg);
+  const nesting = mergeNesting(nestingRendered ?? {}, sourceNesting(specs.filter((s) => !s.unbuilt), apiReader, locator.classFor));
+  if (!nestingRendered) notRead.push(`nesting from the rendered page not read${browserNote ? ` (${browserNote})` : ''}: source reading only`);
   const snapshot = {
     _captured: new Date().toISOString(),
     _captureVersion: CAPTURE_VERSION,
@@ -388,11 +482,20 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
       byConfidence: counts,
       appTokens: Object.keys(appTokens).length,
       components: compCoverage,
+      api: apiCoverage(api, apiNote, apiSources),
+      icons: { symbols: Object.keys(icons).length, unused: Object.values(icons).filter((i) => !i.usedAt.length).length },
+      markup: { apps: Object.keys(markup).filter((k) => !k.startsWith('_')).length, classesFrom: markup._classes.from },
+      nesting: { components: Object.keys(nesting).length, rendered: !!nestingRendered, source: !!apiReader },
+      styleguide: styleguide.generate && pages.some((p) => p.generated) ? { built: true, template: styleguide.template } : { built: false, ...(styleguide.note ? { note: styleguide.note } : {}) },
       notRead,
     },
     tokens,
     appTokens,
     components,
+    api,
+    icons,
+    markup,
+    nesting,
   };
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(snapshot, null, 2) + '\n');
@@ -419,6 +522,16 @@ export function captureSummary(snapshot, outPath, ROOT) {
     if (cc.states.listed) lines.push(`  states      ${cc.states.produced}/${cc.states.listed} produced and measured`);
     if (cc.missing.length) lines.push(`  not found   ${cc.missing.join(', ')}`);
   }
+  const ap = c.api;
+  if (ap?.note) lines.push(`  props       not read: ${ap.note}`);
+  else if (ap) {
+    lines.push(`  props       ${ap.props.total} prop(s) on ${ap.components} component(s)  ·  ${ap.props.verified} verified · ${ap.props['single-source']} single-source · ${ap.props.uncertain} uncertain`);
+    if (ap.sources.length) lines.push(`  read from   ${ap.sources.join(' · ')} · text patterns`);
+    if (ap.noFile.length) lines.push(`  no file     ${ap.noFile.slice(0, 8).join(', ')}${ap.noFile.length > 8 ? ` … +${ap.noFile.length - 8}` : ''}`);
+  }
+  if (c.icons) lines.push(`  icons       ${c.icons.symbols} symbol(s)${c.icons.unused ? `  ·  ${c.icons.unused} with no literal use` : ''}`);
+  if (c.markup) lines.push(`  markup      ${c.markup.apps} app(s) fingerprinted  ·  DS classes from ${c.markup.classesFrom === 'config' ? 'ds-config' : c.markup.classesFrom === 'snapshot' ? 'the saved markup snapshot' : 'nowhere (not set)'}`);
+  if (c.nesting) lines.push(`  nesting     ${c.nesting.components} component(s)  ·  ${nestingLabel(c.nesting)}`);
   lines.push(`  read by     ${snapshot._sources?.browser ? 'browser + static CSS' : 'static CSS only'}`);
   const unc = Object.entries(snapshot.tokens ?? {}).flatMap(([n, t]) => Object.entries(t.modes).filter(([, f]) => f.confidence === 'uncertain').map(([m, f]) => `${n} (${m}): browser ${f.readings.browser} · CSS ${f.readings.static}`));
   if (unc.length) {

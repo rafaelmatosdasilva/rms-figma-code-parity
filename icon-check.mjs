@@ -36,6 +36,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join }            from 'path';
+import { readSymbols, extractPathDs, iconUsage } from './icon-source.mjs';
 
 const ROOT = process.cwd();
 
@@ -147,24 +148,13 @@ function nodeIdFromDesc(desc) {
   return m ? m[1] : null;
 }
 
-// ── Extract <symbol id="...">...</symbol> blocks from HTML files ──────────────
-// Captures the full symbol body so we can check for transform attributes.
-const SYMBOL_BLOCK_RE = /<symbol\s([^>]*)>([\s\S]*?)<\/symbol>/g;
-const ID_RE           = /\bid="([^"]+)"/;
+// ── <symbol> blocks: read by icon-source.mjs (shared with the code capture) ────
 
 // ── Load figma-icons.snapshot.json (path comparison ground truth) ─────────────
 let iconSnap = {};
 const snapIconsPath = cfg.paths?.snapshotIcons;
 if (snapIconsPath && existsSync(join(ROOT, snapIconsPath))) {
   try { iconSnap = JSON.parse(readFileSync(join(ROOT, snapIconsPath), 'utf8')); } catch {}
-}
-
-function extractPathDs(body) {
-  const re = /\bd="([^"]+)"/g;
-  const ds = [];
-  let m;
-  while ((m = re.exec(body)) !== null) ds.push(m[1]);
-  return ds;
 }
 
 const documented       = [];
@@ -183,15 +173,10 @@ const decentralized    = [];
 const unsnapshotted    = [];
 const seenIds          = new Set();
 
-for (const srcPath of HTML_SOURCES) {
-  const text = readFileSync(join(ROOT, srcPath), 'utf8');
-  let m;
-  SYMBOL_BLOCK_RE.lastIndex = 0;
-  while ((m = SYMBOL_BLOCK_RE.exec(text)) !== null) {
-    const attrs = m[1], body = m[2];
-    const idMatch = ID_RE.exec(attrs);
-    if (!idMatch) continue;
-    const id  = idMatch[1];
+for (const sym of readSymbols(ROOT, HTML_SOURCES)) {
+  {
+    const srcPath = sym.file, attrs = sym.attrs, body = sym.body;
+    const id  = sym.id;
     const val = ALLOWED[id];
     seenIds.add(id);
 
@@ -343,20 +328,7 @@ const REF_SOURCES = [
   ...HTML_SOURCES,
   ...(cfg.iconCheck?.usageSources ?? []).filter(f => existsSync(join(ROOT, f))),
 ];
-let corpus = '';
-for (const f of REF_SOURCES) corpus += '\n' + readFileSync(join(ROOT, f), 'utf8');
-// Strip every <symbol …>…</symbol> so an icon's own definition never counts as use.
-const corpusNoDefs = corpus.replace(/<symbol\s[^>]*>[\s\S]*?<\/symbol>/g, ' ');
-
-// Does the project build icon ids dynamically? Only a concrete prefix counts -
-// '#icon-arrow-' + dir exempts the icon-arrow-* family. A bare '#' + variable is too
-// weak a signal to exempt anything: in practice its values come from a lookup whose
-// literal ids appear in source anyway, so they resolve as used without special-casing,
-// and treating bare-hash concat as "whole namespace dynamic" would mask every dead
-// icon (as it did for icon-scan/arrow-down/star).
-const dynamicPrefixes = [];
-for (const m of corpus.matchAll(/["'`]#(icon-[a-z0-9-]*-)["'`]?\s*\+/gi)) dynamicPrefixes.push(m[1]);
-for (const m of corpus.matchAll(/#(icon-[a-z0-9-]*-)\$\{/g))            dynamicPrefixes.push(m[1]);
+const { corpus, corpusNoDefs, dynamicPrefixes } = iconUsage(ROOT, REF_SOURCES);
 const couldBeDynamic = id => dynamicPrefixes.some(p => id.startsWith(p));
 
 const deadIcons = [], dynamicMaybe = [];

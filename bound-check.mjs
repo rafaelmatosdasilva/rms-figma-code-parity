@@ -15,6 +15,7 @@
 // Exit 2 = bound-tokens.json missing (gate did NOT run - never a pass).
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { declaredVarNames } from './css-source.mjs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
@@ -67,12 +68,8 @@ if (boundTokens.length === 0 && Array.isArray(cfg.frames) && cfg.frames.length >
 }
 
 // ── Collect all declared CSS vars ─────────────────────────────────────────────
-const declared = new Set();
-const sources = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-for (const f of sources) {
-  const txt = readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const m of txt.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);
-}
+// Every declared var in the theme and app CSS, plus stylesheets they @import (css-source.mjs).
+const declared = declaredVarNames(ROOT, [...THEME_PATHS, ...PLUGIN_CSS]);
 // Case-insensitive index + component-code usage. A bound token whose var is declared
 // under a different case, or is runtime-injected (its token CSS loaded from a backend
 // at run time, so absent from every static file) but USED in the component code, DOES

@@ -141,3 +141,9 @@ test('[styleguide bugfix] a MID-FILE orphan brace is dropped at its position, no
   assert.match(out, /\[data-color="light"\] \{/);
   assert.match(out, /\[data-color="dark"\] \{/);
 });
+
+test('styleguide: app usage labels are short initials, the name for one word, full names on a clash', async () => {
+  const { appLabels } = await import('../styleguide-gen.mjs');
+  assert.deepEqual(appLabels(['order-history', 'checkout', 'userSettings']), [['order-history', 'OH'], ['checkout', 'checkout'], ['userSettings', 'US']]);
+  assert.deepEqual(appLabels(['order-history', 'open-hub']), [['order-history', 'order-history'], ['open-hub', 'open-hub']]);
+});

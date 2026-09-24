@@ -14,6 +14,7 @@
 
 import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join }                                     from 'path';
+import { fingerprint as fingerprintWith, markupClassSet } from './markup-source.mjs';
 
 const ROOT   = process.cwd();
 const ACCEPT = process.argv.includes('--accept');
@@ -31,105 +32,23 @@ const absSnap    = join(ROOT, snapPath);
 const pluginCSS = cfg.paths?.pluginCSS ?? [];
 const plugins   = cfg.paths?.plugins   ?? [];
 
-// ── DS component class set ────────────────────────────────────────────────────
-// Only interactive elements with a recognised DS class are fingerprinted. Which
-// classes count is design-system specific, so set it per project in ds-config.json:
-//   "htmlStructureClasses": ["btn-primary", "badge", "swatch", ...]
-// The engine ships no default list (it must not assume any DS's class names). Without the
-// key, element ids and icon references are still fingerprinted; component classes are not.
-const DS_CLASSES = new Set(Array.isArray(cfg.htmlStructureClasses) ? cfg.htmlStructureClasses : []);
-if (!DS_CLASSES.size) console.log('ℹ️  [15] htmlStructureClasses not set in ds-config.json - DS component classes are not part of the fingerprint (ids and icon references still are).');
-
-// ── HTML parser ───────────────────────────────────────────────────────────────
-
-function stripScripts(html) {
-  return html.replace(/<script[\s\S]*?<\/script>/gi, '');
-}
-
-// Find the nearest ancestor id or class context for a <use> element.
-// We walk backwards from the match position looking for an id= or a DS class.
-function nearestContext(html, useIdx) {
-  // Walk back up to 600 chars to find the enclosing element with id= or DS class
-  const before = html.slice(Math.max(0, useIdx - 600), useIdx);
-  // Find the last opening tag before the <use>
-  const tags = [...before.matchAll(/<([a-z]+)([^>]*)>/gi)];
-  for (let i = tags.length - 1; i >= 0; i--) {
-    const attrs = tags[i][2];
-    const idM   = /\bid="([^"]+)"/.exec(attrs);
-    if (idM) return `#${idM[1]}`;
-    const clsM  = /\bclass="([^"]*)"/.exec(attrs);
-    if (clsM) {
-      const cls = clsM[1].split(/\s+/).find(c => DS_CLASSES.has(c));
-      if (cls) return `.${cls}`;
-    }
-  }
-  return '(root)';
-}
-
-function fingerprint(html) {
-  const static_html = stripScripts(html);
-
-  // All element IDs (exclude generated/empty)
-  const ids = [...static_html.matchAll(/\bid="([^"]+)"/g)]
-    .map(m => m[1])
-    .filter(id => id.trim());
-
-  // DS component classes on interactive elements
-  const components = [];
-  const tagRe = /<(button|div|span)[^>]*\bclass="([^"]*)"[^>]*>/gi;
-  let tm;
-  while ((tm = tagRe.exec(static_html)) !== null) {
-    const allClasses = tm[2].split(/\s+/);
-    const dsClasses  = allClasses.filter(c => DS_CLASSES.has(c));
-    if (!dsClasses.length) continue;
-
-    const attrs = tm[0];
-    const idM   = /\bid="([^"]+)"/.exec(attrs);
-    const id    = idM ? idM[1] : null;
-    components.push({ id, classes: dsClasses.sort() });
-  }
-
-  // <use href="#icon-X"> with context
-  const icons = [];
-  const useRe = /<use\s+href="#([^"]+)"/g;
-  let um;
-  while ((um = useRe.exec(static_html)) !== null) {
-    if (!um[1].startsWith('icon-')) continue;
-    const ctx = nearestContext(static_html, um.index);
-    icons.push({ context: ctx, icon: um[1] });
-  }
-
-  // Button inner structure - catches spurious text labels, extra spans, or missing icons.
-  // For each <button id="X"> with a static (non-template) ID, record:
-  //   svg   : whether the button directly contains <svg>
-  //   spans : class names on any <span> children (sorted)
-  //   text  : visible text content after stripping tags (trimmed)
-  // A change here (e.g. adding <span class="tab-label">Tree</span>) fails the gate.
-  const buttonContent = [];
-  const btnRe = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
-  let bm;
-  while ((bm = btnRe.exec(static_html)) !== null) {
-    const btnAttrs = bm[1];
-    const inner    = bm[2];
-    const idM      = /\bid="([^"]+)"/.exec(btnAttrs);
-    if (!idM) continue;
-    const btnId = idM[1];
-    if (/["'+${}]/.test(btnId)) continue; // skip JS-template IDs
-    const hasSvg = /<svg\b/i.test(inner);
-    const spans  = [...inner.matchAll(/<span\b[^>]*\bclass="([^"]*)"[^>]*>/gi)]
-      .map(m => m[1].trim()).sort();
-    const text   = inner.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-    buttonContent.push({ id: btnId, svg: hasSvg, spans, text });
-  }
-
-  return { ids, components, icons, buttonContent };
-}
-
 // ── Load existing snapshot ────────────────────────────────────────────────────
 let stored = {};
 if (existsSync(absSnap)) {
   try { stored = JSON.parse(readFileSync(absSnap, 'utf8')); } catch {}
 }
+
+// ── DS component class set ────────────────────────────────────────────────────
+// Only interactive elements with a recognised DS class are fingerprinted. Which classes count is
+// design-system specific: ds-config.json → htmlStructureClasses sets them. Without the key, the
+// classes the saved snapshot already fingerprints are used, so a project keeps its result with no
+// config edit. The engine ships no default list (it must not assume any DS's class names).
+const { classes: DS_CLASSES, from: CLASSES_FROM } = markupClassSet(cfg, stored);
+if (CLASSES_FROM === 'snapshot') console.log(`ℹ️  [15] DS component classes taken from the saved snapshot (${DS_CLASSES.size}). Set htmlStructureClasses in ds-config.json to choose them.`);
+else if (!DS_CLASSES.size) console.log('ℹ️  [15] htmlStructureClasses not set in ds-config.json - DS component classes are not part of the fingerprint (ids and icon references still are).');
+
+// The fingerprint itself lives in markup-source.mjs (shared with the code capture).
+const fingerprint = (html) => fingerprintWith(html, DS_CLASSES);
 
 // ── Compute current fingerprints ──────────────────────────────────────────────
 const current = {};

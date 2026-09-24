@@ -305,7 +305,9 @@ export async function captureComponents(ctx) {
       if (rule.origin === 'user-agent') return 'browser default';
       const h = sheets[rule.styleSheetId];
       const line = (h?.startLine ?? 0) + (rule.style?.range?.startLine ?? 0) + 1;
-      const src = h?.sourceURL ? decodeURIComponent(h.sourceURL.replace(/^file:\/\//, '')).split('/').slice(-2).join('/') : page.label;
+      // The generated styleguide carries a <base> pointing at the project's page, so its own <style>
+      // blocks are named after the page rather than the base folder.
+      const src = h?.isInline && page.generated ? page.label : h?.sourceURL ? decodeURIComponent(h.sourceURL.replace(/^file:\/\//, '')).split('/').slice(-2).join('/') : page.label;
       return `${src}:${line}`;
     };
     const trace = async (nodeId) => {

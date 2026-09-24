@@ -13,11 +13,13 @@
 //   'dark-media'           → @media (prefers-color-scheme: dark) { :root { } }
 //   'high-contrast-media'  → @media (prefers-contrast: more) { :root { } }
 //   'media:<condition>'    → @media <condition> { :root { } }       (e.g. 'media:(min-width: 768px)')
-//   'class:<name>'         → .<name> :root { }   (or :root.<name> { })
-//   'data:<attr>=<val>'    → [data-<attr>="<val>"] :root { }
+//   'class:<name>'         → :root.<name> { }   (the older .<name> :root { } is read too, but no browser applies it)
+//   'data:<attr>=<val>'    → :root[data-<attr>="<val>"] { }   (the older [data-…] :root { } likewise)
 //
 // The 2-mode light/dark case is a strict subset - resolution is byte-identical there. This
 // module is the ONE place that hardcodes nothing about a specific DS's modes or collections.
+
+import { rootTokens, blankComments } from './css-source.mjs';
 
 export function loadModes(cfg) {
   const modes = (cfg?.figma?.modes && cfg.figma.modes.length)
@@ -77,45 +79,24 @@ export function stripAtRules(s) {
   return out;
 }
 
-function overrideBlockFor(rawCss, cssSelector) {
-  if (!cssSelector || cssSelector === 'root') return {};
-  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  let inner = '';
-  if (cssSelector === 'dark-media')
-    inner = rawCss.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/)?.[1] ?? '';
-  else if (cssSelector === 'high-contrast-media')
-    inner = rawCss.match(/@media\s*\(prefers-contrast:\s*more\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/)?.[1] ?? '';
-  else if (cssSelector.startsWith('media:')) {
-    // Generic @media. Build the condition regex from the whitespace-stripped condition, allowing
-    // optional whitespace between every character, so 'media:(min-width: 768px)' matches
-    // `@media (min-width:768px)` and vice-versa. Mirrors the dark-media capture shape.
-    const condRe = cssSelector.slice(6).trim().replace(/\s+/g, '').split('').map(esc).join('\\s*');
-    inner = rawCss.match(new RegExp('@media\\s*' + condRe + '\\s*\\{[\\s\\S]*?:root\\s*\\{([\\s\\S]*?)\\}', 'i'))?.[1] ?? '';
-  } else if (cssSelector.startsWith('class:')) {
-    const c = esc(cssSelector.slice(6));
-    inner = rawCss.match(new RegExp(`\\.${c}\\s+:root\\s*\\{([\\s\\S]*?)\\}`))?.[1]
-         ?? rawCss.match(new RegExp(`:root\\.${c}\\s*\\{([\\s\\S]*?)\\}`))?.[1] ?? '';
-  } else if (cssSelector.startsWith('data:')) {
-    const [attr, val] = cssSelector.slice(5).split('=');
-    // Accept the attribute with or without a `data-` prefix (so `data:theme=dark` matches
-    // `[data-theme="dark"]` or `[theme="dark"]`), consistent with parity-check.mjs's parser.
-    const A = `(?:data-)?${esc(attr)}`;
-    inner = rawCss.match(new RegExp(`\\[${A}="?${esc(val ?? '')}"?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}`))?.[1]
-         ?? rawCss.match(new RegExp(`:root\\[${A}="?${esc(val ?? '')}"?\\]\\s*\\{([\\s\\S]*?)\\}`))?.[1] ?? '';
-  }
-  return parseVarBlock(inner);
-}
-
 // buildResolver(rawCss, MODES, { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE })
 //   → { resolve(varName, modeKey) → hex|null,
 //       resolveRaw(varName, modeKey) → literal|null,   // hex OR scalar ('8px') OR string ('Inter')
 //       rootVars, modeBlocks }
 // A var resolves in a mode via that mode's override block, falling back to :root (CSS cascade).
 // Neutral primitives resolve through NEUTRAL_MAPS[modeKey] (N-mode) or the legacy NL/ND (2-mode).
+//
+// The CSS is read by css-source.mjs, the reader the code capture uses: every :root block (not only
+// the first), each mode resolved by the real cascade (importance, specificity, source order). Pass
+// the theme as text, or as [{ file, text }] sources (loadCssSources) so local @import is followed.
+// rootVars = every token's declared value in the base; modeBlocks[key] = every token's declared value
+// in that mode (the base where the mode does not override it, as the browser does).
 export function buildResolver(rawCss, MODES, prims = {}) {
   const { NL = {}, ND = {}, NEUTRAL_MAPS = null, NEUTRAL_VAR_RE = /^--neutral-(\d+)$/ } = prims;
-  const rootVars = parseVarBlock(stripAtRules(rawCss).match(/:root\s*{([\s\S]*?)}/)?.[1] ?? '');
-  const modeBlocks = Object.fromEntries(MODES.map(m => [m.snapshotKey, overrideBlockFor(rawCss, m.cssSelector)]));
+  const sources = Array.isArray(rawCss) ? rawCss.map((s) => ({ file: s.file ?? '', text: blankComments(s.text ?? '') })) : [{ file: '', text: blankComments(String(rawCss ?? '')) }];
+  const asObject = (m) => Object.fromEntries([...m].map(([k, v]) => [k, v.value]));
+  const rootVars = asObject(rootTokens(sources, { cssSelector: 'root' }));
+  const modeBlocks = Object.fromEntries(MODES.map(m => [m.snapshotKey, asObject(rootTokens(sources, m))]));
   // NEUTRAL_MAPS may be an array (by mode index) or an object keyed by mode NAME (as
   // parity-map.mjs writes it) or by snapshotKey. Resolve it to snapshotKey → map so the
   // lookup below (which only knows the snapshotKey) works for every form; fall back to the

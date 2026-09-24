@@ -68,10 +68,42 @@ export function loadCssSources(ROOT, entries, { exists = existsSync, read = (p) 
   return { files, missing, remote };
 }
 
+// Every custom property declared anywhere in these files (any selector, inline styles too), plus in
+// the stylesheets they @import. The gates' "is this variable declared" question. <script> blocks in
+// HTML are skipped when stripScripts is set (JS object literals are not declarations).
+export function declaredVarNames(ROOT, paths, { stripScripts = false } = {}) {
+  const names = new Set();
+  const scan = (text) => { for (const m of blankComments(text).matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) names.add('--' + m[1]); };
+  const own = new Set();
+  for (const p of paths) {
+    const abs = resolve(ROOT, p);
+    if (!existsSync(abs)) continue;
+    own.add(abs);
+    let src = readFileSync(abs, 'utf8');
+    if (stripScripts && /\.html?$/i.test(p)) src = src.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+    scan(src);
+  }
+  for (const f of loadCssSources(ROOT, paths).files) if (!own.has(f.abs)) scan(f.text);
+  return names;
+}
+
 // Parse one (comment-blanked) stylesheet into style rules.
 // Each rule: { selectors: [..], decls: [{ prop, value, important, line }], atRules: [..], file, line }.
 // Handles nesting (`&` and bare nested selectors), strings, and `;` inside parentheses (data URIs).
+// Parsed once per (file, text): the capture reads the same sheets for every component. Callers
+// treat the returned rules as read-only.
+const WALK_CACHE = new Map();
 export function walkCss(text, file = '') {
+  const key = file + '\u0000' + text;
+  let rules = WALK_CACHE.get(key);
+  if (!rules) {
+    rules = walkCssOnce(text, file);
+    if (WALK_CACHE.size >= 64) WALK_CACHE.delete(WALK_CACHE.keys().next().value);
+    WALK_CACHE.set(key, rules);
+  }
+  return rules;
+}
+function walkCssOnce(text, file) {
   const rules = [];
   const stack = [];              // frames: { kind: 'at'|'style', prelude, rule?, own: [[a,b]], cursor }
   let segStart = 0;              // start of the current prelude / declaration
@@ -164,16 +196,41 @@ function matchesRoot(selector, mode) {
   const s = selector.replace(/\s+/g, ' ').trim();
   if (s === ':root' || s === 'html') return true;
   const sel = mode?.cssSelector ?? 'root';
+  // ".c :root" and "[data-x] :root" are accepted as the engine's documented mode forms, although a
+  // browser never applies them (:root has no ancestor). The browser reading then disagrees and the
+  // capture marks those tokens uncertain, which is the honest signal.
   if (sel.startsWith('class:')) {
     const c = sel.slice(6);
-    return [`:root.${c}`, `html.${c}`, `.${c}`].includes(s);
+    return [`:root.${c}`, `html.${c}`, `.${c}`, `.${c} :root`].includes(s);
   }
   if (sel.startsWith('data:')) {
     const [attr, val = ''] = sel.slice(5).split('=');
-    const a = attr.startsWith('data-') ? attr : `data-${attr}`;
-    return [`[${a}="${val}"]`, `[${a}='${val}']`, `[${a}=${val}]`].some((f) => [f, `:root${f}`, `html${f}`].includes(s));
+    const unq = val.replace(/^['"]|['"]$/g, '');
+    const forms = [...new Set([attr.startsWith('data-') ? attr : `data-${attr}`, attr])].flatMap((a) => [`[${a}="${unq}"]`, `[${a}='${unq}']`, `[${a}=${unq}]`]);
+    return forms.some((f) => [f, `:root${f}`, `html${f}`, `${f} :root`].includes(s));
   }
   return false;
+}
+
+// Rules that declare tokens on ":root" written under an ancestor (".dark :root", "[data-theme] :root",
+// "html > :root"). A browser never applies them: the root element has no ancestor. Returns
+// [{ selector, file, line, suggest }] where suggest is the form that does apply.
+export function neverAppliedRootSelectors(sources) {
+  const out = [];
+  for (const { file, text } of sources) {
+    for (const rule of walkCss(text, file)) {
+      if (!rule.decls.some((d) => d.prop.startsWith('--'))) continue;
+      for (const sel of rule.selectors) {
+        const s = sel.replace(/\s+/g, ' ').trim();
+        const m = s.match(/^(.+?)\s*(?:>|\s)\s*:root$/);
+        if (!m || /[,]/.test(m[1])) continue;
+        const anc = m[1].trim();
+        const suggest = /^(html|:root)$/.test(anc) ? null : /^[.[]/.test(anc) ? `:root${anc}` : null;
+        out.push({ selector: s, file, line: rule.line, suggest });
+      }
+    }
+  }
+  return out;
 }
 
 // Specificity [ids, classes/attributes/pseudo-classes, elements] of a simple root selector.
