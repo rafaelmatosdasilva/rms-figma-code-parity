@@ -137,7 +137,20 @@ const READ_ROOT_VARS = `(() => {
 })()`;
 
 // How to put a page into a mode. Returns { media, viewport, apply, undo } or { unsupported }.
-export function modeSwitch(mode) {
+// The generated styleguide pins its own mode on <html data-color="…"> (its manual toggle), which
+// turns the media-query theme off: there the switch also sets that attribute to the light or dark
+// the mode stands for, or the page would be measured in light for every mode.
+export function modeSwitch(mode, { styleguide = false } = {}) {
+  const sw = modeSwitchFor(mode);
+  if (!styleguide || sw.unsupported) return sw;
+  const scheme = sw.media?.find((f) => f.name === 'prefers-color-scheme')?.value;
+  if (!scheme) return sw;
+  const set = `(() => { const r = document.documentElement; if (!r.hasAttribute('data-color')) return; if (!r.hasAttribute('data-parity-color-was')) r.setAttribute('data-parity-color-was', r.getAttribute('data-color')); r.setAttribute('data-color', ${JSON.stringify(scheme)}); })()`;
+  const reset = `(() => { const r = document.documentElement; if (!r.hasAttribute('data-parity-color-was')) return; r.setAttribute('data-color', r.getAttribute('data-parity-color-was')); r.removeAttribute('data-parity-color-was'); })()`;
+  return { ...sw, apply: sw.apply ? `${sw.apply}; ${set}` : set, undo: sw.undo ? `${sw.undo}; ${reset}` : reset };
+}
+
+function modeSwitchFor(mode) {
   const sel = mode.cssSelector ?? 'root';
   const base = [{ name: 'prefers-color-scheme', value: 'light' }, { name: 'prefers-contrast', value: 'no-preference' }];
   if (sel === 'root') return { media: base };

@@ -206,8 +206,30 @@ function measureExpression(selector) {
     const cs = getComputedStyle(el), r = el.getBoundingClientRect(), b = getComputedStyle(el, '::before');
     const pick = (s, keys) => Object.fromEntries(keys.map((k) => [k, s[k]]));
     const before = b.content && b.content !== 'none' ? pick(b, ['backgroundColor', 'borderTopLeftRadius', 'top', 'right', 'bottom', 'left', 'borderTopWidth', 'borderTopColor']) : null;
-    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before };
+    // What shows through a see-through background: the backgrounds behind it, nearest first, up to
+    // the first solid one (the page canvas when none is).
+    const behind = [];
+    for (let p = el.parentElement; p && behind.length < 20; p = p.parentElement) {
+      const c = getComputedStyle(p).backgroundColor;
+      const flat = c.replace(/ /g, '');
+      if (!c || c === 'transparent' || flat.endsWith(',0)') || flat.endsWith('/0)')) continue;
+      behind.push(c);
+      if (!c.startsWith('rgba') && !c.includes('/')) break;
+    }
+    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before, behind };
   })()`;
+}
+
+// The colour behind an element: its ancestors' backgrounds blended from the first solid one (or a
+// white canvas) forward. Returned only as an rgb() string the contrast checks can read.
+export function backdropOf(layers = []) {
+  let acc = [255, 255, 255];
+  for (const c of [...(layers ?? [])].reverse()) {
+    const p = parseColor(c);
+    if (!p) continue;
+    acc = acc.map((v, i) => p[i] * p[3] + v * (1 - p[3]));
+  }
+  return layers?.length ? `rgb(${acc.map((v) => Math.round(v)).join(', ')})` : null;
 }
 
 // ── Static reading of a component's own base rule ───────────────────────────────
@@ -338,7 +360,7 @@ export async function captureComponents(ctx) {
     const measureAll = async (sel) => {
       const perMode = {};
       for (const mode of modes) {
-        const sw = modeSwitch(mode);
+        const sw = modeSwitch(mode, { styleguide: !!page.generated });
         if (sw.unsupported) continue;
         await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
         if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
@@ -412,6 +434,8 @@ export async function captureComponents(ctx) {
       if (!mv) continue;
       out[mk] = Object.fromEntries([...COLOR_PROPS].map((k) => [k, mv.cs[k]]));
       if (mv.before) out[mk].beforeBackground = mv.before.backgroundColor;
+      const bd = backdropOf(mv.behind);
+      if (bd) out[mk].backdrop = bd;
     }
     return out;
   };

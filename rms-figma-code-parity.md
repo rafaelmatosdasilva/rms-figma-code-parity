@@ -649,14 +649,20 @@ there, never a failure.
   not meant to reflow).
 - **State contrast, no browser needed** — from the code capture: each component's text against its own
   background in every mode and every state the capture produced (hover, selected, error…). Disabled states
-  are exempt. Each finding names the two colour tokens, the rule's file and line, and links the
-  component in Figma. Printed with the token contrast in the audit.
+  are exempt. A see-through background (a tint made with opacity or `color-mix()`) is blended over what
+  the capture saw behind it. Each finding names the two colour tokens, the rule's file and line, and
+  links the component in Figma. Printed with the token contrast in the audit.
 - **Token contrast** — see-through text is blended over its background; a see-through background (no
   known surface under it) is skipped; disabled pairs are exempt; pairs come from every mode's token names.
+  A text token with the same colour as its background token is reported as not comparable: the component
+  applies that background as a tint, which only the rendered state contrast can measure.
   Border, outline and focus-ring tokens are paired at 3:1 with `a11y.nonTextPairs: true` (opt-in: a border is
   often decorative); dividers never are.
 - **On the styleguide, only the design system's components are checked** (their selectors), not the page's
-  own navigation and notes.
+  own navigation and notes. The styleguide pins its own `data-color` mode; the check (and the code capture)
+  sets it to each mode it measures, so dark is really measured in dark.
+- **One element failing the same way in many places is one finding**, with the number of places and a few
+  of its texts, and each element names the design-system component it sits in.
 - **axe-core** is cached in `~/.cache/rms-figma-code-parity` after the first download (or `a11y.axePath`
   points at a local copy), runs the WCAG 2.0/2.1/2.2 A and AA rules explicitly, and is scoped to the
   checked components.
@@ -882,6 +888,10 @@ sweep finishes with a representative sample, logging `walk capped at N nodes`. N
 are far under the cap and are collected in full.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
+
+**A gate that could not run** (its snapshot or input is missing, exit 2) shows `⏭ not verified` with the
+gate's own reason, and `Not run` in the summary. It never fails the run and is never a pass: the verdict
+says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PASS`.
 
 **Since the last run.** The report ends with what changed since the previous run with the same scope:
 findings that are new, findings that are gone, and findings whose count or value moved. The findings are

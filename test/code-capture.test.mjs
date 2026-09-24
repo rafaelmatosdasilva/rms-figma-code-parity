@@ -66,6 +66,18 @@ test('modeSwitch: every mode kind maps to a browser switch, and an unknown condi
   assert.ok(modeSwitch({ cssSelector: 'media:(orientation: portrait)' }).unsupported);
 });
 
+test('modeSwitch on the generated styleguide: its pinned data-color follows the mode, then is restored', () => {
+  const attrs = new Map([['data-color', 'light']]);
+  const document = { documentElement: { hasAttribute: (a) => attrs.has(a), getAttribute: (a) => attrs.get(a), setAttribute: (a, v) => attrs.set(a, v), removeAttribute: (a) => attrs.delete(a) } };
+  const run = (code) => new Function('document', code)(document);
+  const dark = modeSwitch({ cssSelector: 'dark-media' }, { styleguide: true });
+  run(dark.apply);
+  assert.equal(attrs.get('data-color'), 'dark');
+  run(dark.undo);
+  assert.deepEqual([...attrs], [['data-color', 'light']]);
+  assert.equal(modeSwitch({ cssSelector: 'dark-media' }).apply, undefined);   // an app page is left alone
+});
+
 test('capture without a browser: every token is single-source and says why', async () => {
   const dir = makeFixture({
     'ds-config.json': { paths: { themeCSS: 'theme.css' }, figma: { modes: LIGHT_DARK }, codeReading: { browser: 'off' } },

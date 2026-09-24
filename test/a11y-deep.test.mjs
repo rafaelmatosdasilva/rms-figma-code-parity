@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeFixture } from './helpers.mjs';
-import { contractSemantics, sameRole, A11Y_GUIDE } from '../a11y-check.mjs';
+import { contractSemantics, sameRole, A11Y_GUIDE, groupSame, a11yItemLine } from '../a11y-check.mjs';
 import { stateContrastFindings, tokenContrastFindings } from '../contrast-check.mjs';
 import { deriveContrastPairs } from '../pair-derive.mjs';
 import { findChrome } from '../cdp.mjs';
@@ -75,4 +75,26 @@ test('page: target size, a positive tabindex, Escape, reduced motion, forced col
   assert.ok(kinds('forcedfocus').some((s) => /button/.test(s)), out);           // a shadow-only focus ring
   assert.ok(kinds('spacing').some((s) => /box/.test(s)), out);
   assert.deepEqual(d.issues.filter((i) => i.issue === 'semantics').map((i) => [i.rendered, i.contract]), [['generic', 'button']], out);
+});
+
+test('tints: same-colour token pairs are not comparable; a see-through background is blended over its backdrop', async () => {
+  const { backdropOf } = await import('../component-capture.mjs');
+  const t = tokenContrastFindings([{ text: 'l', bg: 'b', name: 'tag label on tag bg' }], (n) => ({ l: '#c20000', b: '#c20000' }[n]));
+  assert.deepEqual([t.checked, t.findings.length, t.sameColour.map((x) => x.name)], [0, 0, ['tag label on tag bg']]);
+  assert.equal(backdropOf(['rgba(0, 0, 0, 0.5)', 'rgb(255, 255, 255)']), 'rgb(128, 128, 128)');
+  assert.equal(backdropOf([]), null);
+  const code = { components: { tag: { instance: { hasText: true }, props: { fontSize: { value: '12px' } },
+    colors: { light: { color: 'rgb(194, 0, 0)', backgroundColor: 'color(srgb 0.76 0 0 / 0.12)', backdrop: 'rgb(255, 255, 255)' }, dark: { color: 'rgb(194, 0, 0)', backgroundColor: 'rgba(194, 0, 0, 0.12)' } } } } };
+  const r = stateContrastFindings(code);
+  assert.equal(r.checked, 1);                                   // dark has no backdrop: skipped, not guessed
+  assert.equal(r.findings.length, 0);                           // red text on a 12% red tint over white passes
+});
+
+test('the same element failing the same way in many places is one finding with a count', () => {
+  const f = (text) => ({ kind: 'contrast', desc: 'button in .seg', theme: 'Dark', ratio: 2.02, threshold: 4.5, text });
+  const g = groupSame([f('a'), f('b'), f('c'), f('d'), { ...f('e'), ratio: 3 }]);
+  assert.equal(g.length, 2);
+  assert.equal(g[0].places, 4);
+  assert.match(a11yItemLine('contrast', g[0]), /"a", "b", "c".*in 4 places/);
+  assert.equal(g[1].places, 1);
 });

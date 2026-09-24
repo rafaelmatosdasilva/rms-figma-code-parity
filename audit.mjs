@@ -1377,10 +1377,12 @@ function reportFull(label, items, shown) {
 
   function combineGates(...results) {
     const allPass = results.every(r => r.pass || r.planLimited);
-    const anyPlanLimited = results.some(r => r.planLimited);
+    // A part that could not run is shown in the lines; it makes the whole gate ⏭ only when no part ran.
+    const anyPlanLimited = results.some(r => r.planLimited && !r.notRun) || results.every(r => r.notRun);
     return {
       pass: results.every(r => r.pass),
       planLimited: allPass && anyPlanLimited,
+      notRun: allPass && results.every(r => r.notRun || r.planLimited) && results.some(r => r.notRun) ? results.filter(r => r.notRun).map(r => r.notRun).join('; ') : undefined,
       lines: results.flatMap(r => r.lines),
     };
   }
@@ -2397,8 +2399,11 @@ function reportFull(label, items, shown) {
   // leaves no table rather than the previous run's rows.
   for (const f of ['component-prop-result.json', 'parity-check-result.json']) { try { unlinkSync(join(ROOT, f)); } catch { /* not there */ } }
 
-  // Subprocess gates - all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rReimpl, rCase, rA11y] = await Promise.all([
+  // Subprocess gates. The file-reading gates launch concurrently. The two browser gates each start a
+  // Chrome, so they run one after the other, beside the rest: two browsers competing with thirty
+  // processes for the CPU is what makes a slow machine time out.
+  const browserGates = (async () => [await runScriptAsync('rendered-check.mjs'), await runScriptAsync('a11y-check.mjs', a11yArgs)])();
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rReimpl, rCase] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -2418,7 +2423,6 @@ function reportFull(label, items, shown) {
     runScriptAsync('html-structure-check.mjs'),
     runScriptAsync('transition-check.mjs'),
     runScriptAsync('icon-freshness-check.mjs'),
-    runScriptAsync('rendered-check.mjs'),
     runScriptAsync('coverage-check.mjs'),
     runScriptAsync('motion-check.mjs'),
     runScriptAsync('effect-check.mjs'),
@@ -2432,8 +2436,8 @@ function reportFull(label, items, shown) {
     runScriptAsync('docs-truth-check.mjs'),
     runScriptAsync('reimplementation-check.mjs'),
     runScriptAsync('case-check.mjs'),
-    runScriptAsync('a11y-check.mjs', a11yArgs),
   ]);
+  const [rRendered, rA11y] = await browserGates;
 
   // Accessibility (I18): advisory by default; a11yStrict promotes any finding to a hard fail.
   // Set the fail flag BEFORE the gate summary so the verdict stays consistent; the a11y detail
@@ -2488,7 +2492,7 @@ function reportFull(label, items, shown) {
   // captured (opt-in, exit 2) rather than counting as a failure.
   const parseComponentFrameworkGate = (r, re) => {
     const skip = frameworkGateSkipReason(cfg.frameworkComponents, r.status);
-    return skip ? { pass: true, planLimited: true, lines: [C.yellow('⏭ SKIPPED - ' + skip)] } : parseGeneric(r, re);
+    return skip ? { pass: true, planLimited: true, why: skip, lines: [C.yellow('⏭ SKIPPED - ' + skip)] } : parseGeneric(r, re);
   };
   // frameworkComponents:false + htmlRealization → the prop check runs in HTML-realization mode
   // (each Figma property must map to a code artifact) instead of being skipped. Parse its output
@@ -2683,8 +2687,8 @@ function reportFull(label, items, shown) {
   ];
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
-    const icon = result === 'plan' ? C.yellow('⏭') : result === 'debt' ? C.yellow('⚠️') : result ? C.green('✅') : C.red('❌');
-    const status = result === 'plan' ? C.yellow('Skipped') : result === 'debt' ? C.yellow('Debt') : result ? C.green('Pass') : C.red('Fail');
+    const icon = result === 'plan' || result === 'notrun' ? C.yellow('⏭') : result === 'debt' ? C.yellow('⚠️') : result ? C.green('✅') : C.red('❌');
+    const status = result === 'notrun' ? C.yellow('Not run') : result === 'plan' ? C.yellow('Skipped') : result === 'debt' ? C.yellow('Debt') : result ? C.green('Pass') : C.red('Fail');
     const n = `[${num}]`.padEnd(COL1);
     const l = label.length > COL2 ? label.slice(0, COL2 - 1) + '…' : label.padEnd(COL2);
     return `  ${icon}  ${n}${l}${status}`;
@@ -2693,10 +2697,12 @@ function reportFull(label, items, shown) {
   console.log(C.bold('  GATE SUMMARY'));
   console.log(C.bold('─'.repeat(WIDTH)));
   gates.forEach((g, i) => {
-    const result = g.planLimited ? 'plan' : g.baselined ? 'debt' : g.pass;
+    const result = g.notRun ? 'notrun' : g.planLimited ? 'plan' : g.baselined ? 'debt' : g.pass;
     const plainLabel = GATE_PLAIN[i] ?? g.label;
     console.log(tRow(i + 1, plainLabel, result));
-    if (g.planLimited) {
+    if (g.notRun) console.log(C.yellow(`         Not verified: ${g.notRun}`));
+    else if (g.why) console.log(C.yellow(`         ${g.why}`));
+    else if (g.planLimited) {
       console.log(C.yellow(`         Data was not auto-refreshed from the Figma API; ran against the committed snapshots.`));
     }
   });
@@ -2737,11 +2743,13 @@ function reportFull(label, items, shown) {
   } else if (baselineInfo?.mode === 'enforce' && baselineInfo.debt.length) {
     console.log(C.bold(C.yellow('\n  NO REGRESSIONS ✅  (adoption debt remains - see baseline above)\n')));
   } else {
-    console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
+    const nr = gates.filter((g) => g.notRun).length;
+    console.log(C.bold(C.green(nr ? `\n  EVERY GATE THAT RAN PASSES ✅  (${nr} not verified - see ⏭)\n` : '\n  ALL GATES PASS ✅\n')));
   }
-  if (planLimitedGates.length) {
+  const refreshLimited = planLimitedGates.filter((n) => !gates[n - 1].notRun && !gates[n - 1].why);
+  if (refreshLimited.length) {
     console.log(C.yellow('  ⏭  DATA NOT AUTO-REFRESHED - what this means:\n'));
-    for (const n of planLimitedGates) {
+    for (const n of refreshLimited) {
       const notes = [`Gate [${n}] ran against committed data; the live auto-refresh from Figma was not available this run.`];
       console.log(C.yellow(`  [${n}] ${gates[n - 1].label}`));
       for (const line of notes) console.log(C.yellow(`      ${line}`));
@@ -2975,12 +2983,14 @@ function reportFull(label, items, shown) {
       if (pairs.length) {
         const { tokenContrastFindings } = await import('./contrast-check.mjs');
         const all = [];
+        const same = new Set();
         let anyChecked = 0;
         for (const mode of modes) {
           const resolve = (t) => vsnap.color[mode]?.[t] ?? vsnap.color[mode]?.[`${t}/color`] ?? null;
-          const { findings, checked } = tokenContrastFindings(pairs, resolve);
+          const { findings, checked, sameColour } = tokenContrastFindings(pairs, resolve);
           anyChecked += checked;
           for (const f of findings) all.push({ ...f, mode });
+          for (const f of sameColour) same.add(f.name);
         }
         const provenance = `${nDerived} derived from token names${nAuthored ? ` + ${nAuthored} declared` : ''}`;
         if (all.length) {
@@ -2989,6 +2999,11 @@ function reportFull(label, items, shown) {
           console.log('   Advisory: pairs are derived from the token-name convention and/or declared in ds-config → a11y.tokenPairs; the engine only surfaces the math.');
         } else if (anyChecked) {
           console.log(`\nℹ️  Token contrast: all pairs meet WCAG AA across ${modes.length} mode(s) (${provenance}).`);
+        }
+        if (same.size) {
+          console.log(`\nℹ️  Token contrast: ${same.size} pair(s) not comparable - the text and background tokens are the same colour, so the component applies the background as a tint (opacity or color-mix). The rendered state contrast measures them.`);
+          for (const n of [...same].slice(0, 10)) console.log(`     · ${n}`);
+          if (same.size > 10) console.log(`     … ${same.size - 10} more`);
         }
       }
     } catch { /* advisory: never fails */ }

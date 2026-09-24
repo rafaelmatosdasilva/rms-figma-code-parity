@@ -232,7 +232,7 @@ const A11Y_ROLE_WORD = { button: 'A button', link: 'A link', textbox: 'An input 
 export function a11yItemLine(kind, f) {
   if (kind === 'contrast') {
     const what = f.text ? `the text "${f.text}"` : (f.desc || 'text');
-    return `${what} — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold} (${f.theme} theme)`;
+    return `${what} — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold} (${f.theme} theme)${f.places > 1 ? `, in ${f.places} places` : ''}`;
   }
   if (kind === 'focuscontrast') return `${f.desc} — its focus outline scores ${f.ratio} out of 21, needs at least ${f.threshold}`;
   if (kind === 'hovercontrast') { const what = f.text ? `the text "${f.text}"` : (f.desc || 'text'); return `${what} on hover — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold}`; }
@@ -240,7 +240,20 @@ export function a11yItemLine(kind, f) {
   if (kind === 'target') return `${f.desc} — ${f.size} with another control within 24 pixels`;
   if (kind === 'semantics') return `${f.desc} — announced as "${f.got}", the contract says "${f.want}"`;
   const where = f.modes && f.modes.length > 1 ? ` (${f.modes.join(', ')})` : '';
-  return f.desc + where;   // focus / ariastate / keyboard / motion … — the CSS selector locates the element
+  return f.desc + where + (f.places > 1 ? `, in ${f.places} places` : '');   // focus / ariastate / keyboard / motion … — the CSS selector locates the element
+}
+// The same element failing the same way in many places (a component shown once per prop value on
+// the styleguide) is one finding, with the number of places and a few of its texts.
+export function groupSame(list) {
+  const by = new Map();
+  for (const f of list) {
+    const k = [f.desc, f.theme, f.ratio, f.threshold].join('|');
+    const g = by.get(k);
+    if (!g) { by.set(k, { ...f, places: 1, texts: f.text ? [f.text] : [] }); continue; }
+    g.places++;
+    if (f.text && g.texts.length < 3 && !g.texts.includes(f.text)) g.texts.push(f.text);
+  }
+  return [...by.values()].map((g) => (g.places > 1 ? { ...g, text: g.texts.map((t) => `"${t}"`).join(', ').replace(/^"|"$/g, '') } : g));
 }
 // Structured record for --json (machines / an agent that fixes the code): exact locator +
 // numbers + the fix. Same facts as the plain lines, but parseable.
@@ -252,6 +265,7 @@ export function a11yFindingRecord(kind, f) {
   if (kind === 'target') rec.size = f.size ?? null;
   if (kind === 'semantics') { rec.rendered = f.got ?? null; rec.contract = f.want ?? null; }
   if (f.modes) rec.modes = f.modes;
+  if (f.places > 1) rec.places = f.places;
   return rec;
 }
 // Collapse axe-core's per-node violations into one row per rule (highest count first).
@@ -353,6 +367,9 @@ function sweepExpression(roots, doFocus, stateMap) {
     const vis = (el) => { const s = getComputedStyle(el); if (s.display==='none'||s.visibility==='hidden'||+s.opacity===0) return false; const r = el.getBoundingClientRect(); return r.width>0 && r.height>0; };
     const disabled = (el) => el.disabled===true || el.getAttribute('aria-disabled')==='true';
     const seen = new Set();
+    // The design-system component an element belongs to (the innermost root around it), so a bare
+    // "button" still says where it is.
+    const ownerOf = (el) => { if (!roots) return ''; let best = null, depth = -1; for (const s of roots) { let r; try { r = el.closest(s); } catch { continue; } if (!r || r === el) continue; let d = 0; for (let n = r; n; n = n.parentElement) d++; if (d > depth) { depth = d; best = s; } } return best ? ' in ' + best : ''; };
     const textEls = [];
     for (const el of scope) {
       if (seen.has(el)) continue; seen.add(el);
@@ -371,7 +388,7 @@ function sweepExpression(roots, doFocus, stateMap) {
       }
       const cls = (el.className && typeof el.className==='string') ? '.'+el.className.trim().split(/\\s+/).join('.') : '';
       textEls.push({
-        desc: (el.tagName.toLowerCase() + (el.id?('#'+el.id):'') + cls).slice(0,80),
+        desc: (el.tagName.toLowerCase() + (el.id?('#'+el.id):'') + cls).slice(0,80) + ownerOf(el),
         text: [...el.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join(' ').trim().slice(0,40),
         color: cs.color, bgLayers: layers,
         fontSize: parseFloat(cs.fontSize) || 16, fontWeight: cs.fontWeight,
@@ -596,9 +613,8 @@ async function main() {
 
   // Every colour mode, switched the way ds-config says it is switched (media emulation, a class or a
   // data attribute on the root, high contrast): the same modeSwitch() the code capture uses.
-  const modes = (cfg.figma?.modes?.length ? loadModes(cfg) : [{ name: 'Light', snapshotKey: 'light', cssSelector: 'root' }])
-    .map((m) => ({ name: m.name || m.snapshotKey || 'light', sw: modeSwitch(m) }))
-    .filter((m) => !m.sw.unsupported);
+  const modeDefs = cfg.figma?.modes?.length ? loadModes(cfg) : [{ name: 'Light', snapshotKey: 'light', cssSelector: 'root' }];
+  let modes = modeDefs.map((m) => ({ name: m.name || m.snapshotKey || 'light', sw: modeSwitch(m) })).filter((m) => !m.sw.unsupported);
   const locator = await loadLocator(ROOT, cfg);   // the one shared component finder
   const selOf = (name) => locator.selectorFor(name);
   let roots = components.length ? components.map(selOf) : null;
@@ -624,6 +640,8 @@ async function main() {
   }
 
   const sg = urlList.length ? null : styleguideTarget(cfg, ROOT);
+  // The styleguide pins its own mode attribute: switch it too, or every mode is measured as light.
+  if (sg) modes = modeDefs.map((m) => ({ name: m.name || m.snapshotKey || 'light', sw: modeSwitch(m, { styleguide: true }) })).filter((m) => !m.sw.unsupported);
   // On the styleguide, only the design system's own components are checked: the page's navigation,
   // badges and notes are the styleguide's chrome, not the DS.
   if (sg && !roots) {
@@ -745,9 +763,17 @@ async function main() {
     const once = new Map();
     const note = (kind, desc, mode, extra = {}) => {
       const k = `${kind}|${desc}`;
-      if (once.has(k)) { once.get(k).modes.push(mode); return; }
-      const f = { kind, plugin: label, desc, modes: [mode], ...extra };
-      once.set(k, f); findings.push(f);
+      // Several elements can share a description ("button"): each mode is listed once, and the
+      // number of elements is kept as places (the most seen in any one mode).
+      const f = once.get(k);
+      if (f) {
+        f.perMode[mode] = (f.perMode[mode] ?? 0) + 1;
+        if (!f.modes.includes(mode)) f.modes.push(mode);
+        f.places = Math.max(...Object.values(f.perMode));
+        return;
+      }
+      const nf = { kind, plugin: label, desc, modes: [mode], perMode: { [mode]: 1 }, ...extra };
+      once.set(k, nf); findings.push(nf);
     };
     for (const mode of modes) {
       await send('Emulation.setEmulatedMedia', { features: mode.sw.media }, sessionId);
@@ -872,12 +898,12 @@ async function main() {
   if (!sweptPlugins) skip('nothing rendered to check — a --url/dev-server page did not load, or the plugin UIs are not built');
 
   // ── Report ────────────────────────────────────────────────────────────────────
-  const contrast = findings.filter((f) => f.kind === 'contrast' && !f.cannotCompute);
+  const contrast = groupSame(findings.filter((f) => f.kind === 'contrast' && !f.cannotCompute));
   const cannot   = findings.filter((f) => f.kind === 'contrast' && f.cannotCompute);
   const names    = findings.filter((f) => f.kind === 'name');
   const focus    = findings.filter((f) => f.kind === 'focus');
   const focusCon = findings.filter((f) => f.kind === 'focuscontrast');
-  const hoverCon = findings.filter((f) => f.kind === 'hovercontrast');
+  const hoverCon = groupSame(findings.filter((f) => f.kind === 'hovercontrast'));
   const state    = findings.filter((f) => f.kind === 'ariastate');
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
@@ -909,7 +935,8 @@ async function main() {
     console.log(`Found ${plural(total, 'thing', 'things')} that would make this hard to use for some people${inThemes}:\n`);
     for (const [kind, list] of buckets) {
       const g = A11Y_GUIDE[kind];
-      console.log(`• ${g.title(list.length)}`);
+      const places = list.reduce((n, f) => n + (f.places ?? 1), 0);
+      console.log(`• ${g.title(list.length)}${places > list.length ? ` (${places} places on the page)` : ''}`);
       console.log(`     Why it matters: ${g.why}`);
       console.log(`     What to do:     ${g.fix}`);
       if (VERBOSE) {

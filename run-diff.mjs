@@ -24,7 +24,7 @@ export function collectFindings(lines) {
       const t = line.trim();
       if (!t) continue;
       if (/^(PARITY  ·|GATE SUMMARY)/.test(t)) { phase = 'skip'; continue; }
-      if (/^(AUDIT FAILED|ALL GATES PASS|NO REGRESSIONS)/.test(t)) { phase = 'advisory'; section = null; continue; }
+      if (/^(AUDIT FAILED|ALL GATES PASS|EVERY GATE THAT RAN|NO REGRESSIONS)/.test(t)) { phase = 'advisory'; section = null; continue; }
       if (/^(AI-READINESS SCORECARD|📓|📐)/.test(t)) { section = null; continue; }
       if (phase === 'gates') {
         const g = line.match(GATE);

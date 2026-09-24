@@ -7,13 +7,17 @@
 //     reads as a silent green;
 //   • a passing gate that printed no line at all says so, instead of showing an empty green;
 //   • on a fail, the ❌/🚨 lines are added, each line once;
-//   • status null means only one thing: the script file does not exist.
+//   • status null means only one thing: the script file does not exist;
+//   • exit 2 means only one thing: the gate could not run (its input is missing). It is shown as
+//     ⏭ not verified with the gate's own reason. It never fails the run and is never a pass: the
+//     verdict counts it separately.
 
 export const SKIP_RE = /^\s*⏭|\bskipped\b|\bnot verified\b|\bnot run\b/i;
 
 export function parseGateOutput(r, summaryRe, { maxDetails = 20 } = {}) {
   if (r.status === null) return { pass: true, lines: ['⏭ script not found - skipped'] };
   const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
+  if (r.status === 2) return notRunResult(out);
   const pass = r.status === 0;
   const seen = new Set();
   const keep = (l) => { const k = l.trim(); if (!k || seen.has(k)) return false; seen.add(k); return true; };
@@ -59,3 +63,10 @@ export const GATE_SUMMARY = {
   'rendered-check.mjs': /✅|❌|⏭/,
   'coverage-check.mjs': /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT|MODE-BLIND|MODE COVERAGE|UNVERIFIED FILL|FILL COVERAGE|CODE CAPTURE/,
 };
+
+// A gate that exited 2: its reason (the lines it printed, without the exit note), as a neutral result.
+export function notRunResult(out) {
+  const said = String(out).split('\n').map((l) => l.trim()).filter((l) => l && !/^\(exit 2\b/.test(l));
+  const reason = (said[0] ?? 'its input is missing').replace(/^[⚠️⏭❌\s]+/u, '');
+  return { pass: true, planLimited: true, notRun: reason, lines: [`⏭ not verified - ${reason}`, ...said.slice(1, 4).map((l) => '   ' + l)] };
+}

@@ -24,13 +24,17 @@ export function hexToRgb(hex) {
 // A see-through text colour is blended over its background before measuring (what the eye sees).
 // A see-through background cannot be measured without the surface under it, so that pair is skipped.
 export function tokenContrastFindings(pairs, resolve) {
-  const findings = [];
+  const findings = [], sameColour = [];
   let checked = 0, skipped = 0;
   for (const p of pairs || []) {
     const textHex = resolve(p.text);
     const bgHex = resolve(p.bg);
     const tc = parseColor(textHex), bc = parseColor(bgHex);
     if (!tc || !bc || bc[3] < 1) { skipped++; continue; }
+    // Text and background tokens of the same colour: no design shows invisible text, so the
+    // component applies the background token as a tint (opacity, color-mix). Not comparable from the
+    // tokens alone; the rendered state contrast measures it.
+    if (tc.every((v, i) => Math.abs(v - bc[i]) < 1e-6)) { sameColour.push({ name: p.name || `${p.text} on ${p.bg}`, text: p.text, bg: p.bg, hex: textHex }); continue; }
     checked++;
     const a = tc[3];
     const t = { r: tc[0] * a + bc[0] * (1 - a), g: tc[1] * a + bc[1] * (1 - a), b: tc[2] * a + bc[2] * (1 - a) };
@@ -41,13 +45,13 @@ export function tokenContrastFindings(pairs, resolve) {
       findings.push({ name: p.name || `${p.text} on ${p.bg}`, text: p.text, bg: p.bg, textHex, bgHex, ratio, threshold });
     }
   }
-  return { findings, checked, skipped };
+  return { findings, checked, skipped, sameColour };
 }
 
 // State contrast from the code capture (code.snapshot.json), no new browser run: each component's
 // text against its own background in every mode, and in every state the capture produced (colours
-// measured in the first mode). Disabled states are exempt (WCAG 1.4.3). A see-through background has
-// no known surface under it, so it is skipped. Large text (24px, or 18.66px bold) needs 3:1.
+// measured in every mode the capture recorded). Disabled states are exempt (WCAG 1.4.3). A see-through
+// background is blended over the backdrop the capture saw behind it, and skipped when there is none. Large text (24px, or 18.66px bold) needs 3:1.
 export function stateContrastFindings(code) {
   const findings = [];
   let checked = 0;
@@ -61,8 +65,12 @@ export function stateContrastFindings(code) {
     const tp = c.parts?.text?.props ?? c.props ?? {};
     const size = num(tp.fontSize?.value), weight = num(tp.fontWeight?.value);
     const threshold = size >= 24 || (size >= 18.66 && weight >= 700) ? 3 : 4.5;
-    const check = (state, mode, fg, bg, src = {}) => {
-      const f = parseColor(fg), b = parseColor(bg);
+    const check = (state, mode, fg, bg, src = {}, backdrop = null) => {
+      const f = parseColor(fg);
+      let b = parseColor(bg);
+      // A see-through background (a tint) is blended over what the capture saw behind it.
+      const under = backdrop ? parseColor(backdrop) : null;
+      if (b && b[3] < 1 && under) b = [0, 1, 2].map((i) => b[i] * b[3] + under[i] * (1 - b[3])).concat(1);
       if (!f || !b || b[3] < 1 || f[3] === 0) return;
       checked++;
       const a = f[3];
@@ -70,7 +78,7 @@ export function stateContrastFindings(code) {
       if (ratio < threshold) findings.push({ component: name, state, mode, ratio, threshold, fg, bg, fgVar: src.fg?.var ?? null, bgVar: src.bg?.var ?? null, at: src.fg?.at ?? src.bg?.at ?? null });
     };
     const baseSrc = { fg: tp.color ?? c.props?.color, bg: c.props?.backgroundColor };
-    for (const m of modes) check('default', m, colors[m].color, colors[m].backgroundColor, baseSrc);
+    for (const m of modes) check('default', m, colors[m].color, colors[m].backgroundColor, baseSrc, colors[m].backdrop);
     const base = colors[modes[0]];
     for (const [label, st] of Object.entries(c.states ?? {})) {
       if (/disabled|inactive/i.test(label)) continue;
@@ -79,7 +87,7 @@ export function stateContrastFindings(code) {
       if (!ch.color && !ch.backgroundColor) continue;
       const src = { fg: ch.color ?? baseSrc.fg, bg: ch.backgroundColor ?? baseSrc.bg };
       // The capture records the state's colours in every mode; an older snapshot only has the change.
-      if (st.colors && Object.keys(st.colors).length) for (const [m, col] of Object.entries(st.colors)) check(label, m, col.color, col.backgroundColor, src);
+      if (st.colors && Object.keys(st.colors).length) for (const [m, col] of Object.entries(st.colors)) check(label, m, col.color, col.backgroundColor, src, col.backdrop ?? colors[m]?.backdrop);
       else check(label, modes[0], ch.color?.value ?? base.color, ch.backgroundColor?.value ?? base.backgroundColor, src);
     }
   }
