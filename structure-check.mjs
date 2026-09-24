@@ -1823,6 +1823,10 @@ try {
     let vars = {};
     try { vars = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8')); } catch { /* optional */ }
     const r = compareComponents(cap, snap?.components ?? {}, vars, cfg, await loadParityMaps(ROOT, cfg));
+    // At each Figma breakpoint width too, for the tokens the breakpoint collection changes.
+    const { compareBreakpoints } = await import('./capture-compare.mjs');
+    const bpr = compareBreakpoints(cap, snap?.components ?? {}, vars);
+    r.match += bpr.match; r.differ.push(...bpr.differ);
     // ds-config.json → renderedParityStrict: true makes these differences fail the gate.
     const strictMeasured = cfg.renderedParityStrict === true;
     const mark = strictMeasured ? '❌' : '⚠️ ';
@@ -1834,6 +1838,13 @@ try {
       for (const comp of [...new Set(r.differ.map((d) => d.component))]) { const u = linkFor(comp); if (u) console.log(`   🔗 ${comp} in Figma: ${u}`); }
       if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
+    // Every variant built: each Figma axis value has a counterpart the capture found in code.
+    const { compareVariants } = await import('./capture-compare.mjs');
+    const v = compareVariants(cap, snap?.components ?? {});
+    if (v.missing.length) {
+      console.log(`\n⚠️  VARIANTS ${v.missing.length}  (a Figma variant value with no state or class the code capture could find - advisory)`);
+      for (const m of v.missing) console.log(`   ⚠️  ${m.component}: ${m.axis}=${m.value} has no counterpart in code (add it, or map it in the contract's propertyMap)`);
+    } else if (v.built) console.log(`\n✅ VARIANTS  every Figma variant value has a counterpart in code (${v.built})`);
   }
 } catch { /* the capture is optional */ }
 

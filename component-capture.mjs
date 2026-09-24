@@ -52,6 +52,7 @@ export const TRACE = {
 };
 const MEASURED = [...Object.keys(TRACE), 'maxHeight', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
 const COLOR_PROPS = new Set(['color', 'backgroundColor', 'borderTopColor']);
+const BREAKPOINT_PROPS = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'columnGap', 'rowGap', 'borderTopLeftRadius', 'fontSize', 'lineHeight'];
 const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight', 'fontFamily', 'letterSpacing', 'textTransform']);
 
 // Which slot of a box shorthand a property reads (1 to 4 values: top right bottom left).
@@ -363,15 +364,35 @@ export async function captureComponents(ctx) {
         const sw = modeSwitch(mode, { styleguide: !!page.generated });
         if (sw.unsupported) continue;
         await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+        if (sw.viewport) await setWidth(sw.viewport);   // a breakpoint mode is measured at its width
         if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
         perMode[mode.snapshotKey] = (await send('Runtime.evaluate', { expression: measureExpression(sel), returnByValue: true }, sessionId)).result?.value;
         if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+        if (sw.viewport) await setWidth(1280);
       }
       return perMode;
     };
+    const setWidth = (width) => send('Emulation.setDeviceMetricsOverride', { width: Math.round(width), height: 900, deviceScaleFactor: ctx.deviceScaleFactor ?? 2, mobile: false }, sessionId);
+    // The component at each Figma breakpoint width, in the first mode: the values a responsive token
+    // changes (padding, gap, radius, font, height).
+    const measureAt = async (sel, bps) => {
+      const out = {};
+      const sw = modeSwitch(modes[0], { styleguide: !!page.generated });
+      if (sw.unsupported) return out;
+      await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+      if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
+      for (const bp of bps) {
+        await setWidth(bp.width);
+        const m = (await send('Runtime.evaluate', { expression: measureExpression(sel), returnByValue: true }, sessionId)).result?.value;
+        if (m?.cs) out[bp.name] = { width: bp.width, height: m.rect?.height, ...Object.fromEntries(BREAKPOINT_PROPS.map((k) => [k, m.cs[k]])) };
+      }
+      await setWidth(1280);
+      if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+      return out;
+    };
     const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true }, sessionId)).result?.value;
     const close = async () => { off(); await send('Target.closeTarget', { targetId }).catch(() => {}); };
-    return { sessionId, where, trace, nodeOf, measureAll, evaluate, close };
+    return { sessionId, where, trace, nodeOf, measureAll, measureAt, evaluate, close };
   }
 
   // One measured + traced element → facts, checked against the static reading of the winning rule.
@@ -481,6 +502,7 @@ export async function captureComponents(ctx) {
     {
       const nodeId = await P.nodeOf(capSel(loc.i));
       const perMode = await P.measureAll(capSel(loc.i));
+      const atBreakpoints = ctx.breakpoints?.length ? await P.measureAt(capSel(loc.i), ctx.breakpoints) : null;
       const traced = nodeId ? await P.trace(nodeId) : {};
       const base = perMode[firstMode];
       const stat = staticComponentReading(staticSources, comp.selector, staticRootVars);
@@ -495,6 +517,7 @@ export async function captureComponents(ctx) {
         props, fill: bg && bg[3] > 0 ? 'direct' : beforeBg && beforeBg[3] > 0 ? 'before' : 'none', colors: colorsOf(perMode),
       };
       if (base?.before) entry.before = base.before;
+      if (atBreakpoints && Object.keys(atBreakpoints).length) entry.breakpoints = atBreakpoints;
       // Parts: each measured and traced like the instance, keeping only the properties the part is for.
       const PART_PROPS = { font: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], text: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], radius: ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'], gap: ['rowGap', 'columnGap'], before: ['borderTopLeftRadius', 'backgroundColor'] };
       for (const kind of Object.keys(loc.parts ?? {})) {

@@ -1288,7 +1288,7 @@ function reportFull(label, items, shown) {
       return { pass: false, lines: [C.yellow('🚧 STRUCTURE cannot verify - no compiled component CSS.'), ...guidance] };
     }
     const pass = r.status === 0;
-    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  .*: Figma .*, rendered |🔗 .* in Figma: /.test(l) && l.trim()).map(l => l.trim());
+    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  VARIANTS|⚠️  .*: Figma .*, rendered |⚠️  .* has no counterpart in code|🔗 .* in Figma: /.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n')
       .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
       .map(l => '  ' + l.trim()).slice(0, 20);
@@ -3061,6 +3061,23 @@ function reportFull(label, items, shown) {
         }
       } catch { /* advisory: never fails the audit */ }
     }
+  }
+
+  // ── Right-to-left (opt-in: ds-config rtl: true, advisory) ────────────────────
+  // Physical properties that would not mirror in a right-to-left language, with the logical
+  // property to use. Symmetric values mirror trivially and are not listed.
+  if (cfg.rtl === true) {
+    try {
+      const { loadCssSources } = await import('./css-source.mjs');
+      const { rtlFindings } = await import('./rtl-check.mjs');
+      const { files } = loadCssSources(ROOT, [cfg.paths?.themeCSS, ...(cfg.paths?.pluginCSS ?? [])].filter(Boolean));
+      const rtl = rtlFindings(files);
+      if (rtl.length) {
+        console.log(C.yellow(`\n⚠️  Right-to-left: ${rtl.length} declaration(s) would not mirror in a right-to-left language. Advisory.`));
+        for (const f of rtl.slice(0, 20)) console.log(C.yellow(`     ${f.selector}  ${f.property}  (${f.at})  → ${f.use}`));
+        if (rtl.length > 20) console.log(`     … ${rtl.length - 20} more`);
+      } else console.log('\nℹ️  Right-to-left: every side-specific declaration mirrors (logical properties or symmetric values).');
+    } catch { /* advisory: never fails */ }
   }
 
   // ── Closed vocabulary / raw containers (I16, project-DECLARED, advisory) ────

@@ -18,6 +18,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 import { sameValue } from './component-capture.mjs';
+import { parseColor, colorHex } from './css-values.mjs';
 
 export async function loadParityMaps(ROOT, cfg) {
   const p = resolve(ROOT, cfg.paths?.parityMap ?? 'parity-map.mjs');
@@ -74,6 +75,24 @@ export function compareTokens(code, vars, cfg, maps) {
   }
   return out;
 }
+
+// A Figma colour token's CSS variable, resolved the way Gate 3 resolves it.
+function colorVarOf(token, spec, maps) {
+  const dropColor = (spec.dropSegments ?? []).includes('color');
+  const t = dropColor ? String(token).replace(/\/color$/, '') : token;
+  return Object.prototype.hasOwnProperty.call(maps.EXPLICIT, t) ? maps.EXPLICIT[t] : tokenToVar(t, spec);
+}
+// A Figma paint ({ token, hex, opacity }) as the colour it draws in one mode, opacity included.
+function paintIn(vars, mode, paint) {
+  if (!paint) return null;
+  const t = paint.token;
+  const v = t ? (vars.color?.[mode]?.[t] ?? vars.color?.[mode]?.[String(t).replace(/\/color$/, '')] ?? vars.color?.[mode]?.[`${t}/color`]) : paint.hex;
+  const c = parseColor(v);
+  if (!c) return null;
+  const a = c[3] * (typeof paint.opacity === 'number' ? paint.opacity : 1);
+  return colorHex(`rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})`);
+}
+const axesOf = (name) => Object.fromEntries(String(name).split(',').map((p) => p.split('=').map((x) => x.trim().toLowerCase())).filter((p) => p.length === 2));
 
 // Components: each Figma structure field against the measured and traced code facts.
 export function compareComponents(code, structure, vars, cfg, maps) {
@@ -244,15 +263,122 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       if (Math.abs(got - op) < 0.01) out.match++;
       else out.differ.push({ component: name, field: `opacity (${variant})`, figma: op, code: got, rule: o?.rule, at: o?.at });
     }
+    // Colours, from the extended Step 1c capture (colors: { fill, text, stroke }, each a paint with its
+    // token, hex and opacity): the colour rendered in every mode against the token's value in that
+    // mode, the paint's opacity included. The token's own variable in code is a match by itself.
+    const inlineFill = /\(style attribute\)/.test(String(c.props?.backgroundColor?.rule ?? ''));
+    const textFact = c.parts?.text?.props?.color ?? c.props?.color;
+    const firstMode = Object.keys(c.colors ?? {})[0];
+    const textInherits = !c.parts?.text?.props?.color || c.parts.text.props.color.value === c.colors?.[firstMode]?.color;
+    const colourChecks = (label, paints, perMode, suffix = '', changed = {}) => {
+      const slots = [
+        ['fill', 'background', (col) => (c.fill === 'before' ? col.beforeBackground : col.backgroundColor), c.props?.backgroundColor],
+        ['text', 'text colour', (col, m) => (m === firstMode && !suffix ? textFact?.value : textInherits ? col.color : null), textFact],
+        ['stroke', 'border colour', (col) => col.borderTopColor, c.props?.borderTopColor],
+      ];
+      for (const [slot, field, pick, fact] of slots) {
+        const paint = paints?.[slot];
+        if (!paint) continue;
+        if (slot === 'fill' && (inlineFill || !['direct', 'before'].includes(c.fill))) continue;   // painting at all is the background check's job
+        if (slot === 'stroke' && drawsNothing) continue;                                          // drawing at all is the stroke check's job
+        for (const [mode, col] of Object.entries(perMode ?? {})) {
+          const want = paintIn(vars, mode, paint), got = col && pick(col, mode);
+          if (!want || !got) continue;
+          const expectedVar = paint.token && !suffix ? colorVarOf(paint.token, spec, maps) : undefined;
+          const src = changed[{ fill: 'backgroundColor', text: 'color', stroke: 'borderTopColor' }[slot]] ?? fact;
+          push(name, `${field}${suffix} [${mode}]`, paint.token ?? paint.hex, { ...(src ?? {}), value: got, confidence: src?.confidence ?? 'single-source' }, { expectedVar, figmaValue: want });
+        }
+      }
+    };
+    if (!low) colourChecks('', f.colors, c.colors);
+
+    // Per variant, from the extended capture (variants: { "State=Hover, Size=M": { paddingPx, gapPx,
+    // radiusPx, fontSize, colors } }): only what the variant changes from the default variant is
+    // compared, against the state the capture produced with the same axis value.
+    if (f.variants && !low) {
+      const defAxes = axesOf(f.defaultVariant ?? '');
+      const vfor = (label) => {
+        const want = axesOf(label);
+        const all = Object.entries(f.variants).filter(([v]) => { const a = axesOf(v); return Object.entries(want).every(([k, x]) => a[k] === x); });
+        return (all.find(([v]) => Object.entries(axesOf(v)).every(([k, x]) => k in want || defAxes[k] === x)) ?? all[0])?.[1];
+      };
+      const def = f.variants[f.defaultVariant] ?? { paddingPx: f.paddingPx, radiusPx: f.radiusPx, colors: f.colors };
+      const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+      for (const [label, st] of Object.entries(c.states ?? {})) {
+        const v = vfor(label);
+        if (!v) continue;
+        const now = (prop) => st.changed?.[prop] ?? c.props?.[prop];
+        const num = (fig, fact, field) => {
+          if (typeof fig !== 'number' || !fact) return;
+          const got = toNum(fact.value);
+          if (Math.abs(got - fig) < 0.5) out.match++;
+          else out.differ.push({ component: name, field: `${field} (${label})`, figma: fig, code: fact.value, rule: fact.rule, at: fact.at, confidence: fact.confidence });
+        };
+        if (!same(v.paddingPx, def.paddingPx)) ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'].forEach((p, i) => num(v.paddingPx?.[i], now(p), p.replace('padding', 'padding ').toLowerCase()));
+        if (!same(v.radiusPx, def.radiusPx)) ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'].forEach((p, i) => num(v.radiusPx?.[i], now(p), 'radius'));
+        if (!same(v.gapPx, def.gapPx)) num(v.gapPx, now('columnGap'), 'gap');
+        if (!same(v.fontSize, def.fontSize)) num(v.fontSize, st.changed?.fontSize ?? fp?.fontSize, 'font size');
+        const changedPaints = Object.fromEntries(['fill', 'text', 'stroke'].filter((k) => v.colors?.[k] && !same(v.colors[k], def.colors?.[k])).map((k) => [k, v.colors[k]]));
+        if (Object.keys(changedPaints).length && st.colors) colourChecks('', changedPaints, st.colors, ` (${label})`, st.changed ?? {});
+      }
+    }
+
     // Background: does the component paint one? Figma often draws it on a child layer and code on the
     // element itself; both paint. Only "paints" vs "does not paint" is a difference.
     // A colour set in the element's own style attribute is page content (a swatch showing its colour),
     // not the component's design, so it is not compared.
-    const inlineFill = /\(style attribute\)/.test(String(c.props?.backgroundColor?.rule ?? ''));
     if (f.fillStructure && !low && !inlineFill) {
       const paints = (x) => x === 'direct' || x === 'before';
       if (paints(f.fillStructure) === paints(c.fill)) out.match++;
       else out.differ.push({ component: name, field: 'background', figma: paints(f.fillStructure) ? 'paints a background' : 'no background', code: paints(c.fill) ? 'paints a background' : 'no background', rule: c.props?.backgroundColor?.rule, at: c.props?.backgroundColor?.at });
+    }
+  }
+  return out;
+}
+
+// Breakpoints: a component's responsive tokens (the sizing tokens the Figma breakpoint collection
+// changes per mode) against what the code capture measured at that breakpoint's width.
+export function compareBreakpoints(code, structure, vars) {
+  const out = { match: 0, differ: [] };
+  const bp = vars.breakpoints ?? {};
+  if (!Object.keys(bp).length) return out;
+  for (const [name, f] of Object.entries(structure ?? {})) {
+    const c = code.components?.[name];
+    if (!c?.breakpoints) continue;
+    const fields = [
+      ['padding (top)', f.paddingVar?.tb, 'paddingTop'], ['padding (left)', f.paddingVar?.lr, 'paddingLeft'],
+      ['gap', f.gapVar, 'columnGap'], ['radius', f.innerRadiusVar, 'borderTopLeftRadius'],
+    ];
+    for (const [mode, tokens] of Object.entries(bp)) {
+      const at = c.breakpoints[mode];
+      if (!at) continue;
+      for (const [field, token, prop] of fields) {
+        if (!token || tokens[token] == null || at[prop] == null) continue;   // not a responsive token
+        const same = valueMatch(tokens[token], at[prop]);
+        if (same === true) out.match++;
+        else if (same === false) out.differ.push({ component: name, field: `${field} @ ${mode} (${at.width}px)`, figma: token, figmaValue: tokens[token], code: at[prop], rule: c.props?.[prop]?.rule, at: c.props?.[prop]?.at });
+      }
+    }
+  }
+  return out;
+}
+
+// Every variant built: each axis value Figma defines (from the extended capture's variants) must be
+// the default's, or a state the code capture produced or found declared in code. Axis values are
+// checked one by one, not every combination: code realizes axes independently (a class per value).
+export function compareVariants(code, structure) {
+  const out = { built: 0, missing: [], notCaptured: [] };
+  for (const [name, f] of Object.entries(structure ?? {})) {
+    if (!f?.variants) continue;
+    const c = code.components?.[name];
+    if (!c) { out.notCaptured.push(name); continue; }
+    const def = axesOf(f.defaultVariant ?? '');
+    const known = new Set([...Object.keys(c.states ?? {}), ...(c.statesNotProduced ?? []).map((x) => x.state)].flatMap((l) => Object.entries(axesOf(l)).map(([k, v]) => `${k}=${v}`)));
+    const values = new Set(Object.keys(f.variants).flatMap((v) => Object.entries(axesOf(v)).map(([k, x]) => `${k}=${x}`)));
+    for (const kv of values) {
+      const [k, v] = kv.split('=');
+      if (def[k] === v || known.has(kv)) out.built++;
+      else out.missing.push({ component: name, axis: k, value: v });
     }
   }
   return out;

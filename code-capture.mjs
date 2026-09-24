@@ -136,6 +136,17 @@ const READ_ROOT_VARS = `(() => {
   return { vars, blocked };
 })()`;
 
+// The Figma breakpoint collection as widths to measure at: each mode's viewport/min-width (the
+// smallest mode, usually 0, is measured at 375px, a phone). Empty when the file has no breakpoints.
+export function breakpointWidths(ROOT, cfg) {
+  let bp = {};
+  try { bp = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8')).breakpoints ?? {}; } catch { return []; }
+  return Object.entries(bp).map(([name, t]) => {
+    const w = parseFloat(t?.['viewport/min-width'] ?? t?.['viewport/width'] ?? '0') || 0;
+    return { name, width: w > 0 ? w : 375 };
+  }).sort((a, b) => a.width - b.width);
+}
+
 // How to put a page into a mode. Returns { media, viewport, apply, undo } or { unsupported }.
 // The generated styleguide pins its own mode on <html data-color="…"> (its manual toggle), which
 // turns the media-query theme off: there the switch also sets that attribute to the light or dark
@@ -384,7 +395,7 @@ async function prepareCapture(ROOT, cfg) {
   try { figmaStructure = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {}; } catch { /* optional */ }
   const nodeIds = Object.fromEntries(Object.entries(figmaStructure).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
   const apiReader = apiReaderFor(ROOT, cfg, { classFor: locator.classFor, nodeIds });
-  const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
+  const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
   const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles });
   return { outPath, modes, themeEntries, pages, styleguide, files, missing, remote, locator, apiReader, inputHash };
 }
@@ -463,6 +474,7 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
           staticSources: componentSources,
           staticRootVars: rootTokens(componentSources, modes[0]),
           openPage: (url) => openLoaded(cdp.send, url),
+          breakpoints: breakpointWidths(ROOT, cfg),
         });
         const nest = await renderedNesting({ send: cdp.send, pages: compPages, specs, openLoaded });
         nestingRendered = nest.rendered;

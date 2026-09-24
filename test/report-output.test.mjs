@@ -72,3 +72,10 @@ test('state contrast: each state in every mode, with the token names and the sou
   const r = stateContrastFindings(code);
   assert.deepEqual(r.findings.map((f) => [f.state, f.mode, f.fgVar, f.bgVar, f.at]), [['State=Hover', 'light', '--chip-text-hover', '--chip-bg', 'theme.css:9'], ['State=Hover', 'dark', '--chip-text-hover', '--chip-bg', 'theme.css:9']]);
 });
+
+test('right-to-left: one-sided and asymmetric physical properties, with the logical one to use', async () => {
+  const { rtlFindings } = await import('../rtl-check.mjs');
+  const r = rtlFindings([{ file: 'a.css', text: '.ok { padding-left: 8px; padding-right: 8px; margin: 0 auto; }\n.pad { padding-left: 8px; }\n.four { padding: 1px 2px 3px 4px; text-align: left; }\n.pos { left: 4px; float: right; }' }]);
+  assert.deepEqual(r.map((f) => `${f.selector} ${f.use}`), ['.pad padding-inline-start', '.four padding-block and padding-inline (or -inline-start / -inline-end)', '.four text-align: start', '.pos inset-inline-start', '.pos float: inline-end']);
+  assert.equal(r[0].at, 'a.css:2');
+});

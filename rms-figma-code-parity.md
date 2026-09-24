@@ -816,6 +816,8 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 - `exemptionCheck.alwaysNative` - extra element names treated as native controls by the exemption check.
 - `pluginDirs` - `{ "<app>": "path/from/root" }` when an app does not live in `apps/<app>`.
 - `scopeMaxNestPerFile` (default 8) - how many nested selectors per file the token-scope check reads.
+- `rtl: true` - lists the declarations that would not mirror in a right-to-left language (one-sided or asymmetric `padding-left`, `margin-right`, `border-left`, `left`/`right` offsets, `text-align` and `float` left or right), each with its file and line and the logical property to use. Symmetric values are not listed.
+- `renderedParityStrict: true` - the measured differences (Gate [13] `MEASURED`) fail the gate instead of being advisory.
 
 ## Key Architecture Assumptions
 
@@ -1257,24 +1259,60 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 
 **Deeper facts (recommended).** Also record these on each component's entry, from the same
 `State=Default` node. The measured comparison (Gate [10] `MEASURED`, `--capture-code --compare`) uses
-each one when present: a fixed width, the stroke width on each side, opacity, and the text node's
-family, line height (px, % or auto), letter spacing and text case. Snapshots without them keep
-working; the comparison simply skips what Figma did not record.
+each one when present:
+- sizing per axis, a fixed width, and min and max width
+- the gap, the stroke width on each side, and opacity
+- the text node's family, line height (px, % or auto), letter spacing and text case
+- the fill, text and stroke colour tokens with their paint opacity, compared in every mode
+- one entry per variant (padding, gap, radius, font size, colours); only what a variant changes from
+  the default is compared, against the state the code capture produced
+- which layers each boolean property shows or hides (`toggles`)
+- each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
+
+Snapshots without them keep working; the comparison simply skips what Figma did not record.
+
+With `variants` recorded, Gate [13] also lists each Figma variant value (an axis value such as
+`Size=L`) that has no counterpart in code (`⚠️ VARIANTS`): not the default, not a state the code
+capture produced, and not one it found declared. When the variables snapshot has a breakpoint
+collection, the code capture measures each component at every breakpoint width (the smallest mode at
+375px) and compares the tokens that change per breakpoint (`padding (left) @ Phone (375px)`).
 
 ```js
-function deepFacts(node) {
+async function deepFacts(node, set) {
   const n = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : null);
+  const hex = (c) => '#' + [c.r, c.g, c.b].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+  // A visible solid paint: its bound colour variable's name, its hex and the paint's opacity.
+  const paint = async (paints) => {
+    const p = (Array.isArray(paints) ? paints : []).find((x) => x.visible !== false && x.type === 'SOLID');
+    if (!p) return null;
+    const id = p.boundVariables?.color?.id;
+    const v = id ? await figma.variables.getVariableByIdAsync(id) : null;
+    return { token: v?.name ?? null, hex: hex(p.color), opacity: n(p.opacity ?? 1) };
+  };
+  const firstText = (x) => x.findOne?.((t) => t.type === 'TEXT');
+  const geometry = async (x) => {
+    const t = firstText(x);
+    return {
+      h: n(x.height),
+      paddingPx: 'paddingTop' in x ? [x.paddingTop, x.paddingRight, x.paddingBottom, x.paddingLeft].map(n) : null,
+      gapPx: 'itemSpacing' in x ? n(x.itemSpacing) : null,
+      radiusPx: 'topLeftRadius' in x ? [x.topLeftRadius, x.topRightRadius, x.bottomRightRadius, x.bottomLeftRadius].map(n) : null,
+      fontSize: t && t.fontSize !== figma.mixed ? n(t.fontSize) : null,
+      colors: { fill: await paint(x.fills), text: t ? await paint(t.fills) : null, stroke: await paint(x.strokes) },
+    };
+  };
   const out = {};
   if ('layoutMode' in node) out.box = { width: n(node.width), height: n(node.height), layout: node.layoutMode,
     sizing: { h: node.layoutSizingHorizontal, v: node.layoutSizingVertical },
+    minWidth: n(node.minWidth), maxWidth: n(node.maxWidth),
     align: { primary: node.primaryAxisAlignItems, counter: node.counterAxisAlignItems }, wrap: node.layoutWrap };
-  if ('paddingTop' in node) out.paddingPx = [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft].map(n);
-  if ('topLeftRadius' in node) out.radiusPx = [node.topLeftRadius, node.topRightRadius, node.bottomRightRadius, node.bottomLeftRadius].map(n);
+  const g = await geometry(node);
+  out.paddingPx = g.paddingPx; out.radiusPx = g.radiusPx; out.gapPx = g.gapPx; out.colors = g.colors;
   if ((node.strokes ?? []).some((s) => s.visible !== false)) out.stroke = {
     weights: ['strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight'].map((k) => n(typeof node[k] === 'number' ? node[k] : node.strokeWeight)),
     align: node.strokeAlign, dashed: (node.dashPattern ?? []).length > 0 };
   if (typeof node.opacity === 'number' && node.opacity < 1) out.opacity = n(node.opacity);
-  const text = node.findOne?.((x) => x.type === 'TEXT');
+  const text = firstText(node);
   if (text) {
     const lh = text.lineHeight, ls = text.letterSpacing, fn = text.fontName;
     out.text = {
@@ -1284,9 +1322,29 @@ function deepFacts(node) {
       textCase: text.textCase !== figma.mixed ? text.textCase : null,
     };
   }
+  // Which layers each boolean property shows or hides.
+  const toggles = {};
+  for (const l of node.findAll?.((x) => x.componentPropertyReferences?.visible) ?? []) {
+    const prop = l.componentPropertyReferences.visible.replace(/#.*$/, '');
+    (toggles[prop] ??= []).push(l.name);
+  }
+  if (Object.keys(toggles).length) out.toggles = toggles;
+  if (set?.type === 'COMPONENT_SET') {
+    out.defaultVariant = node.name;
+    out.variants = {};
+    for (const v of set.children.filter((c) => c.type === 'COMPONENT')) out.variants[v.name] = await geometry(v);
+    // Each slot's preferred components, by name (the definitions only carry keys).
+    const byKey = new Map(figma.root.findAll((x) => (x.type === 'COMPONENT' || x.type === 'COMPONENT_SET') && x.key).map((x) => [x.key, x.name]));
+    const slots = {};
+    for (const [k, d] of Object.entries(set.componentPropertyDefinitions ?? {})) {
+      if (d.type !== 'INSTANCE_SWAP' || !d.preferredValues?.length) continue;
+      slots[k.replace(/#.*$/, '')] = d.preferredValues.map((p) => byKey.get(p.key)).filter(Boolean);
+    }
+    if (Object.keys(slots).length) out.slots = slots;
+  }
   return out;
 }
-// entry = { h, paddingVar, …, ...deepFacts(defaultVariant) }
+// entry = { h, paddingVar, …, ...(await deepFacts(defaultVariant, componentSet)) }
 ```
 
 Capture `strokeOnAnyState` with a **deep recursive walk** across all variants:

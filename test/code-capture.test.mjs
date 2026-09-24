@@ -287,3 +287,17 @@ browserTest('components: when the built page and the source disagree, the value 
   // Values the two readings agree on stay verified.
   assert.equal(snapshot.components.chip.props.paddingTop.confidence, 'verified');
 });
+
+browserTest('breakpoints: each component is measured at every Figma breakpoint width', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root { --pad: 8px; }\n.card { padding: var(--pad); display: block; }\n@media (min-width: 1024px) { .card { padding: 16px; } }\n',
+    'app/ui.html': '<!doctype html><html><head><link rel="stylesheet" href="../theme.css"></head><body><div class="card">Card</div></body></html>',
+    'structure-contract.mjs': 'export const CONTRACT = { card: {} };',
+    'struct.json': { components: { card: {} } },
+    'vars.json': { breakpoints: { Phone: { 'viewport/min-width': '0' }, Desktop: { 'viewport/min-width': '1024' } } },
+  });
+  const cfg = { paths: { themeCSS: 'theme.css', plugins: ['app'], pluginCSS: [], snapshotStructure: 'struct.json', snapshotVars: 'vars.json' }, figma: { modes: [LIGHT_DARK[0]] } };
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  const bp = snapshot.components.card.breakpoints;
+  assert.deepEqual([bp.Phone.width, bp.Phone.paddingLeft, bp.Desktop.width, bp.Desktop.paddingLeft], [375, '8px', 1024, '16px'], JSON.stringify(bp));
+});

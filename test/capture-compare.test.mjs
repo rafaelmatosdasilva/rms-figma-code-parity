@@ -135,3 +135,42 @@ test('components: the extended capture adds width, stroke widths, opacity and te
   assert.equal(d['letter spacing'], undefined);        // 5% of 12px = 0.6px
   assert.equal(d['line height'], undefined);           // 150% of 12px = 18px
 });
+
+test('colours: every mode against the token value, paint opacity included; a variant compares only what it changes', () => {
+  const fact = (value, v) => ({ value, var: v, rule: '.chip', at: 'a.css:2', confidence: 'verified' });
+  const code = { components: { chip: { confidence: 'high', instance: { hasText: true }, fill: 'direct',
+    props: { backgroundColor: fact('rgb(255, 255, 255)', '--local-bg'), color: fact('rgb(0, 0, 0)', '--ink'), paddingTop: fact('4px') },
+    colors: { light: { backgroundColor: 'rgb(255, 255, 255)', color: 'rgb(0, 0, 0)' }, dark: { backgroundColor: 'rgb(0, 0, 0)', color: 'rgb(255, 255, 255)' } },
+    states: { 'State=Hover': { changed: { backgroundColor: { value: 'rgb(200, 200, 200)', rule: '.chip:hover', at: 'a.css:9' } },
+      colors: { light: { backgroundColor: 'rgb(200, 200, 200)', color: 'rgb(0, 0, 0)' }, dark: { backgroundColor: 'rgba(255, 255, 255, 0.1)', color: 'rgb(255, 255, 255)' } } } } } } };
+  const paint = (token, opacity = 1) => ({ token, hex: '#000000', opacity });
+  const structure = { chip: { fillStructure: 'direct', colors: { fill: paint('chip/bg/color'), text: paint('ink/color') }, defaultVariant: 'State=Default',
+    variants: { 'State=Default': { paddingPx: [4, 8, 4, 8], colors: { fill: paint('chip/bg/color') } }, 'State=Hover': { paddingPx: [4, 8, 4, 8], colors: { fill: paint('chip/hover/color', 0.1) } } } } };
+  const vars = { color: { light: { 'chip/bg/color': '#ffffff', 'ink/color': '#000000', 'chip/hover/color': '#c8c8c8' }, dark: { 'chip/bg/color': '#111111', 'ink/color': '#ffffff', 'chip/hover/color': '#ffffff' } } };
+  const r = compareComponents(code, structure, vars, cfg, maps());
+  const got = r.differ.map((d) => `${d.field}: ${d.figmaValue} vs ${d.code}`);
+  assert.deepEqual(got, ['background [dark]: #111111 vs rgb(0, 0, 0)', 'background (State=Hover) [light]: #c8c8c81a vs rgb(200, 200, 200)'], JSON.stringify(r.differ));
+  assert.equal(r.differ[1].at, 'a.css:9');                                   // the state's own rule
+  // The token's own variable in code is a match by itself (its value per mode is Gate 3's job).
+  code.components.chip.props.backgroundColor.var = '--chip-bg';
+  assert.equal(compareComponents(code, structure, vars, cfg, maps()).differ.filter((d) => d.field === 'background [dark]').length, 0);
+});
+
+test('variants: each Figma axis value is the default, a produced state or a declared one; the rest is listed', async () => {
+  const { compareVariants } = await import('../capture-compare.mjs');
+  const code = { components: { chip: { states: { 'State=Hover': {} }, statesNotProduced: [{ state: 'State=Focus' }] } } };
+  const structure = { chip: { defaultVariant: 'State=Default, Size=M', variants: { 'State=Default, Size=M': {}, 'State=Hover, Size=M': {}, 'State=Focus, Size=M': {}, 'State=Default, Size=L': {} } } };
+  const r = compareVariants(code, structure);
+  assert.deepEqual(r.missing, [{ component: 'chip', axis: 'size', value: 'l' }]);
+  assert.equal(r.built, 4);
+});
+
+test('breakpoints: a responsive token against the value measured at that breakpoint width', async () => {
+  const { compareBreakpoints } = await import('../capture-compare.mjs');
+  const code = { components: { card: { props: { paddingLeft: { rule: '.card', at: 'a.css:3' } }, breakpoints: { Phone: { width: 375, paddingLeft: '8px', columnGap: '8px' }, Desktop: { width: 1024, paddingLeft: '16px', columnGap: '8px' } } } } };
+  const structure = { card: { paddingVar: { lr: 'padding/page' }, gapVar: 'gap/m' } };
+  const vars = { breakpoints: { Phone: { 'viewport/min-width': '0', 'padding/page': '12px' }, Desktop: { 'viewport/min-width': '1024', 'padding/page': '16px' } } };
+  const r = compareBreakpoints(code, structure, vars);
+  assert.deepEqual(r.differ.map((d) => `${d.field}: ${d.figmaValue} vs ${d.code}`), ['padding (left) @ Phone (375px): 12px vs 8px']);
+  assert.equal(r.match, 1);                                  // gap/m is not responsive: not compared here
+});
