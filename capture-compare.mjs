@@ -31,7 +31,7 @@ export async function loadParityMaps(ROOT, cfg) {
 }
 
 const toNum = (v) => { const n = parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0; };
-const isColor = (v) => /^(#|rgba?\(|hsla?\(|transparent$)/i.test(String(v ?? '').trim());
+const isColor = (v) => /^(#|rgba?\(|hsla?\(|oklch\(|oklab\(|color\(|transparent$)/i.test(String(v ?? '').trim());
 const valueMatch = (a, b) => {
   const kind = isColor(a) || isColor(b) ? 'color' : 'height';
   return sameValue(kind, String(a).trim(), String(b).trim());
@@ -154,7 +154,7 @@ export function compareIcons(code, figmaIcons) {
   const out = { match: 0, differ: [], missingInCode: [], codeOnly: 0 };
   const icons = code.icons ?? {};
   for (const [id, f] of Object.entries(figmaIcons ?? {})) {
-    if (id.startsWith('_') || !f || typeof f !== 'object') continue;
+    if (id.startsWith('_') || !f || typeof f !== 'object' || Array.isArray(f)) continue;   // an inventory list is not an icon
     const c = icons[id];
     if (!c) { out.missingInCode.push(id); continue; }
     const diffs = [];

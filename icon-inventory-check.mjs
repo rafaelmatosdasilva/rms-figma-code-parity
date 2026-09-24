@@ -21,15 +21,17 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
   console.error('❌ ds-config.json not found at project root.'); process.exit(1);
 }
 
-const SNAP = 'figma-icons.snapshot.json';
+// The inventory lives in figma-icon-inventory.snapshot.json when figma-icons.snapshot.json holds the
+// icon path data (paths.snapshotIcons pointing at it); otherwise in figma-icons.snapshot.json.
+const SNAP = existsSync(join(ROOT, 'figma-icon-inventory.snapshot.json')) ? 'figma-icon-inventory.snapshot.json' : 'figma-icons.snapshot.json';
 if (!existsSync(join(ROOT, SNAP))) {
-  console.log('⏭  icon inventory: no figma-icons.snapshot.json - skipped (capture it to enable)');
+  console.log(`⏭  icon inventory: no ${SNAP} - skipped (capture it to enable)`);
   process.exit(0);
 }
 let icons = [];
 try { icons = JSON.parse(readFileSync(join(ROOT, SNAP), 'utf8')).icons ?? []; } catch { /* malformed */ }
 if (!Array.isArray(icons) || !icons.length) {
-  console.log('⏭  icon inventory: figma-icons.snapshot.json has no icons - skipped');
+  console.log(`⏭  icon inventory: ${SNAP} has no icons - skipped`);
   process.exit(0);
 }
 

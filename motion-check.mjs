@@ -17,6 +17,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildResolver } from './mode-resolver.mjs';
+import { sameValue, sameEasing } from './css-values.mjs';
 import { loadCssSources } from './css-source.mjs';
 import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';
 
@@ -57,7 +58,8 @@ for (const [token, figmaVal] of Object.entries(motion)) {
   if (cssVar === null) { SKIPPED.push(`${token} (documented)`); continue; }
   const css = resolveRaw(cssVar, 'root');
   if (css == null) { SKIPPED.push(`${token} (no CSS var ${cssVar})`); continue; }
-  if (norm(css) === norm(figmaVal)) OK.push(token);
+  // 200ms = 0.2s, ease-in-out = cubic-bezier(0.42, 0, 0.58, 1), .4 = 0.4 (css-values.mjs).
+  if (norm(css) === norm(figmaVal) || sameValue(css, figmaVal, 'time') === true || sameEasing(css, figmaVal) === true) OK.push(token);
   else BAD.push({ token, cssVar, figmaVal, css });
 }
 

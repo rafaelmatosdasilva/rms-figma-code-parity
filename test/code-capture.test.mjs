@@ -260,3 +260,18 @@ test('components without a browser: the base rule is read statically, single-sou
   const { snapshot } = await captureCode(dir, { ...cfg, codeReading: { browser: 'off' } }, { force: true });
   assert.deepEqual(snapshot.components.chip.props.paddingRight, { value: '12px', var: '--pad-m', at: 'theme.css:2', confidence: 'single-source', readBy: 'static', why: 'browser reading switched off' });
 });
+
+browserTest('components: when the built page and the source disagree, the value is uncertain, never a design fact', async () => {
+  const { dir, cfg } = componentProject();
+  // A stale build: the page carries its own copy of the rule with a different value.
+  const fs = await import('node:fs');
+  const page = fs.readFileSync(`${dir}/app/ui.html`, 'utf8').replace('<style>', '<style>.chip{padding-left:20px}');
+  fs.writeFileSync(`${dir}/app/ui.html`, page);
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  const f = snapshot.components.chip.props.paddingLeft;
+  assert.equal(f.value, '20px');
+  assert.equal(f.confidence, 'uncertain');
+  assert.deepEqual([f.readings.browser, f.readings.static], ['20px', '12px']);
+  // Values the two readings agree on stay verified.
+  assert.equal(snapshot.components.chip.props.paddingTop.confidence, 'verified');
+});

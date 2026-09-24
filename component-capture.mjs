@@ -18,6 +18,7 @@
 //      winning rule recorded as the override it is; a disagreement nothing explains is `uncertain`.
 
 import { walkCss, rootTokens, resolveVars } from './css-source.mjs';
+import { parseColor, lengthPx } from './css-values.mjs';
 
 // The measured properties, and the declarations (longhand, logical, shorthand) that can set each.
 export const TRACE = {
@@ -243,26 +244,14 @@ export function staticDeclFor(index, selectorText, prop, rootVars) {
   return hit;
 }
 
-// Compare a static value with a computed one: px lengths, colours as rgba, numbers.
+// Compare a static value with a computed one: px lengths, colours as rgba, numbers. The reading of
+// units and colours is css-values.mjs (rem, calc(), hsl(), oklch(), color(srgb …) included).
 function toRgba(v) {
-  const s = String(v).trim().toLowerCase();
-  let m = s.match(/^#([0-9a-f]{3,8})$/);
-  if (m) {
-    let h = m[1]; if (h.length <= 4) h = h.split('').map((c) => c + c).join('');
-    const n = (i) => parseInt(h.slice(i, i + 2), 16);
-    return [n(0), n(2), n(4), h.length === 8 ? Math.round(n(6) / 255 * 100) / 100 : 1];
-  }
-  m = s.match(/^rgba?\(([^)]*)\)$/);
-  if (m) { const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return [p[0], p[1], p[2], p[3] ?? 1].map((x, i) => (i === 3 ? Math.round(x * 100) / 100 : Math.round(x))); }
-  if (s === 'transparent') return [0, 0, 0, 0];
-  if (s === 'white') return [255, 255, 255, 1];
-  if (s === 'black') return [0, 0, 0, 1];
-  return null;
+  const c = parseColor(v);
+  return c ? [Math.round(c[0]), Math.round(c[1]), Math.round(c[2]), Math.round(c[3] * 100) / 100] : null;
 }
 function toPx(v) {
-  const m = String(v).trim().match(/^(-?\d*\.?\d+)(px|rem)?$/);
-  if (!m) return null;
-  return m[2] === 'rem' ? +m[1] * 16 : +m[1];
+  return lengthPx(v, { unitless: true });
 }
 // Does a declared border width render as `drawn` under whole-pixel snapping?
 export function borderSnaps(declared, drawn) {
@@ -389,11 +378,13 @@ export async function captureComponents(ctx) {
         if (/Width$/.test(prop) && agree === false && borderSnaps(toPx(sv), toPx(value))) { agree = true; fact.value = s.value; fact.drawn = value; fact.note = 'browsers draw border widths in whole pixels'; }
         // A min-height (or max-height) larger than the declared height wins over it.
         if (prop === 'height' && agree === false && (toPx(base?.cs?.minHeight) === toPx(value) || toPx(base?.cs?.maxHeight) === toPx(value))) { agree = true; fact.declared = s.value; fact.note = `${toPx(base?.cs?.minHeight) === toPx(value) ? 'min-height' : 'max-height'} wins over the declared height`; }
+        // Agree → verified; disagree → uncertain (a reading problem, never a design difference);
+        // not comparable → single-source. Where the value is located is a separate question.
         if (agree === null) { fact.confidence = 'single-source'; fact.why = 'the two readings are not comparable'; }
         else if (agree) fact.confidence = 'verified';
+        else { fact.confidence = 'uncertain'; fact.readings = { browser: value, static: s.value, staticAt: s.at }; }
         // Point at the source, not the built page (which may inline and minify it); keep both.
         if (s.at && fact.at && s.at !== fact.at) { fact.renderedAt = fact.at; fact.at = s.at; }
-        else { fact.confidence = 'uncertain'; fact.readings = { browser: value, static: s.value, staticAt: s.at }; }
       }
       // The component's own base rule says something else, but another rule wins here.
       const own = stat[prop];

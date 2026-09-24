@@ -23,7 +23,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from '
 import { join } from 'path';
 import { loadTokensDict, tokenSource } from './fix-hint.mjs';
 import { loadCssSources, rootTokens, blankComments, neverAppliedRootSelectors } from './css-source.mjs';
-import { readFreshSnapshot } from './code-capture.mjs';   // the cascade-aware theme reader (shared with the code capture)
+import { readFreshSnapshot } from './code-capture.mjs';
+import { colorHex, sameColor, sameValue } from './css-values.mjs';   // #fff = #ffffff, rgb()/hsl()/oklch() = hex, 0.5rem = 8px   // the cascade-aware theme reader (shared with the code capture)
 import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';   // shared Figma↔code naming convention
 
 const ROOT     = process.cwd();
@@ -226,10 +227,12 @@ function resolve(varName, modeIdx, depth = 0) {
   if (vMatch)  { const r = resolve(vMatch[1],  modeIdx, depth + 1); cache.set(varName, r); return r; }
   const vfMatch = t.match(/^var\((--.+?),/);
   if (vfMatch) { const r = resolve(vfMatch[1], modeIdx, depth + 1); cache.set(varName, r); return r; }
-  if (/^#[0-9a-fA-F]{3,8}$/.test(t)) {
-    const r = t.toLowerCase();
-    cache.set(varName, r);
-    return r;
+  // Any colour the browser understands (short hex, rgb(), hsl(), oklch(), color(srgb …)) is read
+  // as canonical hex, so a spelling difference is never reported as a design difference.
+  const hex = colorHex(t);
+  if (hex) {
+    cache.set(varName, hex);
+    return hex;
   }
   cache.set(varName, null);
   return null;
@@ -416,15 +419,16 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
     const actualVar = loc.name;   // real declared name (handles a differing case)
     const cssHex = resolve(actualVar, modeIdx);
     if (cssHex === null) {
-      NEW_SKIP.push({ dimension: 'color', token, cssVar: actualVar, mode: modeMeta.name, reason: 'CSS resolves to non-hex - add to SKIP_TOKENS in parity-map.mjs if intentional' });
+      NEW_SKIP.push({ dimension: 'color', token, cssVar: actualVar, mode: modeMeta.name, reason: 'CSS value is not a colour this gate can read (a gradient, a display-p3 colour, a keyword) - add to SKIP_TOKENS in parity-map.mjs if intentional' });
       continue;
     }
-    if (figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
+    const sameHex = sameColor(figmaHex, cssHex) ?? (figmaHex.toLowerCase() === cssHex.toLowerCase());
+    if (!sameHex) {
       // Cross-check against DS source: if source matches CSS, consumer just has a pending
       // library update - this is not a code bug. Route to PENDING_FIGMA_SYNC instead of FAIL.
       const sourceHex = sourceSnap?.[modeMeta.snapshotKey]?.[tokenKey]
                      ?? sourceSnap?.[modeMeta.snapshotKey]?.[token] ?? null;
-      if (sourceHex && sourceHex.toLowerCase() === cssHex.toLowerCase()) {
+      if (sourceHex && (sameColor(sourceHex, cssHex) ?? sourceHex.toLowerCase() === cssHex.toLowerCase())) {
         PENDING_FIGMA_SYNC.push({ token, cssVar: actualVar, mode: modeMeta.name, consumerFigma: figmaHex, css: cssHex });
       } else {
         FAIL.push({
@@ -517,7 +521,7 @@ for (const [token, figmaVal] of Object.entries(snap.sizing ?? {})) {
     NEW_SKIP.push({ dimension: 'sizing', token, cssVar: actualVar, mode: '-', reason: 'CSS var did not resolve to a literal' });
     continue;
   }
-  if (String(figmaVal).trim() !== cssVal.trim()) {
+  if (!(sameValue(figmaVal, cssVal, 'length') ?? String(figmaVal).trim() === cssVal.trim())) {
     const fixHint = sizingFixHint(actualVar, figmaVal);
     FAIL.push({ dimension: 'sizing', token, cssVar: actualVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${actualVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
     if (FIX_MODE) {
@@ -556,7 +560,7 @@ if (snap.typography && Object.keys(TYPO).length) {
       NEW_SKIP.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar: actualVar, mode: '-', reason: 'CSS var did not resolve' });
       continue;
     }
-    if (String(figmaVal).trim() !== cssVal.trim()) {
+    if (!(sameValue(figmaVal, cssVal, 'any') ?? String(figmaVal).trim() === cssVal.trim())) {
       const fixHint = sizingFixHint(actualVar, figmaVal);
       FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar: actualVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${actualVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
       if (FIX_MODE) {

@@ -17,7 +17,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join, resolve as resolvePath } from 'path';
-import { loadCssSources } from './css-source.mjs';
+import { loadCssSources, walkCss, styleBlocksOf, blankComments } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 import { createLocator } from './component-locator.mjs';
@@ -120,14 +120,22 @@ const importedSources = (() => {
 })();
 let themeCSS = themeSources[0]?.ok ? themeSources[0].text : null;   // value gates read the first theme file
 const allCss = [...themeSources, ...importedSources, ...pluginSources].filter(s => s.ok).map(s => s.text).join('\n');
+// The CSS itself, for the rule index: an HTML entry contributes only its <style> blocks (never its
+// script text), and the theme counts with the files it @imports.
+const cssOnly = (s) => (/\.html?$/i.test(String(s.entry)) ? styleBlocksOf(s.text) : s.text);
+const themeRulesCSS = [...themeSources.slice(0, 1), ...importedSources].filter(s => s.ok).map(cssOnly).join('\n');
+const allRulesCSS   = [...themeSources, ...importedSources, ...pluginSources].filter(s => s.ok).map(cssOnly).join('\n');
 
-// Build block indexes once - findBlock() uses these for O(1) lookups
-// lightCSS strips @media blocks so dark-mode overrides can't shadow light-mode entries.
-// Gate [3c] (CSS_BASE_RULE_VARS) uses lightIndex; all other gates use themeIndex.
-const lightCSS   = themeCSS ? stripAtRules(themeCSS) : null;
-const themeIndex = themeCSS ? buildBlockIndex(themeCSS) : null;
-const lightIndex = lightCSS ? buildBlockIndex(lightCSS) : null;
-const allIndex   = buildBlockIndex(allCss);
+// Rule indexes, built once. Each selector maps to the declarations that WIN for it, the way the
+// browser applies them (cascade layers, !important, source order; grouped selectors and nesting
+// read by css-source.mjs). @media blocks are overrides, not the base rule, so they are left out.
+const themeIndex = themeCSS ? buildBlockIndex(themeRulesCSS) : null;
+const lightIndex = themeIndex;
+const lightCSS   = themeCSS ? stripAtRules(themeCSS) : null;   // line-scan fallback text for complex selectors
+const allIndex   = buildBlockIndex(allRulesCSS);
+// Every rule, @media ones included, for checks that must see overrides too (phantom borders).
+const allRuleList = walkCss(blankComments(allRulesCSS), '').flatMap(r =>
+  r.selectors.map(sel => [sel.replace(/\s+/g, ' ').trim(), r.decls.map(d => `${d.prop}: ${d.value}${d.important ? ' !important' : ''};`).join('\n')]));
 
 // ── Preflight: is there real, COMPILED component CSS to check against? ─────────
 // This gate matches literal compiled selectors (e.g. `.button-primary.m`). Those never appear in
@@ -232,24 +240,27 @@ function stripAtRules(css) {
   return result;
 }
 
-// buildBlockIndex - parse CSS once into Map<normalizedSelector → blockContent>.
-// Handles flat rules only (no nested braces). Called once per CSS source on load;
-// subsequent findBlock calls hit the Map in O(1) instead of scanning all lines.
+// buildBlockIndex - parse CSS once into Map<normalizedSelector → winning declarations>. Every rule
+// for the selector counts (not only the longest one), and per property the one the browser applies
+// wins: normal layered < normal unlayered < !important unlayered < !important layered, then order.
 function buildBlockIndex(css) {
+  const bySel = new Map();
+  let order = 0;
+  for (const rule of walkCss(blankComments(css), '')) {
+    if (rule.atRules.some(a => !/^@(layer|supports)\b/i.test(a))) continue;
+    const layered = rule.atRules.some(a => /^@layer\b/i.test(a));
+    for (const sel of rule.selectors) {
+      const k = sel.replace(/\s+/g, ' ').trim();
+      if (!k) continue;
+      if (!bySel.has(k)) bySel.set(k, []);
+      for (const d of rule.decls) bySel.get(k).push({ ...d, order: order++, rank: d.important ? (layered ? 3 : 2) : (layered ? 0 : 1) });
+    }
+  }
   const index = new Map();
-  const re = /([^{}]+)\{([^{}]*)\}/g;
-  let m;
-  while ((m = re.exec(css)) !== null) {
-    const sel = m[1].trim().replace(/\s+/g, ' ');
-    if (!sel) continue;
-    // A selector can appear more than once — the base rule plus @media / state overrides. Keep the
-    // block with the MOST content (the base rule) instead of the last one seen: a bare-selector
-    // override nested in @media (e.g. `@media (dark) { .buttonTertiary { color } }`) would otherwise
-    // clobber the full base rule, so its geometry (height/padding/gap/radius) went silently
-    // unchecked — that is how the button root gap drifted with no gate catching it. Ties keep the
-    // first (base normally comes first). Overrides are still reachable via the line-scan fallback.
-    const prev = index.get(sel);
-    if (prev === undefined || m[2].length > prev.length) index.set(sel, m[2]);
+  for (const [k, decls] of bySel) {
+    const win = new Map();
+    for (const d of [...decls].sort((a, b) => (a.rank - b.rank) || (a.order - b.order))) win.set(d.prop, d);
+    index.set(k, [...win.values()].sort((a, b) => a.order - b.order).map(d => `  ${d.prop}: ${d.value}${d.important ? ' !important' : ''};`).join('\n'));
   }
   return index;
 }
@@ -304,7 +315,7 @@ function propHasVar(block, prop, expectedVar) {
   if (!block || !expectedVar) return false;
   const re = new RegExp('(?<![a-zA-Z-])' + prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;]+)');
   const m  = block.match(re);
-  return m ? m[1].includes(`var(${expectedVar})`) : false;
+  return m ? new RegExp(`var\\(\\s*${expectedVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[,)]`).test(m[1]) : false;
 }
 function propActual(block, prop) {
   if (!block) return '(not set)';
@@ -312,6 +323,29 @@ function propActual(block, prop) {
   const m  = block?.match(re);
   return m ? m[1].trim().slice(0, 60) : '(not set)';
 }
+
+// The four padding sides a rule sets, read like the browser: the shorthand, then physical and logical
+// longhands in order (last wins; logical sides assume left-to-right). Values are the raw expressions.
+function paddingSides(block) {
+  const sides = { top: null, right: null, bottom: null, left: null };
+  if (!block) return sides;
+  const split = (v) => v.trim().match(/(?:[^\s()]+|\((?:[^()]|\([^()]*\))*\))+/g) ?? [];
+  for (const m of block.matchAll(/(?<![a-zA-Z-])(padding(?:-(?:top|right|bottom|left|inline|block|inline-start|inline-end|block-start|block-end))?)\s*:\s*([^;\n]+)/g)) {
+    const prop = m[1], v = m[2].replace(/!important/, '').trim(), p = split(v);
+    if (prop === 'padding') {
+      const [a, b = a, c = a, d = b] = p;
+      Object.assign(sides, { top: a, right: b, bottom: c, left: d });
+    } else if (prop === 'padding-inline') { sides.left = p[0]; sides.right = p[1] ?? p[0]; }
+    else if (prop === 'padding-block') { sides.top = p[0]; sides.bottom = p[1] ?? p[0]; }
+    else {
+      const side = { 'padding-top': 'top', 'padding-right': 'right', 'padding-bottom': 'bottom', 'padding-left': 'left',
+        'padding-inline-start': 'left', 'padding-inline-end': 'right', 'padding-block-start': 'top', 'padding-block-end': 'bottom' }[prop];
+      if (side) sides[side] = v;
+    }
+  }
+  return sides;
+}
+const usesVar = (expr, v) => !!expr && new RegExp(`var\\(\\s*${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[,)]`).test(expr);
 
 // ── 1. Snapshot vs CONTRACT ───────────────────────────────────────────────────
 const components = snap.components ?? {};
@@ -647,8 +681,12 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
       }
     };
 
-    if (contract.gapVar)
-      check('gap', gapBlock, 'gap', FIGMA_LAYOUT_TO_CSS[contract.gapVar], selCfg.gapSel ?? selCfg.main);
+    if (contract.gapVar) {
+      // gap, or the axis-specific row-gap / column-gap, may carry the token.
+      const gv = FIGMA_LAYOUT_TO_CSS[contract.gapVar];
+      const gprop = ['gap', 'column-gap', 'row-gap'].find(p => propHasVar(gapBlock, p, gv)) ?? 'gap';
+      check('gap', gapBlock, gprop, gv, selCfg.gapSel ?? selCfg.main);
+    }
     else if (typeof contract.gapPx === 'number') {
       // Root gap the DS renders as a raw literal, INCLUDING 0 (a flush root — e.g. a button whose
       // label sits against the icon with only the LabelContainer padding). Token-bound root gaps go
@@ -664,10 +702,19 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
         else PROP_FAIL.push(`${comp}/gap: "${got ?? '(not set)'}" ≠ ${contract.gapPx === 0 ? '0' : contract.gapPx + 'px'} [raw ${contract.gapPx}px root gap]`);
       }
     }
+    // Padding by side: top and bottom must both use the tb token, left and right the lr token, so a
+    // swapped shorthand (`padding: var(--lr) var(--tb)`) fails and padding-inline/-block count.
+    const sides = paddingSides(mainBlock);
+    const checkSides = (label, pair, expectedVar) => {
+      if (!expectedVar) return;
+      const bad = pair.filter(s => !usesVar(sides[s], expectedVar));
+      if (!bad.length) PROP_PASS.push(`${comp}/${label}`);
+      else PROP_FAIL.push(`${comp}/${label}: expected var(${expectedVar}) on ${pair.join(' and ')} - got ${pair.map(s => `${s} ${sides[s] ?? '(not set)'}`).join(', ')}`);
+    };
     if (contract.paddingVar?.tb && !selCfg.skipTBPadding)
-      check('padding-tb', mainBlock, 'padding', FIGMA_LAYOUT_TO_CSS[contract.paddingVar.tb], selCfg.main);
+      checkSides('padding-tb', ['top', 'bottom'], FIGMA_LAYOUT_TO_CSS[contract.paddingVar.tb]);
     if (contract.paddingVar?.lr && !selCfg.skipLRPadding)
-      check('padding-lr', mainBlock, 'padding', FIGMA_LAYOUT_TO_CSS[contract.paddingVar.lr], selCfg.main);
+      checkSides('padding-lr', ['left', 'right'], FIGMA_LAYOUT_TO_CSS[contract.paddingVar.lr]);
     if (contract.fontSizeVar)
       check('font-size', fontBlock, 'font-size', FONT_SCALE_TO_CSS[contract.fontSizeVar]?.size, selCfg.fontSel ?? selCfg.main);
     if (contract.fontWeightVar)
@@ -759,7 +806,7 @@ const TRANSPARENT_VAL_RE = /\btransparent\b|^\s*(?:none|0(?:px)?)\s*(?:!importan
 
 if (Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).length) {
   // Build flat list of (selector, block) from allIndex once, reuse per component.
-  const allRules = [...allIndex.entries()]; // [selector, blockContent]
+  const allRules = allRuleList; // [selector, declarations] for every rule, @media overrides included
 
   for (const [comp, selCfg] of Object.entries(COMPONENT_CSS_SELECTORS)) {
     const snapComp = components[comp];
@@ -778,7 +825,7 @@ if (Object.keys(COMPONENT_CSS_SELECTORS).length && Object.keys(components).lengt
 
     for (const [sel, block] of allRules) {
       // Only rules whose selector contains the component's base class.
-      if (!sel.includes(baseClass)) continue;
+      if (!new RegExp(baseClass.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(sel)) continue;   // .badge, not .badge-wrapper
       // Skip known exceptions.
       if (PHANTOM_SKIP.has(sel)) { PHANTOM_PASS.push(`${comp}: "${sel}" (exempted)`); continue; }
 

@@ -2244,7 +2244,10 @@ function reportFull(label, items, shown) {
       () => refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
       () => refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
       () => (cfg.iconLibraryFileKey || cfg.icons?.libraryFileKey)
-        ? refreshIcons(cfg.iconLibraryFileKey ?? cfg.icons.libraryFileKey, figmaToken, join(ROOT, 'figma-icons.snapshot.json'), cfg.icons ?? {})
+        // The inventory (a list of names) never overwrites the icon path data the icon gate reads:
+        // when paths.snapshotIcons is this same file, the inventory gets its own file.
+        ? refreshIcons(cfg.iconLibraryFileKey ?? cfg.icons.libraryFileKey, figmaToken,
+            join(ROOT, cfg.paths?.snapshotIcons && resolve(ROOT, cfg.paths.snapshotIcons) === join(ROOT, 'figma-icons.snapshot.json') ? 'figma-icon-inventory.snapshot.json' : 'figma-icons.snapshot.json'), cfg.icons ?? {})
         : Promise.resolve(),
       () => SNAP_FRAME_GEOM ? refreshFrameGeometry(figmaFileKey, cfg.frames ?? [], figmaToken, join(ROOT, SNAP_FRAME_GEOM)) : Promise.resolve(),
       () => refreshScreenElements(figmaFileKey, cfg.screens ?? cfg.frames ?? [], figmaToken, join(ROOT, 'figma-screens.snapshot.json')),
