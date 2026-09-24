@@ -9,6 +9,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join }                     from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -19,7 +20,7 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 
 let ICON_USAGES = [];
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.ICON_USAGES && Array.isArray(m.ICON_USAGES)) ICON_USAGES = m.ICON_USAGES;
 } catch { /* optional - skip if not present */ }
 

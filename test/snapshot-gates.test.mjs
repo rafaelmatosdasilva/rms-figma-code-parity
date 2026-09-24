@@ -95,3 +95,20 @@ test('structure gate: a rendered value that differs from Figma is listed as meas
   assert.match(r.out, /chip height: Figma 32, rendered 48\s+\(\.chip\.big · app\.css:1\)/);
   assert.equal(r.code, plain.code, 'advisory only');
 });
+
+test('structure gate: renderedParityStrict makes a measured difference fail the gate', async () => {
+  const files = {
+    'ds-config.json': JSON.stringify({ paths: { themeCSS: 'theme.css', snapshotStructure: 'figma-structure.snapshot.json', pluginCSS: ['app.css'] }, renderedParityStrict: true }),
+    'theme.css': ':root { --h: 32px; }\n.chip { height: var(--h); }',
+    'app.css': '.chip.big { height: 48px; }',
+    'figma-structure.snapshot.json': JSON.stringify({ components: { chip: { h: 32 } } }),
+    'structure-contract.mjs': "export const CONTRACT = { chip: { h: 32 } }; export const COMPONENT_CSS_SELECTORS = { chip: { main: '.chip' } };",
+  };
+  const { dir } = await withSnapshot(files, (s) => {
+    s._sources.browser = 'chrome';
+    s.components = { chip: { selector: '.chip', size: { height: 48 }, props: { height: { value: '48px', rule: '.chip.big', at: 'app.css:1', confidence: 'verified' } } } };
+  });
+  const r = run(dir, 'structure-check.mjs');
+  assert.match(r.out, /❌ MEASURED 1/, r.out);
+  assert.equal(r.code, 1);
+});

@@ -14,10 +14,24 @@ export function extractDynamicClassPrefixes(corpus) {
   const fragments = [
     // '…prefix-' +   and   "…prefix-" +
     ...[...corpus.matchAll(new RegExp(`['"]([^'"]{0,${PREFIX_SCAN_CAP}}?)['"]\\s*\\+`, 'g'))].map(m => m[1]),
-    // `…prefix-${expr}`
-    ...[...corpus.matchAll(new RegExp(`([^\`$}]{0,${PREFIX_SCAN_CAP}})\\$\\{`, 'g'))].map(m => m[1]),
+    // `…prefix-${expr}`: found from each "${" backwards (up to the cap, stopping at ` $ or }). A regex
+    // anchored nowhere retried the cap from every position of the corpus, seconds on a large project.
+    ...templateFragments(corpus),
   ];
   return fragments
     .map(frag => frag.match(/([a-zA-Z][\w-]*-)$/)?.[1])
     .filter(Boolean);
+}
+
+function templateFragments(corpus) {
+  const out = [];
+  let prevEnd = 0;
+  for (let q = corpus.indexOf('${'); q !== -1; q = corpus.indexOf('${', q + 2)) {
+    if (q < prevEnd) continue;
+    let p = q;
+    while (p > prevEnd && q - p < PREFIX_SCAN_CAP && !'`$}'.includes(corpus[p - 1])) p--;
+    out.push(corpus.slice(p, q));
+    prevEnd = q + 2;
+  }
+  return out;
 }

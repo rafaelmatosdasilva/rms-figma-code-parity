@@ -244,8 +244,8 @@ rms-figma-code-parity --docs                          # ALSO build the styleguid
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
 rms-figma-code-parity --baseline                      # capture today's failing gates as accepted adoption debt (commit parity-baseline.json)
 rms-figma-code-parity --no-baseline                   # ignore any parity-baseline.json this run (enforce every gate)
-node scripts/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
-node scripts/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
+node ~/.claude/skills/rms-figma-code-parity/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
+node ~/.claude/skills/rms-figma-code-parity/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
 ```
 
 ### The design-intent layer (auto OUTPUT, never a gate)
@@ -546,8 +546,10 @@ only when it is told exactly what exists, and its output is checked every time. 
 and the code prop name when known), the components it may contain (from Figma's composition and the
 nesting the code capture saw), what it must never contain, and its status. `llms.txt` gets the same
 catalog as an aligned table (`Badge  Tone=info|warn  Text=text`), because small models read aligned
-tables far better than JSON Schema. Interaction states (hover, focus) are left out: the component owns
-them, not the generator.
+tables far better than JSON Schema. Interaction states (hover, focus) are not props a generator sets:
+the component owns them. When the code capture is fresh, each entry also has `rendered`: its size on a
+real page, `targetSize` for a control (with `atLeast24`, WCAG 2.5.8), and what each state changes, by
+token where the code uses one (`"State=Hover": { "backgroundColor": "var(--btn-bg-hover)" }`).
 
 `rms-figma-code-parity --check-ui <generated.json>` checks one generated UI against that catalog. It
 accepts a flat A2UI-style list (`{ root, components: [{ id, component, children: [ids], …props }] }`) or a
@@ -623,7 +625,64 @@ bespoke app that exposes no page index is the only case that needs a `--url` / `
 
 **Live hover contrast via `--states`:** opt in (or `a11y.interactionStates:true`) and it forces `:hover` (CDP `CSS.forcePseudoState`) on the interactive elements and re-measures, flagging text that reads fine at rest but drops below AA while hovered — the one interaction-state case axe cannot see (it reads the resting DOM).
 
-**Not yet (v2, by design):** forcing `:active`; and **reflow / text-resize** (WCAG 1.4.10 / 1.4.4) — these need a real screen target (they false-positive on a component catalog), so run them against a `--url` screen. Reading order / skip-links / landmarks are covered by `--axe` above.
+**Deeper checks (every run, every page).** Each is isolated: a check that cannot run on a page is skipped
+there, never a failure.
+- **Every colour mode, switched properly** — media emulation, a class or a data attribute on the root, or
+  high contrast, the same way the code capture switches them — and contrast, focus and the focus ring are
+  checked in every mode (a finding in several modes is reported once, with its modes).
+- **Real keyboard focus** — a Tab key press first, so `:focus-visible` styles show as a keyboard user sees
+  them. A focus style drawn with a background change, an underline or on `::before`/`::after` counts; a ring
+  drawn outside the element is measured against the parent's background.
+- **Target size (2.5.8)** — a control under 24×24 with another control inside its 24px circle. Links in
+  running text, and inputs whose label is the target, are exempt.
+- **Keyboard walk** — a real Tab walk: a focus trap, any positive `tabindex` (visits out of order), and a
+  focused control completely covered by other content such as a sticky header (2.4.11; on real pages,
+  not on the styleguide, whose sticky header is its own chrome).
+- **Keyboard activation** — a control built from a plain element (`role="button"`, `checkbox`, `switch`,
+  `tab`, `link`…) that does nothing on Enter (and Space for buttons, checkboxes and switches). The click is
+  caught before the element's own handler, so the check never navigates or submits.
+- **Arrow keys** — a radio group, tab list, menu or list box whose items do not move with the arrow keys.
+- **Dialogs and Escape** — an open dialog that does not close on Escape.
+- **Zoom to 200% (1.4.4)** — text that becomes cut off when the page is shown at twice its size.
+- **Focus ring thickness (2.4.13, AAA, advisory)** — a focus ring thinner than 2 CSS pixels. The browser's
+  own ring is not counted.
+- **Figma accessibility annotations** — a note on the component that states a role (`Role: button`), a
+  name (`aria-label: Close`), a heading level (`Heading level 2`, `H2`) or alt text (`Alt: …`) is checked
+  against what the component renders. Other notes stay notes.
+- **Reduced motion (2.3.3)** — under `prefers-reduced-motion: reduce`, anything that still transitions or
+  animates.
+- **Forced colours** — under `forced-colors: active` (Windows high contrast), a focus indicator that
+  disappears because it was only a shadow or a background.
+- **Text spacing (1.4.12)** — the spacing a reader may set (line height 1.5, letter spacing 0.12em, word
+  spacing 0.16em); text that becomes cut off.
+- **Semantics** — each component's rendered role (accessibility tree) against the contract's authored
+  `semantics` (`contract.authored.json`).
+- **Reflow at 320px (1.4.10)** — opt in with `a11y.reflow: true` for real screens (a component catalog is
+  not meant to reflow).
+- **State contrast, no browser needed** — from the code capture: each component's text against its own
+  background in every mode and every state the capture produced (hover, selected, error…). Disabled states
+  are exempt. A see-through background (a tint made with opacity or `color-mix()`) is blended over what
+  the capture saw behind it. Each finding names the two colour tokens, the rule's file and line, and
+  links the component in Figma. Printed with the token contrast in the audit.
+- **Token contrast** — see-through text is blended over its background; a see-through background (no
+  known surface under it) is skipped; disabled pairs are exempt; pairs come from every mode's token names.
+  A text token with the same colour as its background token is reported as not comparable: the component
+  applies that background as a tint, which only the rendered state contrast can measure.
+  Border, outline and focus-ring tokens are paired at 3:1 with `a11y.nonTextPairs: true` (opt-in: a border is
+  often decorative); dividers never are.
+- **On the styleguide, only the design system's components are checked** (their selectors), not the page's
+  own navigation and notes. The styleguide pins its own `data-color` mode; the check (and the code capture)
+  sets it to each mode it measures, so dark is really measured in dark.
+- **One element failing the same way in many places is one finding**, with the number of places and a few
+  of its texts, and each element names the design-system component it sits in.
+- **axe-core** must match a pinned SHA-384 hash before it is ever injected into a page (from the CDN, or
+  from the npm registry's package when a CDN is blocked). With `a11yStrict`, its serious and critical
+  findings count toward failing the check.
+- **axe-core** is cached in `~/.cache/rms-figma-code-parity` after the first download (or `a11y.axePath`
+  points at a local copy), runs the WCAG 2.0/2.1/2.2 A and AA rules explicitly, and is scoped to the
+  checked components.
+
+**Not yet:** forcing `:active`.
 
 #### Evals (I7, a separate entry point — measures agent OUTPUT, never gates the repo)
 
@@ -758,6 +817,23 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 ---
 
+### More settings (all optional)
+
+- `gateTimeoutSec` (default 180) - a gate that runs longer is stopped and reported as a failure ("timed out, not verified"), so one stuck gate never freezes the audit or a pre-commit hook.
+- `codeReading.timeoutSec` (default 120) - the time limit for the code capture inside the audit; past it the gates keep their own readings. `codeReading.hookBrowser: true` lets the capture use the browser inside git hooks too.
+- `scanExcludeDirs`, `scanExcludeFilenames` - folders and file names (with `*` wildcards) the hardcoded-value and clean-CSS scans skip, such as demo pages. The styleguide template and output are always skipped (they are generated surfaces).
+- `gate6ExcludeDirs` - folders the hardcoded-value scan skips, to scope it to the design system package (the layout checks still cover every file).
+- `knownHardcodedExceptions` (older name `knownFontSizeExceptions`) - literal values or patterns the hardcoded-value scan accepts. An entry that no longer excuses anything is listed so it can be removed.
+- `knownUnusedVars` - CSS variables that are kept on purpose although nothing uses them.
+- `knownPropExceptions` - `"Component/prop"` pairs the props gate does not compare.
+- `knownPhantomBorderExceptions` - selectors allowed to draw a border Figma does not have.
+- `knownPluginOverrides` - theme variables an app may redeclare on purpose; `knownPluginSelectors` - app selectors that need no contract entry.
+- `exemptionCheck.alwaysNative` - extra element names treated as native controls by the exemption check.
+- `pluginDirs` - `{ "<app>": "path/from/root" }` when an app does not live in `apps/<app>`.
+- `scopeMaxNestPerFile` (default 8) - how many nested selectors per file the token-scope check reads.
+- `rtl: true` - lists the declarations that would not mirror in a right-to-left language (one-sided or asymmetric `padding-left`, `margin-right`, `border-left`, `left`/`right` offsets, `text-align` and `float` left or right), each with its file and line and the logical property to use. Symmetric values are not listed.
+- `renderedParityStrict: true` - the measured differences (Gate [13] `MEASURED`) fail the gate instead of being advisory.
+
 ## Key Architecture Assumptions
 
 - **CSS mode mapping:** each mode's `cssSelector` in `ds-config.json` defines how it maps to CSS:
@@ -829,6 +905,22 @@ sweep finishes with a representative sample, logging `walk capped at N nodes`. N
 are far under the cap and are collected in full.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
+
+**A gate that could not run** (its snapshot or input is missing, exit 2) shows `⏭ not verified` with the
+gate's own reason, and `Not run` in the summary. It never fails the run and is never a pass: the verdict
+says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PASS`.
+
+**Since the last run.** The report ends with what changed since the previous run with the same scope:
+findings that are new, findings that are gone, and findings whose count or value moved. Accessibility
+findings are compared element by element (the check also writes `.parity-out/a11y.json`). The findings
+are kept in `.parity-out/last-findings.json`. A long report still says at a glance what this change did.
+
+**Reading a finding.** A measured difference names the component and field, the Figma value, the
+rendered value and its token, the winning rule with its `file:line`, and what to write there
+(`→ set var(--gap-xl)`). A value read from one source only (the browser or the stylesheet, not both)
+says `[read from one source]`. Each component with a finding gets a `🔗` line that opens its node in
+Figma (from `figmaFileKey` and the node ids in the snapshots). Lines that report nothing, such as
+`❌ FAIL 0`, are left out.
 
 ---
 
@@ -1072,12 +1164,15 @@ parity-checked. Both gates are **no-ops unless captured AND declared** in `ds-co
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-// Motion - EASING/TIMING variables → normalised CSS-comparable strings.
+// Motion - the Motion collection's variables → CSS-comparable strings. Figma variables are FLOAT
+// (durations, read as ms) or STRING (easing curves such as "cubic-bezier(0.4, 0, 0.2, 1)" or "ease-out");
+// EASING/TIMING are accepted too in case Figma adds dedicated types. The gate compares 200ms = 0.2s and
+// a keyword easing = its curve.
 function deref(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}return val;}
-function motionStr(val){if(val==null)return null;if(typeof val==='number')return val+'ms';const b=val.easingFunctionCubicBezier||val.cubicBezier||val.bezier;if(b&&('x1'in b))return `cubic-bezier(${b.x1}, ${b.y1}, ${b.x2}, ${b.y2})`;if('value'in val)return val.value+(val.unit==='MILLISECONDS'||!val.unit?'ms':'');return JSON.stringify(val);}
+function motionStr(val){if(val==null)return null;if(typeof val==='number')return val+'ms';if(typeof val==='string')return val.trim();const b=val.easingFunctionCubicBezier||val.cubicBezier||val.bezier;if(b&&('x1'in b))return `cubic-bezier(${b.x1}, ${b.y1}, ${b.x2}, ${b.y2})`;if('value'in val)return val.value+(val.unit==='MILLISECONDS'||!val.unit?'ms':'');return JSON.stringify(val);}
 const MOTION_COLLECTION='Motion'; // fill from figma.motion (or leave and let it match by type)
 const motionOut={};
-for(const c of collections){if(MOTION_COLLECTION&&c.name!==MOTION_COLLECTION)continue;const mid=c.modes[0].modeId;for(const id of c.variableIds){const v=idToVar[id];if(!v||(v.resolvedType!=='EASING'&&v.resolvedType!=='TIMING'))continue;const s=motionStr(deref(id,mid));if(s!=null)motionOut[v.name]=s;}}
+for(const c of collections){if(MOTION_COLLECTION&&c.name!==MOTION_COLLECTION)continue;const mid=c.modes[0].modeId;for(const id of c.variableIds){const v=idToVar[id];if(!v||!['FLOAT','STRING','EASING','TIMING'].includes(v.resolvedType))continue;const s=motionStr(deref(id,mid));if(s!=null)motionOut[v.name]=s;}}
 // Effects - local effect styles → canonical box-shadow "x y blur spread color[, …]".
 function rgba(c){return `rgba(${Math.round(c.r*255)}, ${Math.round(c.g*255)}, ${Math.round(c.b*255)}, ${+(c.a??1).toFixed(3)})`;}
 function effShadow(e){const p=[`${e.offset?.x??0}px`,`${e.offset?.y??0}px`,`${e.radius??0}px`];if(e.spread)p.push(`${e.spread}px`);p.push(rgba(e.color||{r:0,g:0,b:0,a:1}));if(e.type==='INNER_SHADOW')p.push('inset');return p.join(' ');}
@@ -1176,6 +1271,96 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 //                    uncontracted snapshot entry or a gapVar mismatch is a failure, and a
 //                    contracted gapVar whose frame no longer binds a gap in Figma is stale.
 //                    Omit if no child frames have bound gaps.
+```
+
+**Deeper facts (recommended).** Also record these on each component's entry, from the same
+`State=Default` node. The measured comparison (Gate [10] `MEASURED`, `--capture-code --compare`) uses
+each one when present:
+- sizing per axis, a fixed width, and min and max width
+- the gap, the stroke width on each side, and opacity
+- the text node's family, line height (px, % or auto), letter spacing and text case
+- the fill, text and stroke colour tokens with their paint opacity, compared in every mode
+- one entry per variant (padding, gap, radius, font size, colours); only what a variant changes from
+  the default is compared, against the state the code capture produced
+- which layers each boolean property shows or hides (`toggles`)
+- each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
+
+Snapshots without them keep working; the comparison simply skips what Figma did not record.
+
+With `variants` recorded, Gate [13] also lists each Figma variant value (an axis value such as
+`Size=L`) that has no counterpart in code (`⚠️ VARIANTS`): not the default, not a state the code
+capture produced, and not one it found declared. When the variables snapshot has a breakpoint
+collection, the code capture measures each component at every breakpoint width (the smallest mode at
+375px) and compares the tokens that change per breakpoint (`padding (left) @ Phone (375px)`).
+
+```js
+async function deepFacts(node, set) {
+  const n = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : null);
+  const hex = (c) => '#' + [c.r, c.g, c.b].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+  // A visible solid paint: its bound colour variable's name, its hex and the paint's opacity.
+  const paint = async (paints) => {
+    const p = (Array.isArray(paints) ? paints : []).find((x) => x.visible !== false && x.type === 'SOLID');
+    if (!p) return null;
+    const id = p.boundVariables?.color?.id;
+    const v = id ? await figma.variables.getVariableByIdAsync(id) : null;
+    return { token: v?.name ?? null, hex: hex(p.color), opacity: n(p.opacity ?? 1) };
+  };
+  const firstText = (x) => x.findOne?.((t) => t.type === 'TEXT');
+  const geometry = async (x) => {
+    const t = firstText(x);
+    return {
+      h: n(x.height),
+      paddingPx: 'paddingTop' in x ? [x.paddingTop, x.paddingRight, x.paddingBottom, x.paddingLeft].map(n) : null,
+      gapPx: 'itemSpacing' in x ? n(x.itemSpacing) : null,
+      radiusPx: 'topLeftRadius' in x ? [x.topLeftRadius, x.topRightRadius, x.bottomRightRadius, x.bottomLeftRadius].map(n) : null,
+      fontSize: t && t.fontSize !== figma.mixed ? n(t.fontSize) : null,
+      colors: { fill: await paint(x.fills), text: t ? await paint(t.fills) : null, stroke: await paint(x.strokes) },
+    };
+  };
+  const out = {};
+  if ('layoutMode' in node) out.box = { width: n(node.width), height: n(node.height), layout: node.layoutMode,
+    sizing: { h: node.layoutSizingHorizontal, v: node.layoutSizingVertical },
+    minWidth: n(node.minWidth), maxWidth: n(node.maxWidth),
+    align: { primary: node.primaryAxisAlignItems, counter: node.counterAxisAlignItems }, wrap: node.layoutWrap };
+  const g = await geometry(node);
+  out.paddingPx = g.paddingPx; out.radiusPx = g.radiusPx; out.gapPx = g.gapPx; out.colors = g.colors;
+  if ((node.strokes ?? []).some((s) => s.visible !== false)) out.stroke = {
+    weights: ['strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight'].map((k) => n(typeof node[k] === 'number' ? node[k] : node.strokeWeight)),
+    align: node.strokeAlign, dashed: (node.dashPattern ?? []).length > 0 };
+  if (typeof node.opacity === 'number' && node.opacity < 1) out.opacity = n(node.opacity);
+  const text = firstText(node);
+  if (text) {
+    const lh = text.lineHeight, ls = text.letterSpacing, fn = text.fontName;
+    out.text = {
+      fontFamily: fn && fn !== figma.mixed ? fn.family : null,
+      lineHeight: lh && lh !== figma.mixed ? (lh.unit === 'AUTO' ? { unit: 'AUTO' } : { unit: lh.unit, value: n(lh.value) }) : null,
+      letterSpacing: ls && ls !== figma.mixed ? { unit: ls.unit, value: n(ls.value) } : null,
+      textCase: text.textCase !== figma.mixed ? text.textCase : null,
+    };
+  }
+  // Which layers each boolean property shows or hides.
+  const toggles = {};
+  for (const l of node.findAll?.((x) => x.componentPropertyReferences?.visible) ?? []) {
+    const prop = l.componentPropertyReferences.visible.replace(/#.*$/, '');
+    (toggles[prop] ??= []).push(l.name);
+  }
+  if (Object.keys(toggles).length) out.toggles = toggles;
+  if (set?.type === 'COMPONENT_SET') {
+    out.defaultVariant = node.name;
+    out.variants = {};
+    for (const v of set.children.filter((c) => c.type === 'COMPONENT')) out.variants[v.name] = await geometry(v);
+    // Each slot's preferred components, by name (the definitions only carry keys).
+    const byKey = new Map(figma.root.findAll((x) => (x.type === 'COMPONENT' || x.type === 'COMPONENT_SET') && x.key).map((x) => [x.key, x.name]));
+    const slots = {};
+    for (const [k, d] of Object.entries(set.componentPropertyDefinitions ?? {})) {
+      if (d.type !== 'INSTANCE_SWAP' || !d.preferredValues?.length) continue;
+      slots[k.replace(/#.*$/, '')] = d.preferredValues.map((p) => byKey.get(p.key)).filter(Boolean);
+    }
+    if (Object.keys(slots).length) out.slots = slots;
+  }
+  return out;
+}
+// entry = { h, paddingVar, …, ...(await deepFacts(defaultVariant, componentSet)) }
 ```
 
 Capture `strokeOnAnyState` with a **deep recursive walk** across all variants:
@@ -1688,8 +1873,8 @@ Apply the same B→C pattern for `__D__` (dark), `__AL__` (alias light), `__AD__
 ## Phase 1 - Step 6: Verify resolvers
 
 ```bash
-node scripts/parity-check.mjs
-node scripts/structure-check.mjs
+node ~/.claude/skills/rms-figma-code-parity/parity-check.mjs
+node ~/.claude/skills/rms-figma-code-parity/structure-check.mjs
 ```
 
 If either reports FAIL, reconcile CSS before Phase 2.
@@ -1798,7 +1983,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [11] | `state-check.mjs` `state-binding-check.mjs` `component-selector-check.mjs` `state-opacity-check.mjs` | **Structure** | **All states are built** - Four checks in one: (a) all Figma component states have tokens in code (`state-check`); (b) every `CONTRACT.propertyMap` state selector exists in CSS (`state-binding-check`); (c) state-suffix vars (`-hover`, `-selected`, `-disabled`, `-focus`, `-checked`) only appear inside selectors with a matching state indicator (`component-selector-check`); (d) **per-state opacity** - when the structure snapshot captures `components[Comp].variantOpacity = { disabled: 0.4 }` (or `disabledOpacity`), the CSS rule for that state (`.comp:disabled`, `.disabled`, `[disabled]`, …) must use that exact opacity (`state-opacity-check`); inert until the value is captured, so it never false-positives. Intentional exceptions go in `ds-config.json → knownStateExemptions`. |
 | [11b] | `component-prop-check.mjs` | **Structure** | **Component props match Figma** - Compares each Figma component's property NAMES (from `figma-component-props.snapshot.json`) against the code component's declared props, read straight from the source so it never depends on Figma Code Connect. Supports Vue (`defineProps` / `props` option) and React (Props type / destructured params / `propTypes`); add more via `PROP_EXTRACTORS`. A Figma property with no exact-name (or documented-alias) code prop is a **MISSING** fail; a Figma component with properties but no resolvable code file is a **NO FILE** fail (no silent skips: map it in `ds-config.json → componentFiles`, or exempt via `knownUnimplementedComponents`). Real renames are documented in `ds-config.json → componentPropAliases` (`{ "buttonPrimary": { "size": "buttonSize" } }`) and count as matches; likely renames are surfaced as advisory suggestions. Extra code props with no Figma property are advisory. **Beyond names, it checks values**: for a matched prop it compares the Figma `defaultValue` against the code default (Vue `withDefaults`/`default:`, React default params/`defaultProps`) and, for `VARIANT` properties, verifies the code accepts every Figma variant option (from a TS string-literal union) - so a wrong default or an unimplemented variant (`large` missing) is a **VALUE** fail. Value checks only fire when the code side is readable, so parsing gaps never produce false positives. **Slots**: a Figma `INSTANCE_SWAP` property is a slot, not a value prop, so it is matched against a code **slot** (Vue `<slot>`/`defineSlots`, React `children`/`ReactNode`) rather than a prop of that name - a Figma slot with no code slot is a **SLOT** fail. **The Figma `State` axis is skipped here** - a `State` variant (hover/focus/active/…) maps to CSS pseudo-classes, not a code prop, so it belongs to Gate [11] (All states are built); Gate [12] would otherwise wrongly flag a missing `state` prop. It skips a property named `state`/`states` or any VARIANT whose options are all interaction states (override via `ds-config.json → knownStateProps`). Boolean state props like `disabled`/`selected` remain real props and are checked. The snapshot is required (missing ⇒ exit 2, "not run") and should be committed; capture it with no token via the plugin (see Gate [10g]). |
 | [11c] | `component-composition-check.mjs` | **Structure** | **Sub-components match Figma** - A DS component contains other DS components (a Card holds a Badge, a Button an Icon). This verifies the set of sub-components Figma nests inside a component equals the set the code uses. Reads `component-composition.snapshot.json` (`{ "Card": ["Badge"] }`, committed, captured with no token via the plugin) and detects a sub-component in code by its base selector or its name as a JSX tag / import - so it never depends on Code Connect. A Figma-nested sub-component the code doesn't use is a **MISSING** fail; a component with nested children but no resolvable code file is a **NO FILE** fail (map it in `ds-config.json → componentFiles`). Code using a component Figma doesn't nest is advisory. Exempt a pair via `ds-config.json → knownCompositionExceptions` (`["Card/Badge"]`) or a whole component via `knownUnimplementedComponents`. |
-| [12] | `html-structure-check.mjs` · `screen-element-check.mjs` | **Markup** | **Markup matches** - Two parts. **(a) HTML fingerprint** (`html-structure-check.mjs`): element IDs, DS component classes on interactive elements, icon `<use href>` refs with context, and **button inner structure** (whether each id'd `<button>` has SVG, span children with their classes, and text content). Which classes count as DS component classes is the project's own list, `ds-config.json → htmlStructureClasses`. Without it, the classes the saved snapshot already fingerprints are used (so an existing project keeps its result with no config edit); with neither, element ids and icon references are still fingerprinted and component classes are not. The engine ships no default list. Diffs against stored snapshot; any undeclared structural change is ❌. Accept: `node scripts/html-structure-check.mjs --accept`. **(b) Screen element completeness** (`screen-element-check.mjs`) - the other gates only compare elements present on BOTH sides, so a whole control the DESIGN has but the CODE never built (an "Export" button, a modal, an extra toggle) shipped unaudited. For every screen in `ds-config.json → screens[]` (detail views / modals, distinct from the whole-plugin `frames[]` visual gate) the DS control inventory is captured into `figma-screens.snapshot.json` (`refreshScreenElements`: each interactive INSTANCE's component + first TEXT label) and each must have a code counterpart **of the same kind**. Kind-aware on purpose: a label appearing as an id, a comment, or a JS identifier (`#export-section`, `requestExport`) is **not** a counterpart - only visible text inside a matching element, or a quoted dynamic/attribute label like `'Run on selection'`, counts. Interactive families only (button, switch, radio, segmented, checkbox, input, modal); decorative components aren't required. A control with no counterpart is **advisory by default** (visible in the report, never blocks a deferred design), a hard fail under `screenElementStrict: true`; deliberate different realizations (e.g. Export built as inline sections) go in `knownScreenElementExemptions` (`["my-app/Export"]`). Beyond presence, two divergences are caught for controls that *are* built: **(i) wrong DS component** (`MISMATCH`) - a button-family control whose label sits on the wrong variant class (the design's `ButtonTertiary` built as `.buttonSecondary`), checked against the exact button-variant class on the `<button>` that encloses the label as visible text (not any button class in a window, so a neighbouring button isn't mistaken for it); **(ii) missing row separators** (`SEP GAP`) - a DS divider / `<hr>` the design places *between* controls (the divider class is `ds-config.json → separatorClasses`, else every captured DS component whose name says divider or separator, the same rule the capture uses), captured as a per-screen `rowSeparators` count in the snapshot (a separator carries no label, so it can only be checked by count) and compared against what the code renders. Both are advisory unless `screenElementStrict`. Inert until the snapshot exists. |
+| [12] | `html-structure-check.mjs` · `screen-element-check.mjs` | **Markup** | **Markup matches** - Two parts. **(a) HTML fingerprint** (`html-structure-check.mjs`): element IDs, DS component classes on interactive elements, icon `<use href>` refs with context, and **button inner structure** (whether each id'd `<button>` has SVG, span children with their classes, and text content). Which classes count as DS component classes is the project's own list, `ds-config.json → htmlStructureClasses`. Without it, the classes the saved snapshot already fingerprints are used (so an existing project keeps its result with no config edit); with neither, element ids and icon references are still fingerprinted and component classes are not. The engine ships no default list. Diffs against stored snapshot; any undeclared structural change is ❌. Accept: `node ~/.claude/skills/rms-figma-code-parity/html-structure-check.mjs --accept`. **(b) Screen element completeness** (`screen-element-check.mjs`) - the other gates only compare elements present on BOTH sides, so a whole control the DESIGN has but the CODE never built (an "Export" button, a modal, an extra toggle) shipped unaudited. For every screen in `ds-config.json → screens[]` (detail views / modals, distinct from the whole-plugin `frames[]` visual gate) the DS control inventory is captured into `figma-screens.snapshot.json` (`refreshScreenElements`: each interactive INSTANCE's component + first TEXT label) and each must have a code counterpart **of the same kind**. Kind-aware on purpose: a label appearing as an id, a comment, or a JS identifier (`#export-section`, `requestExport`) is **not** a counterpart - only visible text inside a matching element, or a quoted dynamic/attribute label like `'Run on selection'`, counts. Interactive families only (button, switch, radio, segmented, checkbox, input, modal); decorative components aren't required. A control with no counterpart is **advisory by default** (visible in the report, never blocks a deferred design), a hard fail under `screenElementStrict: true`; deliberate different realizations (e.g. Export built as inline sections) go in `knownScreenElementExemptions` (`["my-app/Export"]`). Beyond presence, two divergences are caught for controls that *are* built: **(i) wrong DS component** (`MISMATCH`) - a button-family control whose label sits on the wrong variant class (the design's `ButtonTertiary` built as `.buttonSecondary`), checked against the exact button-variant class on the `<button>` that encloses the label as visible text (not any button class in a window, so a neighbouring button isn't mistaken for it); **(ii) missing row separators** (`SEP GAP`) - a DS divider / `<hr>` the design places *between* controls (the divider class is `ds-config.json → separatorClasses`, else every captured DS component whose name says divider or separator, the same rule the capture uses), captured as a per-screen `rowSeparators` count in the snapshot (a separator carries no label, so it can only be checked by count) and compared against what the code renders. Both are advisory unless `screenElementStrict`. Inert until the snapshot exists. |
 | [11d] | `template-composition-check.mjs` | **Structure** | **Templates compose the right components** - One level ABOVE the sub-component gate. A DS *template* / *page* frame (a Consult view, an Operation screen) composes several DS components; a designer re-composes that frame in Figma (adds a Filters bar, swaps a SidePanel for a DetailFullPage) and no component-level gate notices. This verifies each registered template frame's code uses the components Figma composes. **Opt-in and generic**, exactly like `screens[]`/`docs.surfaces`: runs only when `ds-config.json → templates[]` is set (`[{ "name": "Consult", "nodeId": "12:345", "file"?: "src/…/Consult.vue" }]`); a no-op PASS otherwise, and **inert** (PASS) until `figma-templates.snapshot.json` is captured, so it never false-positives before the first run. Phase 1 (`refreshTemplateComposition`, REST `/nodes`, any plan) records the ordered top-level component instances each template frame composes - WITHOUT descending into an instance's internals (those are the sub-component gate's job). Detection of a component in the template code reuses the sub-component gate's logic (base selector, JSX tag, or import), so it never depends on Code Connect. A composed component the template code doesn't use is **MISSING** (advisory by default; a hard fail under `templateCompositionStrict: true`); a template with composed components but no resolvable code file is a **NO FILE** fail (map it via `templates[].file`); a differing composition **ORDER** is advisory. Exempt a pair via `ds-config.json → knownTemplateExceptions` (`["Consult/Filters"]`) or a whole template via `knownUnimplementedComponents`. Template code is searched under `templateSrcDirs` (falls back to `componentSrcDirs`). |
 | [13] | `icon-slot-check.mjs` `component-slot-check.mjs` `form-control-check.mjs` | **Markup** | **Required pieces are in place** - Exhaustiveness across three asset types: (a) icon slots - every slot in `ICON_USAGES` uses the exact DS icon specified; every `<button id="X">` with `<use href="#icon-">` must be declared; (b) component slots - every slot in `COMPONENT_USAGES` uses the correct DS component class; every `<button id>` carrying a class that needs a slot declaration must be declared (the classes come from the project: `ds-config.json → declaredComponentClasses`, else every class `COMPONENT_USAGES` already declares); (c) **form controls** (13c) - bespoke form controls use their DS component's tokens (a search field bordered with the divider token instead of the input token stays green under every value gate), AND **native radio/checkbox must not render natively**: a `<input type=radio\|checkbox>` can only be DS-styled by visually SUPPRESSING the native control (opacity:0 / clipped / appearance:none) and drawing a styled sibling - so a native control the CSS never suppresses is rendering with browser chrome instead of the DS component (the bug where a `.radio-input` class carried no hiding rule and the browser drew a native red radio). Generic, no config; exempt a deliberate native control via `ds-config.json → knownNativeControlExceptions`. |
 | [14] | `pseudo-element-check.mjs` `icon-check.mjs` `icon-freshness-check.mjs` `icon-inventory-check.mjs` | **Markup** | **Icons match Figma** - Four-part check. **(d) Inventory (Figma → code)**: closes the loop the other way - every icon the DS defines in Figma must have a code symbol. The DS icon set usually lives in a **separate library file** with its own structure, so the inventory is captured from that library into `figma-icons.snapshot.json` (`{ "icons": [...] }`) and each name is matched to a `#<iconSpritePrefix><name>` symbol/reference in the code (normalised, so `Arrow Left` ↔ `icon-arrow-left`). A Figma icon with no code symbol is **MISSING** (a new DS icon shipped unimplemented). Configure `ds-config.json → iconLibraryFileKey` (the icon library file), optional `icons: { page, namePrefix, nameFrom: 'last' }` filters for that file's structure, `iconSpritePrefix` (default `icon-`), and exempt via `knownUnimplementedIcons`. Inert until the snapshot exists, so it never false-positives. Capture: with a token, `refreshIcons` reads the library file's `/components` (any plan); with no token, run the plugin capture below in the library file. The other three parts: (a) `::before`/`::after` pseudo-elements declared in the structure contract; (b) every SVG `<symbol>` in `ICON_SYMBOLS` - DS icons with Figma node ID, plugin icons marked `PLUGIN-SPECIFIC`, with path data verified against snapshot, and **every DS sprite id derived from its DS component's name** (catches renames and wrong-component entries; deliberate differences need `idDiffersFromDsName`); (c) **live Figma freshness** - for every DS icon with a `nodeId`, fetches the live SVG from Figma REST API and compares path data against the snapshot, AND fetches the node's live **name** (`/nodes?ids=…`) and flags a **rename**. Code references DS icons by their exact Figma name (`#icon-download` ↔ `Icon-download`; the icon-id HARD RULE), so a DS rename that keeps the same nodeId but changes the name (`Icon-download` → `Icon-export`) leaves the code pointing at a stale id - and a rename need not change the geometry, so the path check alone can miss it. The name check is **case-insensitive** (ids are case-normalised, so `Icon-Fit`→`Icon-fit` is not a real drift) and **skips variant-property names** (a live name like `size=small` means the nodeId now resolves into a size-variant set, not a rename - the set name is unchanged). Requires `FIGMA_TOKEN`; part (c) skips if not set. |
@@ -1811,7 +1996,7 @@ Gates are grouped by theme. Within a group, earlier gates are prerequisites for 
 | [20b] | `reimplementation-check.mjs` | **Docs integrity** | **No hand-built DS components** - The code→Figma anti-invention gates catch invented *names* (a var, a prop); this catches a subtler drift the Notion DS manuals name explicitly ("não uses HTML/CSS local para simular componentes"): a screen that **re-builds** a DS component by hand instead of using it. It flags an interactive element of a role the DS **owns** (defines a component for) that (a) does **not** carry a DS component class for that role, yet (b) is locally styled to reconstruct it (`background`/`border`/`border-radius`/`padding`, via a local class rule or an inline `style`). That pairing - "styled like the component, but not the component" - is the signature of a look-alike. **Opt-in and generic**: runs only when `ds-config.json → reimplementationSurfaces[]` lists code surfaces (local paths, one trailing-`*` glob supported), a no-op PASS otherwise. Roles default to `["button"]` (highest signal, lowest false-positive) and widen via `reimplementationRoles`; the DS component universe comes from `componentSelectors` + the composition/structure snapshots, so a role is only checked when the DS actually defines a component for it. **ADVISORY by default** (never blocks); a hard fail under `reimplementationStrict: true`. Exempt a deliberate look-alike via `knownReimplementations` (`["ui.html#.save-btn"]`). Native radio/checkbox/input are deliberately left to Gate [13c] (form controls); container components rebuilt as `<div>` are a v2 (shape inference, higher FP). |
 | [21] | `case-check.mjs` | **Docs integrity** | **No invented text casing** - Figma text styles carry no forced casing, so a `text-transform: uppercase | lowercase | capitalize` in the token/component CSS (`paths.themeCSS` + `paths.pluginCSS`) is invented styling that drifts from Figma - the same "no all-caps" rule the docs-truth gate applies to a styleguide, applied to the DS CSS itself. Caught a real case: a `.group-label` "uppercase group heading" that had no Figma text style behind it and had spread into two plugins. A DS that genuinely defines an upper/lower/title text style (Figma `textCase`) exempts it via `ds-config.json → knownTextTransforms` (the casing word, or a `"<file>:<line>"`). |
 
-**Gate [3] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
+**Gate [3] fix mode:** run `node ~/.claude/skills/rms-figma-code-parity/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
 **Dead CSS classes (Gate [8], advisory).** Unused *variables* were checked; unused *rules*
 were not. A whole class can be a stale copy of a DS component - styled, maintained, even
@@ -2317,7 +2502,7 @@ Compare results against your `structure-contract.mjs`. Any drift → update cont
 - [ ] `COMPONENT_CSS_SELECTORS` entry (required for padding/gap/radius checks)
 - [ ] `CSS_PROPERTY_ASSERTIONS` for any padding/gap/radius/height that isn't auto-verifiable from the root binding
 - [ ] `propertyMap` for every Figma variant/state property
-- [ ] Run `node scripts/structure-check.mjs` and confirm ✅ PASS X/X (X = total contract count)
+- [ ] Run `node ~/.claude/skills/rms-figma-code-parity/structure-check.mjs` and confirm ✅ PASS X/X (X = total contract count)
 
 **State/variant selectors - full chain:** for every non-default Figma state or variant property value (Hover, Disabled, Selected, Size=Small, etc.), document in `structure-contract.mjs → STATE_SELECTORS`:
 - `selector` - the CSS selector that activates this state
@@ -2423,14 +2608,14 @@ Once deployed, the webhook server auto-triggers parity checks on every DS change
 
 ```bash
 # Start the server (keep running)
-node scripts/webhook-server.mjs
+node ~/.claude/skills/rms-figma-code-parity/webhook-server.mjs
 
 # Register with Figma once (public URL required)
-FIGMA_TOKEN=xxx node scripts/setup-webhook.mjs --url https://your-host.com/webhook
+FIGMA_TOKEN=xxx node ~/.claude/skills/rms-figma-code-parity/setup-webhook.mjs --url https://your-host.com/webhook
 
 # Manage webhooks
-node scripts/setup-webhook.mjs --list
-node scripts/setup-webhook.mjs --delete <id>
+node ~/.claude/skills/rms-figma-code-parity/setup-webhook.mjs --list
+node ~/.claude/skills/rms-figma-code-parity/setup-webhook.mjs --delete <id>
 ```
 
 Configure `webhook.port` and `webhook.secret` in `ds-config.json`.

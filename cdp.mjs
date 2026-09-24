@@ -51,7 +51,8 @@ function whichBin(name) {
 
 // Launch headless Chrome and resolve once its DevTools socket is listening.
 // Returns { chrome, userDataDir, wsUrl, kill }. Rejects if Chrome exits first.
-export async function launchChrome(chromePath, { tmpPrefix = 'parity-chrome-' } = {}) {
+// Gives up after timeoutMs (default 30 s) so a Chrome that never starts cannot hang a run.
+export async function launchChrome(chromePath, { tmpPrefix = 'parity-chrome-', timeoutMs = 30000 } = {}) {
   const userDataDir = mkdtempSync(join(tmpdir(), tmpPrefix));
   const chrome = spawn(chromePath, [
     '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-sandbox',
@@ -70,6 +71,9 @@ export async function launchChrome(chromePath, { tmpPrefix = 'parity-chrome-' } 
         if (m) resolve(m[1]);
       });
       chrome.on('exit', () => reject(new Error(`Chrome exited before DevTools was ready:\n${buf.slice(-400)}`)));
+      chrome.on('error', (e) => reject(new Error(`Chrome could not start: ${e.message}`)));
+      const timer = setTimeout(() => reject(new Error(`Chrome did not start within ${timeoutMs / 1000}s`)), timeoutMs);
+      timer.unref?.();
     });
     return { chrome, userDataDir, wsUrl, kill };
   } catch (e) { kill(); throw e; }
@@ -77,10 +81,17 @@ export async function launchChrome(chromePath, { tmpPrefix = 'parity-chrome-' } 
 
 // Connect to a DevTools socket. Returns { send, on, ws, close }.
 // send(method, params, sessionId) resolves with the result or rejects with "<method>: <message>".
+// Every call gives up after timeoutMs (default 30 s), and a socket that closes rejects every call
+// still waiting, so a stuck page or a dead browser can never hang a run.
 // on(method, fn) subscribes to a protocol event; fn(params, sessionId). Returns an unsubscribe.
-export async function connectCDP(wsUrl) {
+export async function connectCDP(wsUrl, { timeoutMs = 30000 } = {}) {
   const ws = new WebSocket(wsUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  await new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error('DevTools socket did not open within 10s')), 10000);
+    timer.unref?.();
+    ws.onopen = () => { clearTimeout(timer); res(); };
+    ws.onerror = (e) => { clearTimeout(timer); rej(e?.error ?? new Error('DevTools socket error')); };
+  });
   let msgId = 0;
   const pending = new Map();
   const listeners = new Map();
@@ -94,10 +105,16 @@ export async function connectCDP(wsUrl) {
     listeners.get(method).add(fn);
     return () => listeners.get(method)?.delete(fn);
   };
+  ws.onclose = () => {
+    for (const [id, fn] of pending) { pending.delete(id); fn({ error: { message: 'the browser connection closed' } }); }
+  };
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const id = ++msgId;
-    pending.set(id, (m) => (m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result)));
-    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    const timer = setTimeout(() => { pending.delete(id); rej(new Error(`${method}: no answer within ${timeoutMs / 1000}s`)); }, timeoutMs);
+    timer.unref?.();
+    pending.set(id, (m) => { clearTimeout(timer); return m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result); });
+    try { ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); }
+    catch (e) { clearTimeout(timer); pending.delete(id); rej(new Error(`${method}: ${e.message}`)); }
   });
   const close = () => { try { ws.close(); } catch { /* already closed */ } };
   return { send, on, ws, close };

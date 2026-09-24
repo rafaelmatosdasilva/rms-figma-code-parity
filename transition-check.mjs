@@ -8,6 +8,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join }                     from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -24,7 +25,7 @@ const PLUGIN_CSS = Array.isArray(cfg.paths?.pluginCSS) ? cfg.paths.pluginCSS : [
 // ── Load structure-contract.mjs ───────────────────────────────────────────────
 let TRANSITION_CONTRACT = {};
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.TRANSITION_CONTRACT) TRANSITION_CONTRACT = m.TRANSITION_CONTRACT;
 } catch { /* optional - structure-contract.mjs may not exist yet */ }
 

@@ -66,6 +66,18 @@ test('modeSwitch: every mode kind maps to a browser switch, and an unknown condi
   assert.ok(modeSwitch({ cssSelector: 'media:(orientation: portrait)' }).unsupported);
 });
 
+test('modeSwitch on the generated styleguide: its pinned data-color follows the mode, then is restored', () => {
+  const attrs = new Map([['data-color', 'light']]);
+  const document = { documentElement: { hasAttribute: (a) => attrs.has(a), getAttribute: (a) => attrs.get(a), setAttribute: (a, v) => attrs.set(a, v), removeAttribute: (a) => attrs.delete(a) } };
+  const run = (code) => new Function('document', code)(document);
+  const dark = modeSwitch({ cssSelector: 'dark-media' }, { styleguide: true });
+  run(dark.apply);
+  assert.equal(attrs.get('data-color'), 'dark');
+  run(dark.undo);
+  assert.deepEqual([...attrs], [['data-color', 'light']]);
+  assert.equal(modeSwitch({ cssSelector: 'dark-media' }).apply, undefined);   // an app page is left alone
+});
+
 test('capture without a browser: every token is single-source and says why', async () => {
   const dir = makeFixture({
     'ds-config.json': { paths: { themeCSS: 'theme.css' }, figma: { modes: LIGHT_DARK }, codeReading: { browser: 'off' } },
@@ -259,4 +271,33 @@ test('components without a browser: the base rule is read statically, single-sou
   const { dir, cfg } = componentProject();
   const { snapshot } = await captureCode(dir, { ...cfg, codeReading: { browser: 'off' } }, { force: true });
   assert.deepEqual(snapshot.components.chip.props.paddingRight, { value: '12px', var: '--pad-m', at: 'theme.css:2', confidence: 'single-source', readBy: 'static', why: 'browser reading switched off' });
+});
+
+browserTest('components: when the built page and the source disagree, the value is uncertain, never a design fact', async () => {
+  const { dir, cfg } = componentProject();
+  // A stale build: the page carries its own copy of the rule with a different value.
+  const fs = await import('node:fs');
+  const page = fs.readFileSync(`${dir}/app/ui.html`, 'utf8').replace('<style>', '<style>.chip{padding-left:20px}');
+  fs.writeFileSync(`${dir}/app/ui.html`, page);
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  const f = snapshot.components.chip.props.paddingLeft;
+  assert.equal(f.value, '20px');
+  assert.equal(f.confidence, 'uncertain');
+  assert.deepEqual([f.readings.browser, f.readings.static], ['20px', '12px']);
+  // Values the two readings agree on stay verified.
+  assert.equal(snapshot.components.chip.props.paddingTop.confidence, 'verified');
+});
+
+browserTest('breakpoints: each component is measured at every Figma breakpoint width', async () => {
+  const dir = makeFixture({
+    'theme.css': ':root { --pad: 8px; }\n.card { padding: var(--pad); display: block; }\n@media (min-width: 1024px) { .card { padding: 16px; } }\n',
+    'app/ui.html': '<!doctype html><html><head><link rel="stylesheet" href="../theme.css"></head><body><div class="card">Card</div></body></html>',
+    'structure-contract.mjs': 'export const CONTRACT = { card: {} };',
+    'struct.json': { components: { card: {} } },
+    'vars.json': { breakpoints: { Phone: { 'viewport/min-width': '0' }, Desktop: { 'viewport/min-width': '1024' } } },
+  });
+  const cfg = { paths: { themeCSS: 'theme.css', plugins: ['app'], pluginCSS: [], snapshotStructure: 'struct.json', snapshotVars: 'vars.json' }, figma: { modes: [LIGHT_DARK[0]] } };
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  const bp = snapshot.components.card.breakpoints;
+  assert.deepEqual([bp.Phone.width, bp.Phone.paddingLeft, bp.Desktop.width, bp.Desktop.paddingLeft], [375, '8px', 1024, '16px'], JSON.stringify(bp));
 });

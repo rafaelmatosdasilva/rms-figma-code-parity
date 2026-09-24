@@ -20,6 +20,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { declaredVarNames } from './css-source.mjs';
 import { join } from 'path';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -35,7 +36,7 @@ const PLUGIN_CSS = cfg.paths?.pluginCSS ?? [];
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────
 let COVERED = new Set(), COVERED_PREFIX = [], EXPLICIT = {}, EXPLICIT_SIZING = {};
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  const map = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   // Prefer COVERED_STATE (state-walk superset) if provided, fall back to COVERED
   if (map.COVERED_STATE)  COVERED        = map.COVERED_STATE;
   else if (map.COVERED)   COVERED        = map.COVERED;

@@ -17,6 +17,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildResolver } from './mode-resolver.mjs';
+import { sameValue, sameEasing } from './css-values.mjs';
 import { loadCssSources } from './css-source.mjs';
 import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';
 
@@ -32,8 +33,14 @@ const snap   = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
 const motion = snap.motion || {};
 const mcfg   = cfg.figma?.motion || null;
 
-if (!mcfg || Object.keys(motion).length === 0) {
-  console.log('\n⏭  Motion parity - not configured (no snapshot.motion or figma.motion). Skipped.\n');
+if (!mcfg) {
+  console.log('\n⏭  Motion parity - not configured (no figma.motion in ds-config.json). Skipped.\n');
+  process.exit(0);
+}
+if (Object.keys(motion).length === 0) {
+  // Configured but nothing captured: say so plainly, never a quiet pass.
+  console.log('\n⏭  Motion parity - not verified: the vars snapshot has no motion values. Capture them with the');
+  console.log('   Phase 1 motion snippet (FLOAT durations and STRING easings in the Motion collection).\n');
   process.exit(0);
 }
 
@@ -57,7 +64,8 @@ for (const [token, figmaVal] of Object.entries(motion)) {
   if (cssVar === null) { SKIPPED.push(`${token} (documented)`); continue; }
   const css = resolveRaw(cssVar, 'root');
   if (css == null) { SKIPPED.push(`${token} (no CSS var ${cssVar})`); continue; }
-  if (norm(css) === norm(figmaVal)) OK.push(token);
+  // 200ms = 0.2s, ease-in-out = cubic-bezier(0.42, 0, 0.58, 1), .4 = 0.4 (css-values.mjs).
+  if (norm(css) === norm(figmaVal) || sameValue(css, figmaVal, 'time') === true || sameEasing(css, figmaVal) === true) OK.push(token);
   else BAD.push({ token, cssVar, figmaVal, css });
 }
 

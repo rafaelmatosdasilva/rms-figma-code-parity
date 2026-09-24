@@ -18,6 +18,7 @@
 //      winning rule recorded as the override it is; a disagreement nothing explains is `uncertain`.
 
 import { walkCss, rootTokens, resolveVars } from './css-source.mjs';
+import { parseColor, lengthPx } from './css-values.mjs';
 
 // The measured properties, and the declarations (longhand, logical, shorthand) that can set each.
 export const TRACE = {
@@ -29,7 +30,10 @@ export const TRACE = {
   paddingLeft: ['padding-left', 'padding-inline-start', 'padding-inline', 'padding'],
   rowGap: ['row-gap', 'gap'],
   columnGap: ['column-gap', 'gap'],
-  borderTopLeftRadius: ['border-top-left-radius', 'border-radius'],
+  borderTopLeftRadius: ['border-top-left-radius', 'border-start-start-radius', 'border-radius'],
+  borderTopRightRadius: ['border-top-right-radius', 'border-start-end-radius', 'border-radius'],
+  borderBottomRightRadius: ['border-bottom-right-radius', 'border-end-end-radius', 'border-radius'],
+  borderBottomLeftRadius: ['border-bottom-left-radius', 'border-end-start-radius', 'border-radius'],
   borderTopWidth: ['border-top-width', 'border-top', 'border-width', 'border-block-start', 'border'],
   borderRightWidth: ['border-right-width', 'border-right', 'border-width', 'border-inline-end', 'border'],
   borderBottomWidth: ['border-bottom-width', 'border-bottom', 'border-width', 'border-block-end', 'border'],
@@ -41,10 +45,15 @@ export const TRACE = {
   color: ['color'],
   backgroundColor: ['background-color', 'background'],
   opacity: ['opacity'],
+  width: ['width'],
+  fontFamily: ['font-family', 'font'],
+  letterSpacing: ['letter-spacing'],
+  textTransform: ['text-transform'],
 };
-const MEASURED = [...Object.keys(TRACE), 'width', 'maxHeight', 'fontFamily', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
+const MEASURED = [...Object.keys(TRACE), 'maxHeight', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
 const COLOR_PROPS = new Set(['color', 'backgroundColor', 'borderTopColor']);
-const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight']);
+const BREAKPOINT_PROPS = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'columnGap', 'rowGap', 'borderTopLeftRadius', 'fontSize', 'lineHeight'];
+const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight', 'fontFamily', 'letterSpacing', 'textTransform']);
 
 // Which slot of a box shorthand a property reads (1 to 4 values: top right bottom left).
 const BOX_SIDE = { paddingTop: 0, paddingRight: 1, paddingBottom: 2, paddingLeft: 3, borderTopWidth: 0, borderRightWidth: 1, borderBottomWidth: 2, borderLeftWidth: 3, borderTopColor: 0 };
@@ -71,7 +80,13 @@ export function partFor(declName, value, prop) {
     return parts[Math.min(end, parts.length - 1)] ?? value;
   }
   if (declName === 'gap') return prop === 'columnGap' ? (parts[1] ?? parts[0]) : parts[0];
-  if (declName === 'border-radius') return value.split('/')[0].trim().split(/\s+/)[0];
+  if (declName === 'border-radius') {
+    // Corners in order top-left, top-right, bottom-right, bottom-left (1 to 4 values, like a box).
+    const corners = splitTop(value.split('/')[0].trim());
+    const corner = { borderTopLeftRadius: 0, borderTopRightRadius: 1, borderBottomRightRadius: 2, borderBottomLeftRadius: 3 }[prop] ?? 0;
+    const pick = [[0, 0, 0, 0], [0, 1, 0, 1], [0, 1, 2, 1], [0, 1, 2, 3]][Math.min(corners.length, 4) - 1] ?? [0, 0, 0, 0];
+    return corners[pick[corner]] ?? corners[0] ?? value;
+  }
   if (/^border(-top|-right|-bottom|-left|-block-start|-block-end|-inline-start|-inline-end)?$/.test(declName) && /^(none|0)$/i.test(String(value).trim())) {
     return /Width$/.test(prop) ? '0px' : 'currentcolor';
   }
@@ -192,8 +207,30 @@ function measureExpression(selector) {
     const cs = getComputedStyle(el), r = el.getBoundingClientRect(), b = getComputedStyle(el, '::before');
     const pick = (s, keys) => Object.fromEntries(keys.map((k) => [k, s[k]]));
     const before = b.content && b.content !== 'none' ? pick(b, ['backgroundColor', 'borderTopLeftRadius', 'top', 'right', 'bottom', 'left', 'borderTopWidth', 'borderTopColor']) : null;
-    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before };
+    // What shows through a see-through background: the backgrounds behind it, nearest first, up to
+    // the first solid one (the page canvas when none is).
+    const behind = [];
+    for (let p = el.parentElement; p && behind.length < 20; p = p.parentElement) {
+      const c = getComputedStyle(p).backgroundColor;
+      const flat = c.replace(/ /g, '');
+      if (!c || c === 'transparent' || flat.endsWith(',0)') || flat.endsWith('/0)')) continue;
+      behind.push(c);
+      if (!c.startsWith('rgba') && !c.includes('/')) break;
+    }
+    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before, behind };
   })()`;
+}
+
+// The colour behind an element: its ancestors' backgrounds blended from the first solid one (or a
+// white canvas) forward. Returned only as an rgb() string the contrast checks can read.
+export function backdropOf(layers = []) {
+  let acc = [255, 255, 255];
+  for (const c of [...(layers ?? [])].reverse()) {
+    const p = parseColor(c);
+    if (!p) continue;
+    acc = acc.map((v, i) => p[i] * p[3] + v * (1 - p[3]));
+  }
+  return layers?.length ? `rgb(${acc.map((v) => Math.round(v)).join(', ')})` : null;
 }
 
 // ── Static reading of a component's own base rule ───────────────────────────────
@@ -243,26 +280,14 @@ export function staticDeclFor(index, selectorText, prop, rootVars) {
   return hit;
 }
 
-// Compare a static value with a computed one: px lengths, colours as rgba, numbers.
+// Compare a static value with a computed one: px lengths, colours as rgba, numbers. The reading of
+// units and colours is css-values.mjs (rem, calc(), hsl(), oklch(), color(srgb …) included).
 function toRgba(v) {
-  const s = String(v).trim().toLowerCase();
-  let m = s.match(/^#([0-9a-f]{3,8})$/);
-  if (m) {
-    let h = m[1]; if (h.length <= 4) h = h.split('').map((c) => c + c).join('');
-    const n = (i) => parseInt(h.slice(i, i + 2), 16);
-    return [n(0), n(2), n(4), h.length === 8 ? Math.round(n(6) / 255 * 100) / 100 : 1];
-  }
-  m = s.match(/^rgba?\(([^)]*)\)$/);
-  if (m) { const p = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return [p[0], p[1], p[2], p[3] ?? 1].map((x, i) => (i === 3 ? Math.round(x * 100) / 100 : Math.round(x))); }
-  if (s === 'transparent') return [0, 0, 0, 0];
-  if (s === 'white') return [255, 255, 255, 1];
-  if (s === 'black') return [0, 0, 0, 1];
-  return null;
+  const c = parseColor(v);
+  return c ? [Math.round(c[0]), Math.round(c[1]), Math.round(c[2]), Math.round(c[3] * 100) / 100] : null;
 }
 function toPx(v) {
-  const m = String(v).trim().match(/^(-?\d*\.?\d+)(px|rem)?$/);
-  if (!m) return null;
-  return m[2] === 'rem' ? +m[1] * 16 : +m[1];
+  return lengthPx(v, { unitless: true });
 }
 // Does a declared border width render as `drawn` under whole-pixel snapping?
 export function borderSnaps(declared, drawn) {
@@ -336,18 +361,84 @@ export async function captureComponents(ctx) {
     const measureAll = async (sel) => {
       const perMode = {};
       for (const mode of modes) {
-        const sw = modeSwitch(mode);
+        const sw = modeSwitch(mode, { styleguide: !!page.generated });
         if (sw.unsupported) continue;
         await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+        if (sw.viewport) await setWidth(sw.viewport);   // a breakpoint mode is measured at its width
         if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
         perMode[mode.snapshotKey] = (await send('Runtime.evaluate', { expression: measureExpression(sel), returnByValue: true }, sessionId)).result?.value;
         if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+        if (sw.viewport) await setWidth(1280);
       }
+      await backToFirstMode();
       return perMode;
+    };
+    // The page is left in the first mode, so a rule traced next is the one the first mode's values
+    // come from (not a dark-mode rule beside light-mode values).
+    const backToFirstMode = async () => { const sw = modeSwitch(modes[0], { styleguide: !!page.generated }); if (!sw.unsupported) await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId); };
+    // Many elements at once: each mode is switched once for the whole list. Switching a mode restyles
+    // the whole page, so on a large styleguide this is most of the measuring time.
+    const measureMany = async (sels) => {
+      const perSel = sels.map(() => ({}));
+      if (!sels.length) return perSel;
+      for (const mode of modes) {
+        const sw = modeSwitch(mode, { styleguide: !!page.generated });
+        if (sw.unsupported) continue;
+        await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+        if (sw.viewport) await setWidth(sw.viewport);
+        if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
+        const vals = (await send('Runtime.evaluate', { expression: `[${sels.map(measureExpression).join(',\n')}]`, returnByValue: true }, sessionId)).result?.value ?? [];
+        vals.forEach((v, i) => { perSel[i][mode.snapshotKey] = v; });
+        if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+        if (sw.viewport) await setWidth(1280);
+      }
+      await backToFirstMode();
+      return perSel;
+    };
+    // States, batched: each mode is switched once, and every state is put on and taken off inside it.
+    // The winning rules are traced in the first mode, where the state's reported values come from.
+    const measureStates = async (jobs) => {
+      const sMode = jobs.map(() => ({})), sTrace = jobs.map(() => ({}));
+      for (const [mi, mode] of modes.entries()) {
+        const sw = modeSwitch(mode, { styleguide: !!page.generated });
+        if (sw.unsupported) continue;
+        await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+        if (sw.viewport) await setWidth(sw.viewport);
+        if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
+        for (const [ji, j] of jobs.entries()) {
+          try {
+            await applyRecipe(send, sessionId, j.i, j.nodeId, j.how, true);
+            sMode[ji][mode.snapshotKey] = (await send('Runtime.evaluate', { expression: measureExpression(capSel(j.i)), returnByValue: true }, sessionId)).result?.value;
+            if (mi === 0) sTrace[ji] = await trace(j.nodeId);
+          } finally { await applyRecipe(send, sessionId, j.i, j.nodeId, j.how, false).catch(() => {}); }
+        }
+        if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+        if (sw.viewport) await setWidth(1280);
+      }
+      await backToFirstMode();
+      return { sMode, sTrace };
+    };
+    const setWidth = (width) => send('Emulation.setDeviceMetricsOverride', { width: Math.round(width), height: 900, deviceScaleFactor: ctx.deviceScaleFactor ?? 2, mobile: false }, sessionId);
+    // The component at each Figma breakpoint width, in the first mode: the values a responsive token
+    // changes (padding, gap, radius, font, height).
+    const measureAt = async (sel, bps) => {
+      const out = {};
+      const sw = modeSwitch(modes[0], { styleguide: !!page.generated });
+      if (sw.unsupported) return out;
+      await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+      if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
+      for (const bp of bps) {
+        await setWidth(bp.width);
+        const m = (await send('Runtime.evaluate', { expression: measureExpression(sel), returnByValue: true }, sessionId)).result?.value;
+        if (m?.cs) out[bp.name] = { width: bp.width, height: m.rect?.height, ...Object.fromEntries(BREAKPOINT_PROPS.map((k) => [k, m.cs[k]])) };
+      }
+      await setWidth(1280);
+      if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+      return out;
     };
     const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true }, sessionId)).result?.value;
     const close = async () => { off(); await send('Target.closeTarget', { targetId }).catch(() => {}); };
-    return { sessionId, where, trace, nodeOf, measureAll, evaluate, close };
+    return { sessionId, where, trace, nodeOf, measureAll, measureMany, measureStates, measureAt, evaluate, close };
   }
 
   // One measured + traced element → facts, checked against the static reading of the winning rule.
@@ -389,11 +480,13 @@ export async function captureComponents(ctx) {
         if (/Width$/.test(prop) && agree === false && borderSnaps(toPx(sv), toPx(value))) { agree = true; fact.value = s.value; fact.drawn = value; fact.note = 'browsers draw border widths in whole pixels'; }
         // A min-height (or max-height) larger than the declared height wins over it.
         if (prop === 'height' && agree === false && (toPx(base?.cs?.minHeight) === toPx(value) || toPx(base?.cs?.maxHeight) === toPx(value))) { agree = true; fact.declared = s.value; fact.note = `${toPx(base?.cs?.minHeight) === toPx(value) ? 'min-height' : 'max-height'} wins over the declared height`; }
+        // Agree → verified; disagree → uncertain (a reading problem, never a design difference);
+        // not comparable → single-source. Where the value is located is a separate question.
         if (agree === null) { fact.confidence = 'single-source'; fact.why = 'the two readings are not comparable'; }
         else if (agree) fact.confidence = 'verified';
+        else { fact.confidence = 'uncertain'; fact.readings = { browser: value, static: s.value, staticAt: s.at }; }
         // Point at the source, not the built page (which may inline and minify it); keep both.
         if (s.at && fact.at && s.at !== fact.at) { fact.renderedAt = fact.at; fact.at = s.at; }
-        else { fact.confidence = 'uncertain'; fact.readings = { browser: value, static: s.value, staticAt: s.at }; }
       }
       // The component's own base rule says something else, but another rule wins here.
       const own = stat[prop];
@@ -408,6 +501,8 @@ export async function captureComponents(ctx) {
       if (!mv) continue;
       out[mk] = Object.fromEntries([...COLOR_PROPS].map((k) => [k, mv.cs[k]]));
       if (mv.before) out[mk].beforeBackground = mv.before.backgroundColor;
+      const bd = backdropOf(mv.behind);
+      if (bd) out[mk].backdrop = bd;
     }
     return out;
   };
@@ -417,6 +512,10 @@ export async function captureComponents(ctx) {
     for (const prop of Object.keys(TRACE)) {
       const v = sb?.cs?.[prop];
       if (v != null && v !== props[prop]?.value && v !== props[prop]?.drawn) changed[prop] = { value: v, var: sTrace[prop]?.var ?? undefined, rule: sTrace[prop]?.rule ?? undefined, at: sTrace[prop]?.at ?? undefined };
+      // Point at the source rule, not the built page, as the base facts do.
+      const c = changed[prop];
+      const s = c?.rule ? staticDeclFor(ruleIndex, c.rule, prop, staticRootVars) : null;
+      if (s?.at && c.at && s.at !== c.at) { c.renderedAt = c.at; c.at = s.at; }
     }
     const matched = Object.values(changed).some((c) => c.rule && c.rule.replace(/\s+/g, ' ').includes(st.selector.replace(/\s+/g, ' ')));
     return { selector: st.selector, produced, changed, colors: colorsOf(sMode), ruleMatched: matched };
@@ -432,23 +531,36 @@ export async function captureComponents(ctx) {
     // Only the last page builds bare elements, so a real instance anywhere always wins.
     const specs = list.map((c) => ({ selector: c.selector, probe: c.probe ?? null, allowBare: pi === pages.length - 1, children: c.children ?? [], parts: c.parts ?? {} }));
     const located = (await P.evaluate(locateExpression(specs))) ?? [];
+    // Every located instance and part, measured in each mode at once, before any state is applied.
+    const partSel = (i, kind) => `[data-parity-part~="${i}-${kind}"]`;
+    const sels = located.filter((l) => !l.error && l.how).flatMap((l) => [capSel(l.i), ...Object.keys(l.parts ?? {}).map((k) => partSel(l.i, k))]);
+    let pre = new Map();
+    const stateJobs = [];
+    try { const m = await P.measureMany(sels); pre = new Map(sels.map((sel, i) => [sel, m[i]])); } catch { /* measured one by one below */ }
     for (const loc of located) {
       const comp = list[loc.i];
       if (loc.error) { notes.push(`${comp.name}: selector ${comp.selector} is not valid CSS (${loc.error})`); pending.delete(comp.name); continue; }
       if (!loc.how) continue;
       pending.delete(comp.name);
-      try { await captureOne(P, page, comp, loc); }
+      try { await captureOne(P, page, comp, loc, pre, stateJobs); }
       catch (e) { notes.push(`${comp.name}: could not be measured (${String(e.message || e).split('\n')[0]})`); }
+    }
+    if (stateJobs.length) {
+      try {
+        const { sMode, sTrace } = await P.measureStates(stateJobs);
+        stateJobs.forEach((j, ji) => { (j.entry.states ??= {})[j.st.label] = stateEntry(j.st, j.how.describe, sMode[ji], sTrace[ji], j.props); });
+      } catch (e) { notes.push(`states on ${page.label}: could not be measured (${String(e.message || e).split('\n')[0]})`); }
     }
     await P.close();
   }
   for (const c of pending.values()) notes.push(`${c.name}: no instance found (selector ${c.selector})`);
   return pass2(notes);
 
-  async function captureOne(P, page, comp, loc) {
+  async function captureOne(P, page, comp, loc, pre = new Map(), stateJobs = []) {
     {
       const nodeId = await P.nodeOf(capSel(loc.i));
-      const perMode = await P.measureAll(capSel(loc.i));
+      const perMode = pre.get(capSel(loc.i)) ?? await P.measureAll(capSel(loc.i));
+      const atBreakpoints = ctx.breakpoints?.length ? await P.measureAt(capSel(loc.i), ctx.breakpoints) : null;
       const traced = nodeId ? await P.trace(nodeId) : {};
       const base = perMode[firstMode];
       const stat = staticComponentReading(staticSources, comp.selector, staticRootVars);
@@ -463,13 +575,14 @@ export async function captureComponents(ctx) {
         props, fill: bg && bg[3] > 0 ? 'direct' : beforeBg && beforeBg[3] > 0 ? 'before' : 'none', colors: colorsOf(perMode),
       };
       if (base?.before) entry.before = base.before;
+      if (atBreakpoints && Object.keys(atBreakpoints).length) entry.breakpoints = atBreakpoints;
       // Parts: each measured and traced like the instance, keeping only the properties the part is for.
-      const PART_PROPS = { font: ['fontSize', 'fontWeight', 'lineHeight', 'color'], text: ['fontSize', 'fontWeight', 'lineHeight', 'color'], radius: ['borderTopLeftRadius'], gap: ['rowGap', 'columnGap'], before: ['borderTopLeftRadius', 'backgroundColor'] };
+      const PART_PROPS = { font: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], text: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], radius: ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'], gap: ['rowGap', 'columnGap'], before: ['borderTopLeftRadius', 'backgroundColor'] };
       for (const kind of Object.keys(loc.parts ?? {})) {
         const sel = `[data-parity-part~="${loc.i}-${kind}"]`;
         const pNode = await P.nodeOf(sel);
         if (!pNode) continue;
-        const pMode = await P.measureAll(sel);
+        const pMode = pre.get(sel) ?? await P.measureAll(sel);
         const pTraced = await P.trace(pNode);
         const pSel = kind === 'text' ? null : comp.parts?.[kind];
         const pStat = pSel ? staticComponentReading(staticSources, pSel, staticRootVars) : {};
@@ -479,11 +592,7 @@ export async function captureComponents(ctx) {
       for (const st of comp.states ?? []) {
         const how = stateRecipe(comp.selector, st.selector);
         if (how.error || !nodeId) { deferred.push({ comp: comp.name, st, why: how.error ?? 'instance not addressable' }); continue; }
-        await applyRecipe(send, P.sessionId, loc.i, nodeId, how, true);
-        const sMode = await P.measureAll(capSel(loc.i));
-        const sTrace = await P.trace(nodeId);
-        await applyRecipe(send, P.sessionId, loc.i, nodeId, how, false);
-        (entry.states ??= {})[st.label] = stateEntry(st, how.describe, sMode, sTrace, props);
+        stateJobs.push({ i: loc.i, nodeId, how, st, props, entry });   // measured for the whole page at once
       }
       result[comp.name] = entry;
     }

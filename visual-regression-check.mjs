@@ -17,6 +17,10 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join }                                               from 'path';
 import { createHash }                                         from 'crypto';
 
+// Every network call gives up after 30 s (FIGMA_FETCH_TIMEOUT_MS), so a stalled Figma response
+// cannot hang the audit or a pre-commit hook.
+const fetchSignal = () => AbortSignal.timeout(Math.max(1000, parseInt(process.env.FIGMA_FETCH_TIMEOUT_MS, 10) || 30000));
+
 const ROOT  = process.cwd();
 const TOKEN = process.env.FIGMA_TOKEN;
 
@@ -55,7 +59,7 @@ const apiUrl    = `https://api.figma.com/v1/images/${FILE_KEY}?ids=${idsParam}&f
 
 let imageUrls = {};
 try {
-  const resp = await fetch(apiUrl, { headers: { 'X-Figma-Token': TOKEN } });
+  const resp = await fetch(apiUrl, { headers: { 'X-Figma-Token': TOKEN }, signal: fetchSignal() });
   if (!resp.ok) {
     const text = await resp.text();
     if (resp.status === 401 || resp.status === 403) {
@@ -89,7 +93,7 @@ const downloads = await Promise.all(FRAMES.map(async frame => {
     ?? imageUrls[frame.nodeId.replace(':', '-')];
   if (!imgUrl) return { frame, err: 'no image URL returned' };
   try {
-    const imgResp = await fetch(imgUrl);
+    const imgResp = await fetch(imgUrl, { signal: fetchSignal() });
     if (!imgResp.ok) throw new Error(`HTTP ${imgResp.status}`);
     return { frame, imgData: Buffer.from(await imgResp.arrayBuffer()) };
   } catch (e) {

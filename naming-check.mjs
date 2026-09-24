@@ -18,6 +18,7 @@ import { declaredVarNames } from './css-source.mjs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
 import { resolveNamingSpec, tokenToVar, varToToken } from './naming-convention.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -35,7 +36,7 @@ const PLUGIN_CSS = cfg.paths?.pluginCSS    ?? [];
 let EXPLICIT = {}, EXPLICIT_SIZING = {}, SKIP_TOKENS = new Set();
 let SIZING_SKIP = new Map(), SYSTEM_VARS = new Set(), typoMap = null;
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  const map = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
   if (map.EXPLICIT_SIZING) EXPLICIT_SIZING = map.EXPLICIT_SIZING;
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;
@@ -168,7 +169,7 @@ if (STALE_SYSTEM_VARS.length) {
 const knownPluginSelectors = new Set(cfg.knownPluginSelectors ?? []);
 let CONTRACT_KEYS = new Set();
 try {
-  const contract = await import(join(ROOT, 'structure-contract.mjs'));
+  const contract = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (contract.CONTRACT) CONTRACT_KEYS = new Set(Object.keys(contract.CONTRACT));
 } catch { /* structure-contract.mjs is optional */ }
 

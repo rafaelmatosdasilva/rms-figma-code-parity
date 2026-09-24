@@ -37,6 +37,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join }            from 'path';
 import { readSymbols, extractPathDs, iconUsage } from './icon-source.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -63,7 +64,7 @@ const PER_PLUGIN_EXEMPT = new Set(cfg.iconCheck?.perPluginSymbolExemptions ?? []
 // ── Load ICON_SYMBOLS from structure-contract.mjs ─────────────────────────────
 let ALLOWED = {};
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.ICON_SYMBOLS && typeof m.ICON_SYMBOLS === 'object') ALLOWED = m.ICON_SYMBOLS;
 } catch { /* optional export */ }
 

@@ -28,6 +28,7 @@ import { join } from 'path';
 import { loadModes, loadCollections, allModes, buildResolver } from './mode-resolver.mjs';
 import { loadCssSources } from './css-source.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -43,7 +44,7 @@ const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 let EXPLICIT = {}, SKIP_TOKENS = new Set();
 let NL = {}, ND = {}, NEUTRAL_MAPS = null, NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  const map = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;
   if (map.NEUTRAL_LIGHT)   NL              = map.NEUTRAL_LIGHT;

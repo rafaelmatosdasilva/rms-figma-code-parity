@@ -19,6 +19,7 @@ import { declaredVarNames } from './css-source.mjs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -35,7 +36,7 @@ const PLUGIN_CSS = cfg.paths?.pluginCSS ?? [];
 // ── Load parity-map.mjs ───────────────────────────────────────────────────────
 let COVERED = new Set(), COVERED_PREFIX = [], EXPLICIT = {};
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  const map = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   if (map.COVERED)        COVERED        = map.COVERED;
   if (map.COVERED_PREFIX) COVERED_PREFIX = map.COVERED_PREFIX;
   if (map.EXPLICIT)       EXPLICIT       = map.EXPLICIT;

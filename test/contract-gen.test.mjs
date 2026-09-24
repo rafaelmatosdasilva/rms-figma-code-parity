@@ -279,3 +279,19 @@ test('[I20] usageCounts counts how many components depend on each token / compon
   assert.equal(u.tokens.get('spacing.md'), 1);
   assert.equal(u.components.get('icon'), 2, 'icon is composed by 2 components');
 });
+
+test('a slot takes Figma\'s preferred components, and a boolean names the layers it toggles', async () => {
+  const dir = fixture();
+  const st = JSON.parse(readFileSync(join(dir, 'struct.json'), 'utf8'));
+  st.components.buttonPrimary.slots = { 'icon-swap': ['IconChevron', 'IconPlus'] };
+  st.components.buttonPrimary.toggles = { 'show-icon': ['Icon'] };
+  writeFileSync(join(dir, 'struct.json'), JSON.stringify(st));
+  const pr = JSON.parse(readFileSync(join(dir, 'props.json'), 'utf8'));
+  pr.buttonPrimary.properties['show-icon#1:9'] = { type: 'BOOLEAN', defaultValue: true };
+  writeFileSync(join(dir, 'props.json'), JSON.stringify(pr));
+  const r = await generateContracts(dir, cfg, {});
+  assert.deepEqual(r.invalid, []);
+  const c = JSON.parse(readFileSync(join(r.outDir, 'buttonPrimary.contract.json'), 'utf8'));
+  assert.deepEqual(c.slots.find((s) => s.name === 'icon-swap').accepts, ['IconChevron', 'IconPlus']);
+  assert.deepEqual(c.props.find((p) => p.name === 'show-icon').toggles, ['Icon']);
+});

@@ -22,7 +22,7 @@
 // Config (all optional): ds-config.json → codeReading: { browser: "auto" | "off", pages: [paths or URLs],
 //                                                       out: ".parity-out/code.snapshot.json" }
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -136,8 +136,32 @@ const READ_ROOT_VARS = `(() => {
   return { vars, blocked };
 })()`;
 
+// The Figma breakpoint collection as widths to measure at: each mode's viewport/min-width (the
+// smallest mode, usually 0, is measured at 375px, a phone). Empty when the file has no breakpoints.
+export function breakpointWidths(ROOT, cfg) {
+  let bp = {};
+  try { bp = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8')).breakpoints ?? {}; } catch { return []; }
+  return Object.entries(bp).map(([name, t]) => {
+    const w = parseFloat(t?.['viewport/min-width'] ?? t?.['viewport/width'] ?? '0') || 0;
+    return { name, width: w > 0 ? w : 375 };
+  }).sort((a, b) => a.width - b.width);
+}
+
 // How to put a page into a mode. Returns { media, viewport, apply, undo } or { unsupported }.
-export function modeSwitch(mode) {
+// The generated styleguide pins its own mode on <html data-color="…"> (its manual toggle), which
+// turns the media-query theme off: there the switch also sets that attribute to the light or dark
+// the mode stands for, or the page would be measured in light for every mode.
+export function modeSwitch(mode, { styleguide = false } = {}) {
+  const sw = modeSwitchFor(mode);
+  if (!styleguide || sw.unsupported) return sw;
+  const scheme = sw.media?.find((f) => f.name === 'prefers-color-scheme')?.value;
+  if (!scheme) return sw;
+  const set = `(() => { const r = document.documentElement; if (!r.hasAttribute('data-color')) return; if (!r.hasAttribute('data-parity-color-was')) r.setAttribute('data-parity-color-was', r.getAttribute('data-color')); r.setAttribute('data-color', ${JSON.stringify(scheme)}); })()`;
+  const reset = `(() => { const r = document.documentElement; if (!r.hasAttribute('data-parity-color-was')) return; r.setAttribute('data-color', r.getAttribute('data-parity-color-was')); r.removeAttribute('data-parity-color-was'); })()`;
+  return { ...sw, apply: sw.apply ? `${sw.apply}; ${set}` : set, undo: sw.undo ? `${sw.undo}; ${reset}` : reset };
+}
+
+function modeSwitchFor(mode) {
   const sel = mode.cssSelector ?? 'root';
   const base = [{ name: 'prefers-color-scheme', value: 'light' }, { name: 'prefers-contrast', value: 'no-preference' }];
   if (sel === 'root') return { media: base };
@@ -371,7 +395,7 @@ async function prepareCapture(ROOT, cfg) {
   try { figmaStructure = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {}; } catch { /* optional */ }
   const nodeIds = Object.fromEntries(Object.entries(figmaStructure).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
   const apiReader = apiReaderFor(ROOT, cfg, { classFor: locator.classFor, nodeIds });
-  const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
+  const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
   const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles });
   return { outPath, modes, themeEntries, pages, styleguide, files, missing, remote, locator, apiReader, inputHash };
 }
@@ -450,13 +474,14 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
           staticSources: componentSources,
           staticRootVars: rootTokens(componentSources, modes[0]),
           openPage: (url) => openLoaded(cdp.send, url),
+          breakpoints: breakpointWidths(ROOT, cfg),
         });
         const nest = await renderedNesting({ send: cdp.send, pages: compPages, specs, openLoaded });
         nestingRendered = nest.rendered;
         notRead.push(...nest.notRead);
       } finally { cdp.close(); }
     } catch (e) { notRead.push(`browser reading failed: ${e.message.split('\n')[0]}`); }
-    finally { chrome?.kill(); }
+    finally { chrome?.kill(); try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ } }
   } else if (browserNote) notRead.push(`browser reading skipped: ${browserNote}`);
 
   const { tokens, appTokens, counts } = mergeTokenReadings({ staticByMode, browser, modes, browserNote: browser ? null : browserNote });

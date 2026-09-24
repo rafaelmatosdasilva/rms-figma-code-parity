@@ -10,11 +10,15 @@
 
 const TEXT_ROLES = new Set(['text', 'label', 'content', 'foreground', 'fg', 'icontext', 'caption', 'title', 'heading', 'placeholder', 'link']);
 const ICON_ROLES = new Set(['icon', 'iconprimary', 'iconsecondary', 'stroke']);   // non-text: WCAG 3:1 (large)
+// Component boundaries (WCAG 1.4.11): borders, outlines and focus rings at 3:1. Opt in with
+// { boundaries: true } (ds-config a11y.nonTextPairs) - a border is often decorative, so it is not
+// imposed. Dividers are decorative and never paired.
+const BOUNDARY_ROLES = new Set(['border', 'outline', 'focus', 'focusring', 'ring']);
 const BG_ROLES   = new Set(['background', 'bg', 'fill', 'surface', 'container']);
 
 // tokenNames: the color token keys for one mode (names are mode-independent; values are resolved per
 // mode later by the caller). Returns [{ name, text, bg, large }] - text/bg are exact token names.
-export function deriveContrastPairs(tokenNames) {
+export function deriveContrastPairs(tokenNames, { boundaries = false } = {}) {
   const byComp = new Map();
   for (const name of (tokenNames || [])) {
     if (typeof name !== 'string') continue;
@@ -23,10 +27,12 @@ export function deriveContrastPairs(tokenNames) {
     const comp = segs[0];
     const role = segs[1].toLowerCase();
     const qualifier = segs.slice(2, -1).join('/');                        // between role and "color"
+    // WCAG exempts inactive controls: a disabled text or surface is never a contrast finding.
+    if (/(^|\/)disabled(\/|$)/i.test(segs.slice(1, -1).join('/'))) continue;
     let b = byComp.get(comp);
     if (!b) { b = { texts: [], bgs: [] }; byComp.set(comp, b); }
     if (TEXT_ROLES.has(role))      b.texts.push({ token: name, qualifier, large: false });
-    else if (ICON_ROLES.has(role)) b.texts.push({ token: name, qualifier, large: true });
+    else if (ICON_ROLES.has(role) || (boundaries && BOUNDARY_ROLES.has(role))) b.texts.push({ token: name, qualifier, large: true });
     else if (BG_ROLES.has(role))   b.bgs.push({ token: name, qualifier });
   }
 

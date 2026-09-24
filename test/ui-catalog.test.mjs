@@ -25,6 +25,17 @@ test('catalog: props with values and code names, children, status; interaction s
   assert.equal(catalog.components.OldChip.status, 'deprecated');
 });
 
+test('catalog: rendered size, target size and per-state values from a real instance only', () => {
+  const b = [{ name: 'Btn', contract: { props: [], semantics: { element: 'button' } } }, { name: 'Box', contract: { props: [] } }];
+  const cap = { components: {
+    Btn: { instance: { how: 'found' }, size: { width: 20.4, height: 24 }, states: { 'State=Hover': { changed: { backgroundColor: { value: 'rgb(0, 0, 0)', var: '--btn-bg-hover' }, opacity: { value: '0.9' } } } } },
+    Box: { instance: { how: 'bare' }, size: { width: 600, height: 32 } },
+  } };
+  const cat = buildCatalog(b, { code: cap });
+  assert.deepEqual(cat.components.Btn.rendered, { size: { width: 20, height: 24 }, targetSize: { width: 20, height: 24, atLeast24: false }, states: { 'State=Hover': { backgroundColor: 'var(--btn-bg-hover)', opacity: '0.9' } } });
+  assert.equal(cat.components.Box.rendered, undefined);   // a bare copy has its host's size
+});
+
 test('catalog: the llms.txt table aligns one component per line', () => {
   const t = catalogTable(catalog).split('\n');
   assert.equal(t[0], '```');

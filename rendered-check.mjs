@@ -37,7 +37,7 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 
 let ASSERTIONS = [], FRAME_GEOMETRY_MAP = [], CROSS_PLUGIN = [];
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (Array.isArray(m.RENDERED_ASSERTIONS))     ASSERTIONS         = m.RENDERED_ASSERTIONS;
   if (Array.isArray(m.FRAME_GEOMETRY_MAP))       FRAME_GEOMETRY_MAP = m.FRAME_GEOMETRY_MAP;
   if (Array.isArray(m.CROSS_PLUGIN_CONSISTENCY)) CROSS_PLUGIN       = m.CROSS_PLUGIN_CONSISTENCY;
@@ -221,8 +221,11 @@ if (typeof WebSocket === 'undefined') {
 // Timer first, so a Chrome that never opens its DevTools socket still times out.
 let browser = null;
 process.on('exit', () => browser?.kill());
-setTimeout(() => { console.error('❌ [16] rendered parity timed out (30s)'); process.exit(1); }, 30000).unref();
-browser = await launchChrome(CHROME, { tmpPrefix: 'rendered-check-' });
+// Chrome gets its own start-up time (launchChrome gives up after 30 s with a clear reason); the 60 s
+// budget for the checks starts once it is up, so a busy machine is not mistaken for a failure.
+try { browser = await launchChrome(CHROME, { tmpPrefix: 'rendered-check-' }); }
+catch (e) { console.log(`❌ [16] rendered parity not verified - ${e.message.split('\n')[0]}`); process.exit(1); }
+setTimeout(() => { console.error('❌ [16] rendered parity timed out (60s after Chrome started)'); browser?.kill?.(); process.exit(1); }, 60000).unref();
 
 const { send, close: closeCDP } = await connectCDP(browser.wsUrl);
 

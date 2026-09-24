@@ -15,6 +15,7 @@ import { loadModes } from './mode-resolver.mjs';
 import { createLocator } from './component-locator.mjs';
 import { existsSync } from 'fs';
 import { readFreshSnapshot, nestingLabel } from './code-capture.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -29,7 +30,7 @@ catch { console.log('⏭  [18] coverage skipped - structure snapshot not found')
 
 let CONTRACT = {}, SELECTORS = {}, RENDERED = [], BASE_VARS = [], CROSS = [], FRAME_MAP = [], PROP_ASSERT = [];
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   CONTRACT   = m.CONTRACT ?? {};
   SELECTORS  = m.COMPONENT_CSS_SELECTORS ?? {};
   RENDERED   = m.RENDERED_ASSERTIONS ?? [];

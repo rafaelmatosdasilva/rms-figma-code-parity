@@ -316,7 +316,12 @@ function buildContract(name, { contract, structure, props, authored, composition
   // is the component's own composesWith universe (what it actually nests), so the agent has the valid
   // set without guessing. Derived from the contract's own props + relationships; emitted only when there
   // are slots.
+  // A boolean property names the layers it shows or hides (captured as toggles), so a generator and
+  // the code know which part it controls.
+  for (const pr of out.props) if (pr.type === 'boolean' && Array.isArray(s?.toggles?.[pr.name])) pr.toggles = s.toggles[pr.name];
+
   {
+    const structureEntry = s;
     const accepts = out.relationships?.composesWith || [];
     const slots = out.props
       .filter((p) => p.bindings?.figma?.kind === 'INSTANCE_SWAP'
@@ -324,7 +329,11 @@ function buildContract(name, { contract, structure, props, authored, composition
       .map((p) => {
         const s = { name: p.name, default: p.default ?? null };
         if (typeof p.bindings?.code?.slot === 'string') s.code = p.bindings.code.slot;
-        if (accepts.length) s.accepts = accepts;
+        // Figma's preferred values for the slot (captured as names in the structure snapshot's
+        // slots) are the design's own list; the nesting universe is the fallback.
+        const preferred = structureEntry?.slots?.[p.name];
+        if (Array.isArray(preferred) && preferred.length) { s.accepts = preferred; s.acceptsFrom = 'figma preferred values'; }
+        else if (accepts.length) s.accepts = accepts;
         return s;
       });
     if (slots.length) out.slots = slots;
