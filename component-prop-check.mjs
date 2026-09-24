@@ -25,6 +25,7 @@
 
 import { readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
 import { join, extname, basename, relative, resolve } from 'path';
+import { loadLocator } from './component-locator.mjs';
 
 const ROOT = process.cwd();
 
@@ -93,7 +94,8 @@ function contractBindings(figmaName) {
 const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 // Figma property keys carry a node-id suffix: "Show Label#958:0" -> "Show Label".
 const cleanFigmaProp = (k) => k.replace(/#[\d:]+$/, '').trim();
-const baseSelectorNorm = (name) => norm(COMPONENT_SELECTORS[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1)));
+const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
+const baseSelectorNorm = (name) => norm(LOCATOR.classFor(name));
 
 // ── Discover candidate source files ───────────────────────────────────────────
 const SRC_DIRS = (cfg.componentSrcDirs ?? ['src', 'components', 'app', 'lib', 'packages']).map(d => join(ROOT, d));
@@ -280,7 +282,7 @@ if (cfg.frameworkComponents === false && cfg.htmlRealization) {
   const REAL = cfg.htmlRealizations ?? {};
   const STRICT = !!cfg.htmlRealizationStrict;
   // Realization source = the plugin markup/CSS AND the theme CSS: a DS class is DEFINED in the
-  // theme (`.badge-label { … }`) and USED in the plugin markup (`class="badge-label"`), and either
+  // theme (`.tag-label { … }`) and USED in the plugin markup (`class="tag-label"`), and either
   // location realizes the property. Merge both so a class token is found wherever it lives.
   const asList = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
   const srcPaths = [...asList(cfg.paths?.pluginCSS), ...asList(cfg.paths?.themeCSS)];
@@ -289,8 +291,8 @@ if (cfg.frameworkComponents === false && cfg.htmlRealization) {
     if (!a) return false;
     if (a.startsWith('state:')) return true;                       // realized as a CSS state - Gate [11]
     if (a.startsWith('.') || a.startsWith('#')) {
-      // Match the class/id token wherever it appears: a CSS selector (`.badge-label`), or a markup
-      // class/id attribute (`class="badge-label"`, `id="x"`). So bound the bare name by any
+      // Match the class/id token wherever it appears: a CSS selector (`.tag-label`), or a markup
+      // class/id attribute (`class="tag-label"`, `id="x"`). So bound the bare name by any
       // non-identifier char rather than requiring the leading `.`/`#`.
       const name = a.slice(1).replace(/[.*+?^${}()|[\]\\]/g, m => '\\' + m);
       return new RegExp(`(?:^|[^\\w-])${name}(?![\\w-])`).test(srcBlob);

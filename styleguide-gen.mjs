@@ -226,10 +226,9 @@ export async function generateStyleguide(ROOT, cfg, opts = {}) {
 
   // ── USAGE — which plugins use each component ────────────────────────────────────
   function usageMap(intent) {
-    // Plugin label ← short code, derived from the plugin source path.
-    const PLUGS = (cfg.styleguide?.plugins) || [
-      { key: 'IA', match: 'impact-atlas' }, { key: 'TTI', match: 'tokens-to-ink' }, { key: 'FSL', match: 'font-scaling-lab' },
-    ];
+    // Usage label per app: ds-config.json → styleguide.plugins [{ key, match }] (a short label and a
+    // path fragment), else each configured app (paths.plugins) labelled by its own name.
+    const PLUGS = (cfg.styleguide?.plugins) || (cfg.paths?.plugins ?? []).map((n) => ({ key: n, match: n }));
     const sources = pluginHTML.concat(pluginCSS).map((p) => ({ p, m: PLUGS.find((g) => p.includes(g.match)), txt: (() => { const abs = resolve(ROOT, p); return existsSync(abs) ? readFileSync(abs, 'utf8') : ''; })() })).filter((s) => s.m);
     const usage = {};
     for (const name of Object.keys(intent.components || {})) {

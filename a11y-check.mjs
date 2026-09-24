@@ -57,11 +57,12 @@
 //   - Reading order, skip links, landmark completeness — and anything the render cannot reveal:
 //     only when the project declares it in ds-config.json, never imposed (No-imposed-structure).
 
-import { readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
-import { tmpdir } from 'os';
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
+import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
+import { loadLocator } from './component-locator.mjs';
 
 // ── Pure, unit-testable core (exported; importing this module runs NOTHING) ─────
 // Parse a computed-style color. Returns {r,g,b,a} or null when it is not an rgb()/rgba()
@@ -283,16 +284,7 @@ export function styleguideTarget(cfg, ROOT, exists = existsSync) {
   return exists(abs) ? { label: rel, url: pathToFileURL(abs).href, styleguide: true } : null;
 }
 
-// ── Chrome discovery (mirrors rendered-check.mjs) ───────────────────────────────
-function findChrome() {
-  const abs = [process.env.CHROME_PATH, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].filter(Boolean);
-  for (const p of abs) if (existsSync(p)) return p;
-  for (const name of ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium']) {
-    const r = spawnSync('which', [name], { encoding: 'utf8' });
-    if (r.status === 0 && r.stdout.trim()) return r.stdout.trim();
-  }
-  return null;
-}
+// Chrome discovery + DevTools plumbing live in cdp.mjs (shared with Gate [16]).
 
 // The in-page sweep: collect visible text leaves (with their computed color + background layer
 // stack + font) and focusable elements that show no focus-style change. Runs entirely in the page.
@@ -444,11 +436,8 @@ async function main() {
 
   const modes = (cfg.figma?.modes?.length ? cfg.figma.modes : [{ name: 'Light', snapshotKey: 'light' }])
     .map((m) => ({ name: m.name || m.snapshotKey || 'light', scheme: (m.snapshotKey || m.name || 'light').toLowerCase().includes('dark') ? 'dark' : 'light' }));
-  const selOf = (name) => {
-    if (cfg.componentSelectors?.[name]) return cfg.componentSelectors[name];
-    if (/^[.#\[]/.test(name)) return name;                        // already a CSS selector — use as-is
-    return '.' + name.charAt(0).toLowerCase() + name.slice(1);    // DS convention: ComponentName -> .componentName
-  };
+  const locator = await loadLocator(ROOT, cfg);   // the one shared component finder
+  const selOf = (name) => locator.selectorFor(name);
   const roots = components.length ? components.map(selOf) : null;
 
   const builtUiPath = (plugin) => {
@@ -527,27 +516,15 @@ async function main() {
   if (!CHROME) skip('Chrome not found (set CHROME_PATH to enable)');
   if (typeof WebSocket === 'undefined') skip('Node >= 22 required (built-in WebSocket)');
 
-  const userDataDir = mkdtempSync(join(tmpdir(), 'a11y-check-'));
-  const chrome = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-sandbox', '--disable-gpu', '--disable-extensions', `--user-data-dir=${userDataDir}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  const cleanup = () => { try { chrome.kill(); } catch {} try { rmSync(userDataDir, { recursive: true, force: true }); } catch {} try { stopServer?.(); } catch {} };
+  let browser = null;
+  const cleanup = () => { try { browser?.kill(); } catch {} try { stopServer?.(); } catch {} };
   process.on('exit', cleanup);
   const killTimer = setTimeout(() => { console.error('❌ [a11y] timed out (120s)'); cleanup(); process.exit(STRICT ? 1 : 0); }, 120000); killTimer.unref();
 
-  const wsUrl = await new Promise((res, rej) => {
-    let buf = '';
-    chrome.stderr.on('data', (d) => { buf += d; const m = buf.match(/DevTools listening on (ws:\/\/\S+)/); if (m) res(m[1]); });
-    chrome.on('exit', () => rej(new Error('Chrome exited before DevTools was ready')));
-  }).catch(() => null);
-  if (!wsUrl) skip('Chrome failed to start');
+  browser = await launchChrome(CHROME, { tmpPrefix: 'a11y-check-' }).catch(() => null);
+  if (!browser) skip('Chrome failed to start');
 
-  const ws = new WebSocket(wsUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-  let msgId = 0; const pending = new Map();
-  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-  const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
-    const id = ++msgId; pending.set(id, (m) => m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result));
-    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-  });
+  const { send, close: closeCDP } = await connectCDP(browser.wsUrl);
 
   const findings = [];   // { kind, theme?, desc, ... }
   const axeViolations = [];
@@ -561,16 +538,10 @@ async function main() {
 
   for (const target of targets) {
     const label = target.label;
-    const { targetId } = await send('Target.createTarget', { url: target.url });
-    const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
-    await send('Runtime.enable', {}, sessionId);
-    let loaded = false;
-    for (let i = 0; i < 200; i++) {   // up to ~10s — a dev server / SPA can be slower than a file://
-      const expr = `document.readyState === "complete"${waitFor ? ` && !!document.querySelector(${JSON.stringify(waitFor)})` : ''}`;
-      const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true }, sessionId).catch(() => ({ result: {} }));
-      if (r.result?.value === true) { loaded = true; break; }
-      await new Promise((res) => setTimeout(res, 50));
-    }
+    const { targetId, sessionId } = await openPage(send, target.url);
+    // up to ~10s — a dev server / SPA can be slower than a file://
+    const loadedExpr = `document.readyState === "complete"${waitFor ? ` && !!document.querySelector(${JSON.stringify(waitFor)})` : ''}`;
+    const loaded = await waitForTrue(send, sessionId, loadedExpr, { attempts: 200, intervalMs: 50, tolerateErrors: true });
     if (!loaded) { await send('Target.closeTarget', { targetId }); continue; }
     await new Promise((res) => setTimeout(res, 300));   // settle — let an SPA finish its first render
     sweptPlugins++;
@@ -634,7 +605,7 @@ async function main() {
     await send('Target.closeTarget', { targetId });
   }
 
-  ws.close(); cleanup(); clearTimeout(killTimer);
+  closeCDP(); cleanup(); clearTimeout(killTimer);
 
   if (!sweptPlugins) skip('nothing rendered to check — a --url/dev-server page did not load, or the plugin UIs are not built');
 

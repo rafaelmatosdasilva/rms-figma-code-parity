@@ -249,6 +249,86 @@ const C = {
   dim:    s => isTTY ? `\x1b[2m${s}\x1b[0m`  : s,
 };
 
+// ── --capture-code: capture the code side once (code-capture.mjs) and exit ────────
+// The code equivalent of the Figma snapshots: every token as the browser and the CSS resolve it,
+// per mode, with where it came from and how sure the reading is. Runs on its own, never as part
+// of a normal audit run, so it changes no gate result.
+// ── --guidelines <link>: add a pasted GitLab or Notion link, fetch it now, and exit ─────────
+// People paste a link to their written guidelines into the chat; the agent runs this command. It
+// records the link in ds-config.json (guidelines.source), fetches the page into its committed file
+// right away, and says in plain words whether it worked and, if not, the one thing to fix. With no
+// link it lists the links already set. Tokens stay in .env and are never asked for in the chat.
+if (process.argv.includes('--guidelines') || process.argv.some((a) => a.startsWith('--guidelines='))) {
+  const cfgPath = join(ROOT, 'ds-config.json');
+  if (!existsSync(cfgPath)) { console.error('❌ ds-config.json not found. Run the first-time setup first (rms-figma-code-parity --init).'); process.exit(1); }
+  const conf = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  const { parseGitlabUrl, fetchGitlabMarkdown, tokenAllowedFor } = await import('./gitlab-fetch.mjs');
+  const { pageIdFromUrl, fetchNotionMarkdown } = await import('./notion-fetch.mjs');
+  const { gitlabTargets, notionTargets } = await import('./intent-gen.mjs');
+  const links = _argValues('--guidelines').flatMap((v) => v.split(/[\s,]+/)).map((s) => s.trim()).filter(Boolean);
+  if (!links.length) {
+    const g = gitlabTargets(conf), n = notionTargets(conf);
+    console.log('\nGuidelines links in ds-config.json:');
+    for (const t of n) console.log(`  Notion  ${t.url}  → ${t.file}`);
+    for (const t of g) console.log(`  GitLab  ${t.url}  → ${t.file}`);
+    if (!n.length && !g.length) console.log('  none yet. Paste a GitLab or Notion link: rms-figma-code-parity --guidelines <link>');
+    process.exit(0);
+  }
+  let failed = 0;
+  for (const url of links) {
+    conf.guidelines ??= {}; conf.guidelines.source ??= {};
+    let provider, file, md;
+    if (parseGitlabUrl(url)) {
+      provider = 'GitLab';
+      const list = Array.isArray(conf.guidelines.source.gitlab) ? conf.guidelines.source.gitlab : conf.guidelines.source.gitlab ? [conf.guidelines.source.gitlab] : [];
+      if (!list.some((e) => (typeof e === 'string' ? e : e?.url) === url)) list.push(url);
+      conf.guidelines.source.gitlab = list;
+      file = gitlabTargets(conf).find((t) => t.url === url).file;
+      md = await fetchGitlabMarkdown(url, {});
+    } else if (/notion\.(so|site)\//i.test(url) || pageIdFromUrl(url)) {
+      provider = 'Notion';
+      // One or several pages, like GitLab. The first link on a fresh project keeps the classic single
+      // form (→ guidelines.sources[0]); a second link turns it into a list, the first keeping its file.
+      const cur = conf.guidelines.source.notion;
+      const same = (e) => (typeof e === 'string' ? e : e?.url) === url;
+      if (!cur) { conf.guidelines.source.notion = url; if (!conf.guidelines.sources?.length) conf.guidelines.sources = ['guidelines.md']; }
+      else if (typeof cur === 'string') { if (cur !== url) conf.guidelines.source.notion = [{ url: cur, file: conf.guidelines.sources?.[0] ?? 'guidelines.md' }, url]; }
+      else { const list = Array.isArray(cur) ? cur : [cur]; if (!list.some(same)) list.push(url); conf.guidelines.source.notion = list; }
+      file = notionTargets(conf).find((t) => t.url === url).file;
+      md = await fetchNotionMarkdown(url, {});
+    } else {
+      console.log(`\n❌ ${url}\n   This is not a GitLab wiki page, a GitLab Markdown file, or a Notion page, so it was not added.`);
+      failed++; continue;
+    }
+    writeFileSync(cfgPath, JSON.stringify(conf, null, 2) + '\n');
+    if (md && md.trim()) {
+      mkdirSync(dirname(join(ROOT, file)), { recursive: true });
+      writeFileSync(join(ROOT, file), md);
+      const title = md.match(/^#\s+(.+)$/m)?.[1] ?? file;
+      console.log(`\n✅ Added and read "${title}" from ${provider} → ${file} (${md.split('\n').length} lines).`);
+      console.log('   It is refreshed on every run, and each section headed with a component name goes into that component in the design intent.');
+    } else {
+      failed++;
+      console.log(`\n⚠️  Added the ${provider} link, but the page could not be read yet. The link is saved and will be fetched on the next run once this is fixed:`);
+      if (provider === 'GitLab') {
+        const host = parseGitlabUrl(url).host;
+        if (!process.env.GITLAB_TOKEN) console.log('   If the project is private, create a GitLab personal access token with the read_api scope and put it in this project\'s .env as GITLAB_TOKEN=... (never paste it into the chat).');
+        if (!tokenAllowedFor(host)) console.log(`   This is a company GitLab (${host}), so also add GITLAB_HOST=${host} to .env.`);
+        console.log('   Also check that the link opens for you in the browser.');
+      } else {
+        console.log('   Put a Notion integration secret in .env as NOTION_TOKEN=... and share the page with that integration.');
+      }
+    }
+  }
+  process.exit(failed ? 1 : 0);
+}
+
+if (process.argv.includes('--capture-code')) {
+  const passthrough = process.argv.slice(2).filter((a) => a !== '--capture-code');
+  const r = spawnSync('node', [join(SCRIPT_DIR, 'code-capture.mjs'), ...passthrough], { cwd: ROOT, stdio: 'inherit' });
+  process.exit(r.status ?? 1);
+}
+
 // ── --trend: no config needed - just show history and exit ────────────────────
 if (SHOW_TREND) {
   const histPath = join(ROOT, 'parity-history.json');
@@ -1602,7 +1682,7 @@ function reportFull(label, items, shown) {
     const usageCorpus = usageParts.join('\n');
     // Class names composed at runtime legitimise the whole family. The prefix is
     // rarely a standalone literal - it is the tail of a longer string, as in
-    //   '<div class="buttonList issue-item t-' + iss.type + '">'
+    //   '<div class="menuList result-item t-' + iss.type + '">'
     // so take the trailing name-ish fragment of any string spliced with + or ${…}.
     const dynamicPrefixes = extractDynamicClassPrefixes(usageCorpus);
     const deadClasses = [...defined.entries()]
@@ -2940,24 +3020,39 @@ function reportFull(label, items, shown) {
   }
 
   // ── External guidelines: optional live capture (Phase-1-style) ──────────────
-  // When ds-config.json declares guidelines.source.notion (the page link, committed, NOT secret) and
-  // NOTION_TOKEN is in the environment (per-person, in .env, gitignored), fetch the page and WRITE it
-  // to the committed guidelines file (sources[0]) BEFORE intent-gen reads it. Degrade-safe: no token /
-  // not shared / network / rate limit -> keep the committed file, never fail the audit. The token is
-  // read inside notion-fetch and never logged.
+  // Links in ds-config.json → guidelines.source (committed, NOT secret) are fetched and WRITTEN to their
+  // committed files BEFORE intent-gen reads them, so the written guidelines reach the design intent.
+  //   • notion: one page → guidelines.sources[0]              (token: NOTION_TOKEN in .env)
+  //   • gitlab: one or several wiki pages / Markdown files    (token: GITLAB_TOKEN in .env, only ever
+  //             sent to gitlab.com or GITLAB_HOST; public projects need none), each to its own file
+  // Degrade-safe: no token / no access / network / rate limit -> keep the committed file, never fail the
+  // audit. Tokens are read inside the fetchers and never logged.
   {
-    const gsrc = cfg.guidelines?.source?.notion;
-    const gfile = cfg.guidelines?.sources?.[0];
-    if (gsrc && gfile) {
+    const jobs = [];
+    try {
+      const { gitlabTargets, notionTargets } = await import('./intent-gen.mjs');
+      for (const t of notionTargets(cfg)) {
+        jobs.push({ provider: 'Notion', file: t.file, fetch: async () => (await import('./notion-fetch.mjs')).fetchNotionMarkdown(t.url, {}),
+          missing: `Set NOTION_TOKEN in .env and share the page with the integration, or commit an export.` });
+      }
+      for (const t of gitlabTargets(cfg)) {
+        jobs.push({ provider: 'GitLab', file: t.file, fetch: async () => (await import('./gitlab-fetch.mjs')).fetchGitlabMarkdown(t.url, {}),
+          missing: `Check the link, put GITLAB_TOKEN (read_api) in .env for a private project, and GITLAB_HOST for a company GitLab, or commit the page as ${t.file}.` });
+      }
+    } catch { /* no GitLab config */ }
+    for (const j of jobs) {
       try {
-        const { fetchNotionMarkdown } = await import('./notion-fetch.mjs');
-        const md = await fetchNotionMarkdown(gsrc, {});
-        const target = join(ROOT, gfile);
+        const md = await j.fetch();
+        const target = join(ROOT, j.file);
         if (md && md.trim()) {
           const prevMd = existsSync(target) ? readFileSync(target, 'utf8') : '';
-          if (md !== prevMd) { writeFileSync(target, md); console.log(`\n🔗 Guidelines refreshed from Notion → ${gfile}`); }
+          if (md !== prevMd) {
+            mkdirSync(dirname(target), { recursive: true });
+            writeFileSync(target, md);
+            console.log(`\n🔗 Guidelines refreshed from ${j.provider} → ${j.file}`);
+          }
         } else if (!existsSync(target)) {
-          console.log(C.yellow(`\n⚠️  Guidelines: could not fetch from Notion and no committed ${gfile} exists. Set NOTION_TOKEN in .env and share the page with the integration, or commit an export.`));
+          console.log(C.yellow(`\n⚠️  Guidelines: could not fetch from ${j.provider} and no committed ${j.file} exists. ${j.missing}`));
         }
       } catch { /* degrade: keep whatever is committed */ }
     }
@@ -3037,10 +3132,31 @@ function reportFull(label, items, shown) {
         for (const c of breaks.slice(0, 20)) console.log(C.yellow(`     · ${c.msg}${c.consumers ? `  · used by ${c.consumers} component(s) — a shared-contract change` : ''}`));
       }
       if (deprecs.length) {
-        console.log(C.yellow(`⚠️  ${deprecs.length} token(s) newly deprecated:`));
+        console.log(C.yellow(`⚠️  ${deprecs.length} token(s)/component(s) newly deprecated:`));
         for (const c of deprecs.slice(0, 12)) console.log(C.yellow(`     · ${c.msg}${c.consumers ? `  · used by ${c.consumers} component(s)` : ''}`));
       }
       if (additiveN) console.log(`   +${additiveN} additive change(s)`);
+      // Decision status (I33, advisory): which components are current / deprecated / experimental,
+      // and any guidance that still sends an agent to a deprecated one (the "two right answers"
+      // case). Only shown when the DS says something. Never fails. Full list with --status.
+      {
+        const sc = r.statusCounts || {};
+        const si = r.statusIssues || [];
+        const marked = (sc.deprecated || 0) + (sc.experimental || 0);
+        if (marked || si.length) {
+          const bits = [];
+          if (sc.deprecated) bits.push(`${sc.deprecated} deprecated`);
+          if (sc.experimental) bits.push(`${sc.experimental} experimental`);
+          if (sc.current) bits.push(`${sc.current} marked current`);
+          console.log(`ℹ️  Decision status: ${bits.join(' · ') || 'no component marked'}  (llms.txt tells agents which one won and why)`);
+          if (si.length) {
+            console.log(C.yellow(`⚠️  ${si.length} decision(s) an agent would misread:`));
+            const detail = process.argv.includes('--status');
+            for (const f of (detail ? si : si.slice(0, 12))) console.log(C.yellow(`     · ${f.msg}`));
+            if (!detail && si.length > 12) console.log(C.dim('     Run with --status to list them all.'));
+          }
+        }
+      }
       if (r.undefinedRefs?.length) {
         console.log(C.yellow(`⚠️  ${r.undefinedRefs.length} undefined token reference(s) — used in a contract but defined nowhere (silent-failure risk):`));
         for (const u of r.undefinedRefs.slice(0, 20)) console.log(C.yellow(`     · ${u}`));

@@ -110,8 +110,9 @@ test('[regression container] inline-block with no definite width is flagged (inv
 // 3) component-selector-check.mjs
 // ─────────────────────────────────────────────────────────────────────────────
 const SELECTOR_GATE = 'component-selector-check.mjs';
-const SELECTOR_CFG = { paths: { themeCSS: 'theme.css' } };
-// `listItem` is a built-in KNOWN_COMPONENTS prefix, so no contract file is needed.
+const SELECTOR_CFG = { paths: { themeCSS: 'theme.css' }, componentSelectors: { listItem: '.list-item' } };
+// `listItem` is a DS component because the project declares it (componentSelectors; the captured
+// structure snapshot works the same way). The engine ships no built-in list of component names.
 
 test('[bugfix selector] a state var written var( --listItem-bg-selected ) (space) is detected', () => {
   const { code, out } = runGate(SELECTOR_GATE, {
@@ -208,4 +209,14 @@ test('[bugfix structure] array themeCSS resolves without crashing; a strokeful c
   assert.equal(code, 0, out);
   assert.match(out, /All structural checks pass/);
   assert.match(out, /no phantom CSS borders/);
+});
+
+test('[generic selector] a component known only from the captured structure snapshot is checked', () => {
+  const { code, out } = runGate(SELECTOR_GATE, {
+    'ds-config.json': { paths: { themeCSS: 'theme.css', snapshotStructure: 'struct.json' } },
+    'struct.json': { components: { chipTag: {} } },
+    'theme.css': `.chip-tag { color: var(--chipTag-bg-selected); }`,
+  });
+  assert.equal(code, 1, out);
+  assert.match(out, /--chipTag-bg-selected/);
 });

@@ -8,7 +8,7 @@
 // State indicator detection (two sources):
 //   1. Standard CSS patterns - :hover, .selected, :disabled, :focus, :checked, etc.
 //   2. CONTRACT.propertyMap - project-specific state selectors derived from Figma states
-//      (e.g. radioButton.State.Selected → ".depth-option.done"; "done" in selector)
+//      (e.g. radioButton.State.Selected → ".step-option.done"; "done" in selector)
 //
 // Only checks vars where the prefix before the state suffix is a known DS component name.
 // System/semantic vars like --text-disabled or --text-muted are intentionally skipped.
@@ -57,12 +57,18 @@ try {
 // ── Known DS component name prefixes ─────────────────────────────────────────
 // Only vars where the prefix (before the state suffix) matches a known component
 // are subject to this check. Semantic vars like --text-disabled are excluded.
+// DS components not always in CONTRACT come from the captured structure snapshot and the
+// project's componentSelectors - never from a list of one DS's names baked into the engine.
+let SNAPSHOT_COMPONENTS = [];
+try {
+  const snap = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8'));
+  SNAPSHOT_COMPONENTS = Object.keys(snap.components ?? {});
+} catch { /* snapshot optional */ }
 const KNOWN_COMPONENTS = new Set([
   ...Object.keys(CONTRACT),
   ...Object.values(CONTRACT).map(e => e?.figmaName).filter(Boolean),
-  // Common DS component prefixes not always in CONTRACT
-  'buttonPrimary', 'emptyState', 'listItem', 'statusbar', 'tableRow',
-  'radioButton', 'overflowList', 'dividerSection',
+  ...SNAPSHOT_COMPONENTS,
+  ...Object.keys(cfg.componentSelectors ?? {}),
 ]);
 // Normalised lookup too, so a figmaName like "Radio Button" (spaces/caps) still matches a
 // var-derived candidate like "radio-button" / "radioButton".
@@ -70,19 +76,19 @@ const _normComp = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 const KNOWN_COMPONENTS_NORM = new Set([...KNOWN_COMPONENTS].map(_normComp));
 
 // ── Build state indicator sets ────────────────────────────────────────────────
-// Uses substring match (no dot/colon required) so ".node-selected", ".inputWrap--disabled",
+// Uses substring match (no dot/colon required) so ".item-selected", ".inputGroup--disabled",
 // etc. all match without needing an exact pattern per component.
 const stateIndicators = {
   hover:    new Set(['hover']),    // :hover, .hover, .hovered, *-hover
-  selected: new Set(['selected']), // .selected, .node-selected, aria-selected
-  disabled: new Set(['disabled']), // :disabled, .disabled, .inputWrap--disabled
+  selected: new Set(['selected']), // .selected, .item-selected, aria-selected
+  disabled: new Set(['disabled']), // :disabled, .disabled, .inputGroup--disabled
   focus:    new Set(['focus']),    // :focus, :focus-within, .focused
   checked:  new Set(['checked']),  // :checked
 };
 
 // Augment from CONTRACT.propertyMap: Figma state names → CSS selectors.
-// e.g. radioButton.State.Selected → ".depth-option.done" → adds "done" to selected indicators
-// and adds ".depth-option.done" as an exact fragment.
+// e.g. radioButton.State.Selected → ".step-option.done" → adds "done" to selected indicators
+// and adds ".step-option.done" as an exact fragment.
 for (const def of Object.values(CONTRACT)) {
   if (!def.propertyMap) continue;
   for (const [, propVal] of Object.entries(def.propertyMap)) {
@@ -153,7 +159,7 @@ for (const { sel, body } of rules) {
     if (!STATE_SUFFIXES.has(lastSeg)) continue;
 
     // Only check vars whose prefix matches a known DS component name.
-    // e.g. "buttonList" from "--buttonList-text-hover"; "text" from "--text-disabled" → skip
+    // e.g. "menuList" from "--menuList-text-hover"; "text" from "--text-disabled" → skip
     let compName = null;
     for (let i = parts.length - 1; i >= 1; i--) {
       const candidate = parts.slice(0, i).join('-');

@@ -12,6 +12,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
+import { createLocator } from './component-locator.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -38,11 +39,9 @@ try {
 
 const UNIMPL = new Set(cfg.knownUnimplementedComponents ?? []);
 
-// A component's CSS class = its main selector's leading class, else `.<name>`.
-function classOf(comp) {
-  const sel = SELECTORS[comp]?.main;
-  return sel?.match(/\.[a-zA-Z][\w-]*/)?.[0] ?? `.${comp}`;
-}
+// A component's CSS class, from the one shared component finder (component-locator.mjs).
+const LOCATOR = createLocator(cfg, { contractSelectors: SELECTORS });
+const classOf = (comp) => LOCATOR.classFor(comp);
 // Does any entry's selector reference this component's class?
 const refsClass = (entries, keyer, cls) => entries.some(e => (keyer(e) ?? '').includes(cls));
 

@@ -20,7 +20,7 @@
 //
 //   export const FORM_CONTROL_BINDINGS = [{
 //     component: 'input',                 // DS component key, used in messages only
-//     dsClass:   'inputWrap',             // element carrying this = the base owns it, skip
+//     dsClass:   'inputGroup',             // element carrying this = the base owns it, skip
 //     elements:  ['input', 'textarea', 'select'],
 //     props: {                            // CSS prop -> vars that are acceptable
 //       'border-color': ['--input-border', '--input-border-hover', '--input-border-focus'],
@@ -108,7 +108,7 @@ let pass = true, checked = 0, skipped = 0, nativeChecked = 0;
 // DS radio/checkbox/switch is to visually SUPPRESS the native control (opacity:0 / clipped /
 // appearance:none) and draw a styled sibling that the :checked state drives. So a native
 // radio/checkbox the CSS never suppresses is rendering with browser chrome instead of the DS
-// component. (This is exactly the .radioButton-input-with-no-hiding-rule bug: the class was on
+// component. (This is exactly the .radio-input-with-no-hiding-rule bug: the class was on
 // the input but had no CSS, so the browser drew a native red radio.) Generic, no config: when
 // a DS has these components, a bare native radio/checkbox is always wrong.
 const nativeExempt = new Set(cfg.knownNativeControlExceptions ?? []);
@@ -140,11 +140,9 @@ for (const rel of pluginCSS) {
     nativeChecked++;
     if (!isSuppressed(handles)) {
       pass = false;
-      const comp = type === 'radio' ? 'radioButton' : 'checkbox';
-      const sibling = type === 'radio' ? '.radioButton-circle' : '.checkbox-box';
       console.log(`❌ [13c] ${relative(ROOT, abs)} native <input type="${type}"> (${handles.join(', ') || 'no class/id'}) is not visually suppressed`);
-      console.log(`         → it renders with the browser's native control instead of the DS ${comp} component.`);
-      console.log(`         Hide the input (opacity:0 / clipped) and style a DS sibling (${sibling}) driven by :checked.`);
+      console.log(`         → it renders with the browser's native control instead of the DS ${type} component.`);
+      console.log(`         Hide the input (opacity:0 / clipped) and style the DS component's visual sibling, driven by :checked.`);
     }
   }
 }

@@ -31,7 +31,7 @@ const SLOT_CONFIG = { paths: { plugins: ['main'], pluginCSS: ['ui.html'] } };
 // selector of the rule we care about, so `#q` stays a clean subject selector.
 const FC_CONFIG   = { paths: { pluginCSS: ['ui.html'] } };
 const FC_CONTRACT =
-  "export const FORM_CONTROL_BINDINGS = [{ component: 'input', dsClass: 'inputWrap', " +
+  "export const FORM_CONTROL_BINDINGS = [{ component: 'input', dsClass: 'inputGroup', " +
   "elements: ['input','textarea','select'], props: { 'background': ['--input-background'] } }];";
 const fcHtml = (decl) =>
   `<input id="q" type="text">\n<style>\n  .dummy { color: red; }\n  #q { ${decl} }\n</style>\n`;

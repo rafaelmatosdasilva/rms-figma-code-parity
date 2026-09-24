@@ -23,16 +23,14 @@ import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { resolveStatus } from './decision-status.mjs';
+import { loadLocator } from './component-locator.mjs';
+import { slugForUrl } from './gitlab-fetch.mjs';
 
 const LAYERS = ['system', 'foundations', 'components', 'patterns', 'templates', 'pages', 'flows'];
 
 function readJSON(p) { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } }
 
-function classOf(name, cfg) {
-  const sel = cfg?.componentSelectors?.[name];
-  if (sel) return sel.match(/[.#][\w-]+/)?.[0] || sel;
-  return '.' + name.charAt(0).toLowerCase() + name.slice(1);
-}
 
 function usageOf(cls, sources) {
   const tok = cls.replace(/^[.#]/, '');
@@ -75,9 +73,38 @@ function parseSections(text) {
 // component (heading text = component name) and collects the rest as a global block. Advisory,
 // never a gate. A live Notion/URL fetch, when configured, is a separate capture step that WRITES
 // these files first; the generator always reads the committed file, for determinism.
+// The GitLab links a project lists (guidelines.source.gitlab): a link, or { url, file }, each
+// written by the audit to its own committed Markdown file (a bare link to guidelines/gitlab-<slug>.md).
+export function gitlabTargets(cfg) {
+  const raw = cfg?.guidelines?.source?.gitlab;
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return list
+    .map((e) => (typeof e === 'string' ? { url: e.trim(), file: `guidelines/gitlab-${slugForUrl(e)}.md` } : e && typeof e === 'object' && e.url ? { url: String(e.url).trim(), file: e.file || `guidelines/gitlab-${slugForUrl(e.url)}.md` } : null))
+    .filter((t) => t && t.url);
+}
+
+// The Notion links (guidelines.source.notion): the original single link still writes to
+// guidelines.sources[0]; a list of links (or { url, file }) writes each to its own file.
+export function notionTargets(cfg) {
+  const raw = cfg?.guidelines?.source?.notion;
+  if (!raw) return [];
+  const slug = (u) => String(u).replace(/[?#].*$/, '').split('/').pop().replace(/-?[0-9a-f]{32}$/i, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'page';
+  if (typeof raw === 'string') return [{ url: raw.trim(), file: cfg.guidelines?.sources?.[0] ?? 'guidelines.md' }];
+  return (Array.isArray(raw) ? raw : [raw])
+    .map((e) => (typeof e === 'string' ? { url: e.trim(), file: `guidelines/notion-${slug(e)}.md` } : e && typeof e === 'object' && e.url ? { url: String(e.url).trim(), file: e.file || `guidelines/notion-${slug(e.url)}.md` } : null))
+    .filter((t) => t && t.url);
+}
+
+// Every committed guidelines file the design intent reads: guidelines.sources, plus each pasted
+// Notion and GitLab link's file (so a link never has to be repeated in sources). Deduped, in order.
+export function guidelineFiles(cfg) {
+  const raw = cfg?.guidelines?.sources;
+  const sources = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : []);
+  return [...new Set([...sources, ...notionTargets(cfg).map((t) => t.file), ...gitlabTargets(cfg).map((t) => t.file)])];
+}
+
 function ingestGuidelines(ROOT, cfg) {
-  const raw = cfg.guidelines?.sources;
-  const files = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : []);
+  const files = guidelineFiles(cfg);
   const sections = [];          // { heading, body } - matched to a component by heading, else global
   const generalParts = [];      // pre-heading text and JSON _general
   const used = [];
@@ -106,6 +133,7 @@ function ingestGuidelines(ROOT, cfg) {
 }
 
 export async function generateIntent(ROOT, cfg, opts = {}) {
+  const locator = await loadLocator(ROOT, cfg);   // one answer to "which class is component X"
   const paths = cfg.paths || {};
   const themeCss = Array.isArray(paths.themeCSS) ? paths.themeCSS[0] : paths.themeCSS;
   const dsDir = themeCss ? dirname(resolve(ROOT, themeCss)) : ROOT;
@@ -151,7 +179,7 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
   intent.components = {};
   for (const name of Object.keys(structure)) {
     const s = structure[name] || {};
-    const cls = classOf(name, cfg);
+    const cls = locator.classFor(name);
     const pr = props[name] || {};
     const annotations = (pr.annotations || []).map(a => (a.label || a)).filter(Boolean);
     const variants = Object.keys(s.variantHeight || s.variantStroke || {});
@@ -174,6 +202,7 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
       },
       guidance: (agWhenNot || agUseInstead.length)         // authored: when NOT to use, and what instead
         ? { whenNotToUse: agWhenNot, useInstead: agUseInstead.length ? agUseInstead : null } : null,
+      status: resolveStatus(ag, pr.description),           // I33: current/deprecated/experimental + what won + why
       facts: {
         height: s.h ?? null,
         paddingVar: s.paddingVar || null,

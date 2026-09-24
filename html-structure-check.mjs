@@ -35,17 +35,10 @@ const plugins   = cfg.paths?.plugins   ?? [];
 // Only interactive elements with a recognised DS class are fingerprinted. Which
 // classes count is design-system specific, so set it per project in ds-config.json:
 //   "htmlStructureClasses": ["btn-primary", "badge", "swatch", ...]
-// When the key is absent the built-in list below is used, so existing setups are
-// unchanged; any other DS just lists its own component classes to make the gate work.
-const DS_CLASSES = new Set(
-  Array.isArray(cfg.htmlStructureClasses) && cfg.htmlStructureClasses.length
-    ? cfg.htmlStructureClasses
-    : [
-        'buttonPrimary', 'buttonSecondary', 'buttonTertiary', 'buttonQuaternary',
-        'buttonList', 'overflowList', 'segmented-control', 'inputWrap', 'swatch',
-        'badge', 'dividerSection', 'panel',
-      ]
-);
+// The engine ships no default list (it must not assume any DS's class names). Without the
+// key, element ids and icon references are still fingerprinted; component classes are not.
+const DS_CLASSES = new Set(Array.isArray(cfg.htmlStructureClasses) ? cfg.htmlStructureClasses : []);
+if (!DS_CLASSES.size) console.log('ℹ️  [15] htmlStructureClasses not set in ds-config.json - DS component classes are not part of the fingerprint (ids and icon references still are).');
 
 // ── HTML parser ───────────────────────────────────────────────────────────────
 

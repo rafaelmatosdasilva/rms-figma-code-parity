@@ -24,6 +24,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { pruneCandidates } from './prune-check.mjs';
+import { resolveStatus, parseStatusTags, lintStatusFields, statusFindings, statusLine } from './decision-status.mjs';
 
 function readJSON(p) { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } }
 function ensureDir(p) { try { mkdirSync(p, { recursive: true }); } catch { /* best-effort */ } }
@@ -71,12 +72,20 @@ function buildTokens(vars, modes) {
   // Optional per-token metadata sidecar { "<name>": { description?, deprecated? } }, captured from
   // each Figma variable's own description (deprecated via a "@deprecated" marker). Additive: absent
   // leaves the DTCG defaults ($deprecated:false, no $description).
+  // I33: when the description also says what won or why (@use-instead / @why, or text after
+  // @deprecated), $deprecated carries that explanation as a string - the DTCG spec allows
+  // $deprecated to be a string explaining the deprecation - so an agent reads the replacement
+  // instead of finding two tokens that both look valid.
   const meta = vars.tokenMeta || {};
   const applyMeta = (leaf, name) => {
     const m = meta[name];
     if (m && typeof m === 'object') {
       if (typeof m.description === 'string' && m.description.trim()) leaf.$description = m.description.trim();
-      if (m.deprecated === true) leaf.$deprecated = true;
+      const tags = parseStatusTags(m.description);
+      if (m.deprecated === true || tags.state === 'deprecated') {
+        const why = [tags.supersededBy ? `Use ${tags.supersededBy} instead.` : '', tags.rationale || ''].filter(Boolean).join(' ');
+        leaf.$deprecated = why || true;
+      }
     }
     return leaf;
   };
@@ -239,6 +248,14 @@ function buildContract(name, { contract, structure, props, authored, composition
     },
   };
 
+  // Decision status + the *why* (I33): current / deprecated / experimental, what superseded it and
+  // why. AUTHORED fields win; tags in the CAPTURED Figma description fill the gaps. Emitted only when
+  // the DS actually says something, so a DS with no convention is unchanged.
+  {
+    const status = resolveStatus(a, p?.description);
+    if (status) out.status = status;
+  }
+
   // AUTHORED agent guidance: when NOT to use this component, and what to use instead.
   // Optional and additive — absent leaves the contract unchanged.
   if (typeof a.whenNotToUse === 'string' && a.whenNotToUse.trim()) out.whenNotToUse = a.whenNotToUse.trim();
@@ -350,6 +367,17 @@ const CONTRACT_SCHEMA = {
     variants: { type: 'array' },
     semantics: { type: 'object' },
     whenNotToUse: { type: 'string' },
+    status: {
+      type: 'object',
+      required: ['state'],
+      properties: {
+        state: { enum: ['current', 'deprecated', 'experimental'] },
+        supersededBy: { type: 'string' },
+        since: { type: 'string' },
+        rationale: { type: 'string' },
+        source: { type: 'string' },
+      },
+    },
     useInstead: { type: 'array', items: { type: 'string' } },
     relationships: {
       type: 'object',
@@ -400,6 +428,7 @@ function lintAuthored(doc) {
       if (!ok) issues.push(`${name}.useInstead must be a string or a list of strings`);
     }
     if ('neverCombineWith' in entry && !(Array.isArray(entry.neverCombineWith) && entry.neverCombineWith.every((x) => typeof x === 'string'))) issues.push(`${name}.neverCombineWith must be a list of strings`);
+    issues.push(...lintStatusFields(name, entry));
     const b = entry.bindings;
     if (b === undefined) continue;
     if (typeof b !== 'object' || Array.isArray(b)) { issues.push(`${name}.bindings must be an object`); continue; }
@@ -427,7 +456,8 @@ function lintAuthored(doc) {
 // Flatten a DTCG dictionary to a Map of dot-path -> { deprecated }.
 function flattenTokens(node, prefix = [], out = new Map()) {
   if (!node || typeof node !== 'object') return out;
-  if (node.$value !== undefined) { out.set(prefix.join('.'), { deprecated: node.$deprecated === true, type: node.$type }); return out; }
+  // $deprecated is true or (DTCG) a string explaining it; both mean deprecated.
+  if (node.$value !== undefined) { out.set(prefix.join('.'), { deprecated: node.$deprecated === true || (typeof node.$deprecated === 'string' && node.$deprecated !== ''), type: node.$type }); return out; }
   for (const k of Object.keys(node)) { if (!k.startsWith('$')) flattenTokens(node[k], [...prefix, k], out); }
   return out;
 }
@@ -491,6 +521,9 @@ function diffContract(prev, next, name) {
   const ns = new Set((next.states || []).map((s) => s.name).filter(Boolean));
   for (const s of ps) if (!ns.has(s)) out.push({ level: 'breaking', msg: `${name}: state "${s}" removed` });
   for (const s of ns) if (!ps.has(s)) out.push({ level: 'additive', msg: `${name}: state "${s}" added` });
+  // A component newly marked deprecated (I33) is a heads-up for everything that composes it.
+  if (next.status?.state === 'deprecated' && prev.status?.state !== 'deprecated')
+    out.push({ level: 'deprecation', msg: `component "${name}" deprecated${next.status.supersededBy ? ` (use ${next.status.supersededBy})` : ''}` });
   // Semver guard: a breaking change should carry a major-version bump.
   if (out.some((c) => c.level === 'breaking') && semverMajor(next.version) <= semverMajor(prev.version))
     out.push({ level: 'breaking', msg: `${name}: breaking change but version still ${next.version} — bump the major in contract.authored.json` });
@@ -519,7 +552,9 @@ function buildLlms(built, tokens, tokenCount) {
   for (const { name, contract } of built) {
     const desc = String(contract.description || '').replace(/\s+/g, ' ').trim();
     const props = (contract.props || []).map((p) => p.name).join(', ');
-    lines.push(`- [${name}](./${name}.contract.json): ${desc}${props ? `  · props: ${props}` : ''}`);
+    const tag = contract.status && contract.status.state !== 'current' ? `[${contract.status.state}] ` : '';
+    lines.push(`- ${tag}[${name}](./${name}.contract.json): ${desc}${props ? `  · props: ${props}` : ''}`);
+    if (contract.status && contract.status.state !== 'current') lines.push(`    - status: ${statusLine(contract.status)}`);
     // Agent guidance + relationships, one sub-line each when present.
     const rel = contract.relationships || {};
     if (contract.whenNotToUse) lines.push(`    - avoid: ${String(contract.whenNotToUse).replace(/\s+/g, ' ').trim()}`);
@@ -579,7 +614,7 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   let authoredDoc = readJSON(authoredPath);
   if (!authoredDoc) {
     authoredDoc = {
-      _note: 'Hand-authored contract layer (rms-parity) — COMMIT this file. It holds decisions only (Figma->code bindings, semantics, notes), never captured DS values, so it is safe to share and applies in CI. The generated contracts/ + tokens.json are local, gitignored views built from this + the Figma snapshots. Resolve a prop rename or slot by adding, under a component: "bindings": { "<figmaProp>": { "attribute": "codeName" } }  or  { "slot": "slotName" }. Optional agent guidance per component: "whenNotToUse" (string), "useInstead" (string or list), "neverCombineWith" (list of component names).',
+      _note: 'Hand-authored contract layer (rms-parity) — COMMIT this file. It holds decisions only (Figma->code bindings, semantics, notes), never captured DS values, so it is safe to share and applies in CI. The generated contracts/ + tokens.json are local, gitignored views built from this + the Figma snapshots. Resolve a prop rename or slot by adding, under a component: "bindings": { "<figmaProp>": { "attribute": "codeName" } }  or  { "slot": "slotName" }. Optional agent guidance per component: "whenNotToUse" (string), "useInstead" (string or list), "neverCombineWith" (list of component names). Optional decision status: "status" (current | deprecated | experimental), "supersededBy" (the component that won), "since", "rationale" (the why).',
       components: Object.fromEntries(allNames.map((n) => [n, { bindings: {} }])),
     };
     try { writeFileSync(authoredPath, JSON.stringify(authoredDoc, null, 2) + '\n'); } catch { /* best-effort */ }
@@ -649,5 +684,10 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   // Prune candidates (I8): a lean-library advisory over what we just built. Surfaced, never enforced.
   const prune = pruneCandidates({ built, usage, tokensDict: tokens });
 
-  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens, prune };
+  // Decision status cross-checks (I33): guidance that still points at a deprecated component, a
+  // replacement that does not exist or is itself deprecated, a deprecation with no what/why.
+  const statusIssues = statusFindings(built);
+  const statusCounts = built.reduce((acc, b) => { const st = b.contract.status?.state; if (st) acc[st] = (acc[st] || 0) + 1; return acc; }, {});
+
+  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens, prune, statusIssues, statusCounts };
 }

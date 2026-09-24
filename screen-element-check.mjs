@@ -2,15 +2,15 @@
 // Run from project root: node scripts/screen-element-check.mjs
 //
 // The structure/token gates compare elements that already exist on BOTH sides. They cannot see
-// a whole control the DESIGN has that the CODE simply never built - a "Preflight" button added to
+// a whole control the DESIGN has that the CODE simply never built - a "Export" button added to
 // a screen, a modal, an extra toggle. This gate closes that gap for REFERENCE SCREENS: for each
 // registered screen it takes the DS element inventory (interactive controls + their visible
 // label) and requires a code counterpart OF THE MATCHING KIND.
 //
 // Kind-awareness is the whole point. A label can appear in the code as an id, a comment, or a
-// section header while the CONTROL is missing (e.g. "Preflight" lives in `#preflight-section`
-// ids but there is no Preflight <button>). So a bare text match is not enough: a DS `buttonX`
-// labelled "Preflight" is only satisfied by the label sitting inside a <button> (or an element
+// section header while the CONTROL is missing (e.g. "Export" lives in `#export-section`
+// ids but there is no Export <button>). So a bare text match is not enough: a DS `buttonX`
+// labelled "Export" is only satisfied by the label sitting inside a <button> (or an element
 // carrying a button class) - not by the word appearing somewhere in the file.
 //
 // Input: figma-screens.snapshot.json (captured in Phase 1 by refreshScreenElements in audit.mjs):
@@ -43,12 +43,12 @@ if (!screenIds.length) {
 }
 
 const STRICT = cfg.screenElementStrict === true;
-// Silence a deliberate different realization, e.g. Preflight built as inline sections rather than
+// Silence a deliberate different realization, e.g. Export built as inline sections rather than
 // a button+modal. Entries are "<plugin>/<label>" (case-insensitive), matched against the DS label.
 const EXEMPT = new Set((cfg.knownScreenElementExemptions ?? []).map((s) => String(s).toLowerCase().trim()));
 
 // ── Which DS components are interactive controls worth requiring a counterpart for ──
-// Everything else (dividerLine, badge, swatch, card, panel, plain icon) is decorative/structural
+// Everything else (dividers, badges, swatches, cards, panels, plain icons) is decorative/structural
 // and is NOT asserted here - other gates cover their tokens/structure.
 function family(component) {
   const c = String(component || '').toLowerCase();
@@ -108,9 +108,9 @@ function walk(dir, out) {
 }
 // Visible-text matching must see MARKUP only. Inside a <script> the JS operators `<`/`>` and
 // template-literal HTML (`<button>` in a string) would fake a text node and a kind marker, so a
-// mere identifier (`requestPreflight`) would falsely satisfy a "Preflight" button. Strip scripts,
+// mere identifier (`requestExport`) would falsely satisfy a "Export" button. Strip scripts,
 // styles and comments for the visible-text pass; quoted-string matching still uses the full text
-// so a JS-set dynamic label (`'Scan selection'`) still counts.
+// so a JS-set dynamic label (`'Run on selection'`) still counts.
 function stripNonMarkup(code) {
   return code
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
@@ -132,9 +132,9 @@ function codeForPlugin(plugin) {
 
 // A label reaches the DOM in one of two ways, and only these two count as a real counterpart -
 // NOT the word turning up in an identifier, a class name, an id, or a comment (why a naive text
-// match failed: "Preflight" lives only in `requestPreflight`/`#preflight-*`, never as a label):
+// match failed: "Export" lives only in `requestExport`/`#export-*`, never as a label):
 //   1. a QUOTED STRING equal to the label - a dynamic label set in JS or an attribute value
-//      (e.g. `'Scan selection'`), which by itself is strong evidence the control exists; or
+//      (e.g. `'Run on selection'`), which by itself is strong evidence the control exists; or
 //   2. VISIBLE TEXT between tags (`>Label<`) sitting inside an element of the matching KIND.
 function isQuoted(code, idx, label) {
   const before = code[idx - 1];
@@ -166,8 +166,8 @@ function hasCounterpart(code, fam, label) {
 
 // The button-variant class on the button ENCLOSING this label as visible text (or null). Reads the
 // nearest <button …> that still wraps the label (no </button> between it and the label) - NOT any
-// button class in a window, which would wrongly grab a NEIGHBOURING button (e.g. "Export PDF" sitting
-// right after a `.buttonSecondary` "Save as default").
+// button class in a window, which would wrongly grab a NEIGHBOURING button (e.g. "Download file" sitting
+// right after a `.buttonSecondary` "Save changes").
 function hostingButtonClass(code, label) {
   const rv = new RegExp(esc(label), 'g');
   let m;
@@ -185,18 +185,29 @@ function hostingButtonClass(code, label) {
   return null;
 }
 
-// How many row separators (dividerLine / <hr>) the plugin markup renders - to compare against the
+// The DS separator classes. ds-config.json → separatorClasses, else every DS component whose
+// name says divider/separator (the same rule the Phase-1 capture uses to count rowSeparators),
+// as its class (componentSelectors, else the naming convention ComponentName → componentName).
+const SEPARATOR_CLASSES = (() => {
+  if (Array.isArray(cfg.separatorClasses)) return cfg.separatorClasses.map((c) => String(c).replace(/^\./, ''));
+  let names = [];
+  try { names = Object.keys(JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {}); } catch { /* optional */ }
+  return names.filter((n) => /divider|separator/i.test(n))
+    .map((n) => cfg.componentSelectors?.[n]?.match(/\.([\w-]+)/)?.[1] ?? (n.charAt(0).toLowerCase() + n.slice(1)));
+})();
+
+// How many row separators (a DS divider / <hr>) the markup renders - to compare against the
 // design's rowSeparators count (a separator carries no label, so it can only be checked by count).
 function codeSeparatorCount(code) {
-  return (code.html.match(/class=["'][^"']*\bdividerLine\b/gi) || []).length
-       + (code.html.match(/<hr\b/gi) || []).length;
+  const dsSeps = SEPARATOR_CLASSES.reduce((n, c) => n + (code.html.match(new RegExp(`class=["'][^"']*\\b${esc(c)}\\b`, 'gi')) || []).length, 0);
+  return dsSeps + (code.html.match(/<hr\b/gi) || []).length;
 }
 
 // ── Compare each screen's DS inventory against its code ──
 const OK = [];
 const MISSING = [];
 const MISMATCH = [];   // control present but built with the wrong DS component (e.g. secondary vs tertiary)
-const SEPGAP = [];     // design separates rows with dividerLine; the code renders fewer
+const SEPGAP = [];     // design separates rows with a DS divider; the code renders fewer
 const SKIPPED = [];
 let checked = 0;
 
@@ -234,13 +245,13 @@ for (const id of screenIds) {
     }
   }
 
-  // Fix 2 - row separators (dividerLines between controls) carry no label, so the inventory above
+  // Fix 2 - row separators (dividers between controls) carry no label, so the inventory above
   // can't see them. Compare the design's count against what the plugin markup renders.
   const designSeps = screen.rowSeparators || 0;
   if (designSeps > 0) {
     const codeSeps = codeSeparatorCount(code);
     if (codeSeps < designSeps) {
-      SEPGAP.push(`${screen.name || id} - design places ${designSeps} row-separator(s) (dividerLine) between controls; the ${plugin} code renders ${codeSeps}`);
+      SEPGAP.push(`${screen.name || id} - design places ${designSeps} row-separator(s) (DS divider) between controls; the ${plugin} code renders ${codeSeps}`);
     }
   }
 }
@@ -248,7 +259,7 @@ for (const id of screenIds) {
 console.log(`\n✅ IN CODE   ${OK.length}`);
 console.log(`❌ MISSING   ${MISSING.length}   (DS screen control with no code counterpart of its kind)`);
 console.log(`❌ MISMATCH  ${MISMATCH.length}   (control built with the wrong DS component - e.g. secondary vs tertiary)`);
-console.log(`❌ SEP GAP   ${SEPGAP.length}   (dividerLines the design places between controls but the code omits)`);
+console.log(`❌ SEP GAP   ${SEPGAP.length}   (dividers the design places between controls but the code omits)`);
 if (SKIPPED.length) console.log(`⏭  SKIPPED   ${SKIPPED.length}`);
 if (MISSING.length) {
   console.log('\n─── DS screen elements missing from the code ──');
@@ -264,7 +275,7 @@ if (MISMATCH.length) {
 if (SEPGAP.length) {
   console.log('\n─── row separators in the design missing from the code ──');
   for (const l of SEPGAP) console.log(`  ❌ ${l}`);
-  console.log('\n  Render the DS dividerLine between the rows/cards the design separates.');
+  console.log('\n  Render the DS divider between the rows/cards the design separates.');
 }
 const anyFinding = MISSING.length + MISMATCH.length + SEPGAP.length;
 if (!anyFinding && checked) {

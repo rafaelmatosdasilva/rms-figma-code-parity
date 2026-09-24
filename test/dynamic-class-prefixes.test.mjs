@@ -4,7 +4,7 @@ import { extractDynamicClassPrefixes } from '../dynamic-class-prefixes.mjs';
 
 test('extracts the trailing class prefix from a + splice and a ${} template', () => {
   const corpus = [
-    `const a = '<div class="card issue-item t-' + iss.type + '">';`,
+    `const a = '<div class="card result-item t-' + iss.type + '">';`,
     'const b = `panel section-${name}`;',
   ].join('\n');
   const prefixes = extractDynamicClassPrefixes(corpus);

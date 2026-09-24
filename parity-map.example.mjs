@@ -122,7 +122,7 @@ export const EFFECTS = [
 // type 'suppress' → outline: none must be declared in the selector's CSS block
 // format: [{ selector: string, type: 'visible' | 'within' | 'suppress' }]
 export const FOCUS_CONTRACT = [
-  // { selector: '.inputWrap', type: 'within' },   // focus activates on child input
+  // { selector: '.inputGroup', type: 'within' },   // focus activates on child input
   // { selector: 'button',     type: 'suppress' },  // browser outline explicitly removed
 ];
 

@@ -32,13 +32,13 @@ test('loadContext reads the DS var universe and classes from project files', () 
     'ds-config.json': { paths: { themeCSS: 'theme.css', snapshotStructure: 'struct.json' },
       componentSelectors: { buttonPrimary: '.buttonPrimary' } },
     'theme.css': ':root { --color-bg: #fff; --radii-button: 8px; }\n',
-    'struct.json': { components: { inputField: {}, buttonPrimary: {} } },
+    'struct.json': { components: { textInput: {}, buttonPrimary: {} } },
   });
   const cfg = JSON.parse(readFileSync(dir + '/ds-config.json', 'utf8'));
   const ctx2 = loadContext(dir, cfg);
   assert.ok(ctx2.cssVars.has('--color-bg') && ctx2.cssVars.has('--radii-button'));
   assert.ok(ctx2.dsClasses.has('.buttonPrimary'));
-  assert.ok(ctx2.dsClasses.has('.inputField'));   // derived from the structure snapshot
+  assert.ok(ctx2.dsClasses.has('.textInput'));   // derived from the structure snapshot
 });
 
 test('summarize aggregates multi-run results (zero-fix over all runs; clean = every run clean)', () => {

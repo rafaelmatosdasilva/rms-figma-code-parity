@@ -1,5 +1,5 @@
 // dynamic-class-prefixes.mjs — extract the trailing class-name prefixes of strings that are
-// spliced with `+` or `${…}` at runtime, e.g. `'buttonList issue-item t-' + iss.type`. Gate 5's
+// spliced with `+` or `${…}` at runtime, e.g. `'menuList result-item t-' + iss.type`. Gate 5's
 // dead-CSS-class check uses these to avoid flagging a dynamically-built class as unused.
 //
 // Why the bound matters: the source corpus includes the minified plugin `ui.html`, which embeds

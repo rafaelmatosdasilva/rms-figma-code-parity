@@ -11,11 +11,11 @@
 //
 // Contract shape (structure-contract.mjs):
 //   export const RENDERED_ASSERTIONS = [
-//     { plugin: 'impact-atlas', selector: '.statusBar', prop: 'height', expected: '56px',
-//       note: 'DS statusBar 789:38384' },
+//     { plugin: 'my-app', selector: '.toolbar', prop: 'height', expected: '56px',
+//       note: 'DS toolbar height' },
 //     // probe: HTML injected into <body> when the selector matches nothing
 //     // (for components only created at runtime, e.g. toasts)
-//     { plugin: 'impact-atlas', selector: '.toast', probe: '<div class="toast">✓</div>',
+//     { plugin: 'my-app', selector: '.toast', probe: '<div class="toast">✓</div>',
 //       prop: 'height', expected: '32px', note: 'DS toast success state' },
 //   ];
 // prop is a camelCase computed-style key (height, paddingLeft, columnGap, minHeight…).
@@ -23,11 +23,10 @@
 //
 // Skips gracefully (exit 0, ⏭ lines) when Chrome is not installed or assertions are empty.
 
-import { readFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
-import { spawn, spawnSync } from 'child_process';
 import { pathToFileURL } from 'url';
+import { findChrome, launchChrome, connectCDP, openPage, waitForTrue, FILE_PAGE_LOADED } from './cdp.mjs';
 
 const ROOT = process.cwd();
 
@@ -208,21 +207,7 @@ if (!ASSERTIONS.length) {
 // the headless default). An assertion overrides it with its own `colorScheme` field.
 const DEFAULT_SCHEME = cfg.rendered?.colorScheme ?? 'light';
 
-// ── Find Chrome ───────────────────────────────────────────────────────────────
-function findChrome() {
-  const absolute = [
-    process.env.CHROME_PATH,
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/Applications/Chromium.app/Contents/MacOS/Chromium',
-  ].filter(Boolean);
-  for (const p of absolute) if (existsSync(p)) return p;
-  for (const name of ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium']) {
-    const r = spawnSync('which', [name], { encoding: 'utf8' });
-    if (r.status === 0 && r.stdout.trim()) return r.stdout.trim();
-  }
-  return null;
-}
-
+// ── Find + launch Chrome (shared plumbing in cdp.mjs) ─────────────────────────
 const CHROME = findChrome();
 if (!CHROME) {
   console.log('⏭  [16] rendered parity skipped - Chrome not found (set CHROME_PATH to enable)');
@@ -233,46 +218,13 @@ if (typeof WebSocket === 'undefined') {
   process.exit(0);
 }
 
-// ── Launch headless Chrome ────────────────────────────────────────────────────
-const userDataDir = mkdtempSync(join(tmpdir(), 'rendered-check-'));
-const chrome = spawn(CHROME, [
-  '--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-sandbox',
-  '--disable-gpu', '--disable-extensions', `--user-data-dir=${userDataDir}`, 'about:blank',
-], { stdio: ['ignore', 'ignore', 'pipe'] });
-
-function cleanup() {
-  try { chrome.kill(); } catch { /* already dead */ }
-  try { rmSync(userDataDir, { recursive: true, force: true }); } catch { /* best effort */ }
-}
-process.on('exit', cleanup);
+// Timer first, so a Chrome that never opens its DevTools socket still times out.
+let browser = null;
+process.on('exit', () => browser?.kill());
 setTimeout(() => { console.error('❌ [16] rendered parity timed out (30s)'); process.exit(1); }, 30000).unref();
+browser = await launchChrome(CHROME, { tmpPrefix: 'rendered-check-' });
 
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  chrome.stderr.on('data', d => {
-    buf += d.toString();
-    const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
-    if (m) resolve(m[1]);
-  });
-  chrome.on('exit', () => reject(new Error(`Chrome exited before DevTools was ready:\n${buf.slice(-400)}`)));
-});
-
-// ── Minimal CDP client ────────────────────────────────────────────────────────
-const ws = new WebSocket(wsUrl);
-await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-let msgId = 0;
-const pending = new Map();
-ws.onmessage = e => {
-  const m = JSON.parse(e.data);
-  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-};
-function send(method, params = {}, sessionId) {
-  return new Promise((res, rej) => {
-    const id = ++msgId;
-    pending.set(id, m => m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result));
-    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-  });
-}
+const { send, close: closeCDP } = await connectCDP(browser.wsUrl);
 
 // ── Run assertions per plugin ─────────────────────────────────────────────────
 const byPlugin = {};
@@ -286,22 +238,12 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     for (const a of asserts) FAIL.push(`${plugin}: built UI not found at ${uiPath} (run the build first)`);
     continue;
   }
-  const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
-  const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
-  await send('Runtime.enable', {}, sessionId);
+  const { targetId, sessionId } = await openPage(send, pathToFileURL(uiPath).href);
 
   // Wait for the file:// navigation to commit AND finish loading. The target's
   // INITIAL blank document already reports readyState "complete", so checking
   // readyState alone races the navigation and evaluates against about:blank.
-  let loaded = false;
-  for (let i = 0; i < 100; i++) {
-    const r = await send('Runtime.evaluate', {
-      expression: 'location.protocol === "file:" && document.readyState === "complete"',
-      returnByValue: true,
-    }, sessionId);
-    if (r.result.value === true) { loaded = true; break; }
-    await new Promise(res => setTimeout(res, 50));
-  }
+  const loaded = await waitForTrue(send, sessionId, FILE_PAGE_LOADED, { attempts: 100, intervalMs: 50 });
   if (!loaded) {
     for (const a of asserts) FAIL.push(`${plugin} ${a.selector} → ${a.prop}: page did not finish loading (5s)`);
     await send('Target.closeTarget', { targetId });
@@ -356,7 +298,7 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     await send('DOM.enable', {}, sessionId);
     await send('CSS.enable', {}, sessionId);
     // Inject pseudo-assert probes into a persistent host (the scheme-grouped pass
-    // above runs its own throwaway host, so runtime-only elements like buttonList
+    // above runs its own throwaway host, so runtime-only elements like menuList
     // probes must be re-injected here for DOM.querySelector to resolve them).
     const injectExpr = `(() => {
       const host = document.createElement('div');
@@ -421,19 +363,12 @@ if (CROSS_PLUGIN.length) {
   for (const plugin of xpPlugins) {
     const uiPath = builtUiPath(plugin);
     if (!existsSync(uiPath)) { results[plugin] = { _missing: true }; continue; }
-    const { targetId } = await send('Target.createTarget', { url: pathToFileURL(uiPath).href });
-    const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
-    await send('Runtime.enable', {}, sessionId);
-    let xpLoaded = false;
-    for (let i = 0; i < 60; i++) {
-      // Guard on file: protocol too - the target's initial about:blank already reports
-      // readyState "complete", so readyState alone races the navigation and every probe
-      // then reads about:blank ("(selector not found)"), which can falsely agree across
-      // plugins. Mirrors the main render loop's guard.
-      const r = await send('Runtime.evaluate', { expression: 'location.protocol === "file:" && document.readyState === "complete"', returnByValue: true }, sessionId);
-      if (r.result.value === true) { xpLoaded = true; break; }
-      await new Promise(res => setTimeout(res, 50));
-    }
+    const { targetId, sessionId } = await openPage(send, pathToFileURL(uiPath).href);
+    // Guard on file: protocol too - the target's initial about:blank already reports
+    // readyState "complete", so readyState alone races the navigation and every probe
+    // then reads about:blank ("(selector not found)"), which can falsely agree across
+    // plugins. Mirrors the main render loop's guard.
+    const xpLoaded = await waitForTrue(send, sessionId, FILE_PAGE_LOADED, { attempts: 60, intervalMs: 50 });
     if (!xpLoaded) { results[plugin] = { _missing: true }; await send('Target.closeTarget', { targetId }); continue; }
     const specs = CROSS_PLUGIN.filter(e => e.plugins.includes(plugin))
       .map(e => ({ label: e.label, selector: e.selector, probe: e.probe, props: e.props }));
@@ -472,8 +407,8 @@ if (CROSS_PLUGIN.length) {
   }
 }
 
-ws.close();
-cleanup();
+closeCDP();
+browser.kill();
 
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── Gate [16] - Rendered parity (headless Chrome computed styles) ───\n');
