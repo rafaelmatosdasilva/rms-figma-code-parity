@@ -70,3 +70,44 @@ test('effect: fails on a wrong shadow', () => {
   assert.equal(code, 1);
   assert.match(out, /elevation\/1/);
 });
+
+// ── Effects: semantic comparison (equivalent CSS spellings must not diff) ────────
+test('effect: equivalent spellings match (0 vs 0px, omitted spread, inset first, colour first, space rgb, nested var)', () => {
+  const snapshot = { effects: {
+    'elevation/1': '0px 1px 3px 0px rgba(0, 0, 0, 0.2)',
+    'inner/1': '0px 1px 2px rgba(0, 0, 0, 0.1) inset',
+  } };
+  const config = { ...base, figma: { effects: {} } };
+  const themeCss = `:root { --shadow-ink: rgb(0 0 0 / 20%);
+    --elevation-1: var(--shadow-ink) 0 1px 3px;
+    --inner-1: inset 0 0.0625rem 2px #0000001a; }`;
+  const { code, out } = run(EFFECT, { themeCss, snapshot, config });
+  assert.equal(code, 0, out);
+  assert.match(out, /MATCH\s+2/);
+});
+
+test('effect: accepts the structured capture shape (array of effects with opacity) and checks blur', () => {
+  const snapshot = { effects: {
+    'elevation/2': [
+      { type: 'drop-shadow', x: 0, y: 4, blur: 8, spread: 0, color: '#000000', opacity: 0.25 },
+      { type: 'drop-shadow', x: 0, y: 1, blur: 2, spread: 0, color: '#000000', opacity: 0.1 },
+    ],
+    'glass': [{ type: 'background-blur', blur: 16 }],
+  } };
+  const config = { ...base, figma: { effects: {} } };
+  // Layer order in CSS differs from Figma's list: compared as a set. Figma blur 16 → CSS blur(8px).
+  const themeCss = `:root { --elevation-2: 0 1px 2px rgba(0,0,0,.1), 0 4px 8px rgba(0,0,0,.25); --glass: blur(8px); }`;
+  const { code, out } = run(EFFECT, { themeCss, snapshot, config });
+  assert.equal(code, 0, out);
+  assert.match(out, /MATCH\s+2/);
+});
+
+test('effect: a mismatch names the exact field that differs', () => {
+  const snapshot = { effects: { 'elevation/1': '0px 1px 3px rgba(0, 0, 0, 0.2)', 'glass': [{ type: 'layer-blur', blur: 10 }] } };
+  const config = { ...base, figma: { effects: {} } };
+  const themeCss = `:root { --elevation-1: 0 1px 6px rgba(0, 0, 0, 0.2); --glass: blur(10px); }`;
+  const { code, out } = run(EFFECT, { themeCss, snapshot, config });
+  assert.equal(code, 1);
+  assert.match(out, /--elevation-1: layer 1 blur: Figma 3px, CSS 6px/);
+  assert.match(out, /--glass: blur Figma 10px → CSS blur\(5px\) expected, CSS has blur\(10px\)/);
+});

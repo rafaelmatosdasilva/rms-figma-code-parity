@@ -69,7 +69,7 @@ Every run compares your code against Figma and reports it in plain words:
 - **Icons:** from the shared set, drawn the same as Figma.
 - **Transitions:** the durations and easings from the design.
 - **Motion:** movement values match Figma, when your design defines them.
-- **Shadows:** match Figma, when your design defines them.
+- **Shadows and blurs:** match Figma, when your design defines them.
 - **Renders correctly in** a browser: checked on the real result, not just the code on paper.
 - **What this audit** covered: so you can see nothing slipped through.
 
