@@ -91,8 +91,12 @@ Every run compares the code against Figma. In plain terms:
 - **Renders correctly in a browser** — the real rendered result matches, not just the code on paper.
 - **What this audit actually checked** — shows what was and was not covered, so nothing slips through.
 
-It also runs an advisory **accessibility** pass (contrast, accessible names, visible focus) and emits the machine-readable layers for AI tools — the DTCG `tokens.json` (Facts), per-component `contract.json` (Contracts), `design-intent.json` (Intent), and an `llms.txt` index — plus optional **evals** that score an agent's generated code against the Contracts + Intent (the Evaluation layer). None of these ever block the audit.
+It also runs an advisory **accessibility** pass, reported in **plain language** (what is wrong, why it matters, how to fix it). It checks colour contrast per theme, accessible names, visible focus **and** whether the focus ring is actually visible (≥ 3:1), state exposed to assistive tech, and keyboard reachability. It prefers your **styleguide** as the render target (every component in every state on one page, no dev server), and adds `--json` for an agent/CI, `--axe` for the broader WCAG rules (non-text contrast, target size, labels, landmarks…), and `--states` for hover-state contrast. It also emits the machine-readable layers for AI tools — the DTCG `tokens.json` (Facts), per-component `contract.json` (Contracts), `design-intent.json` (Intent), and an `llms.txt` index — plus optional **evals** that score an agent's generated code against the Contracts + Intent (the Evaluation layer). None of these ever block the audit.
 
 ## That's it
 
 Commit the files it creates (the `*.snapshot.json`) so your whole team and CI run against the same design. Deeper setup and options live in the skill's own doc.
+
+## License
+
+[MIT](LICENSE) © Rafael Matos da Silva. Free to use, modify and distribute; keep the copyright notice.

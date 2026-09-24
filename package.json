@@ -4,6 +4,8 @@
   "description": "Figma-to-code parity engine (DS-agnostic gates).",
   "type": "module",
   "private": true,
+  "license": "MIT",
+  "author": "Rafael Matos da Silva",
   "scripts": {
     "test": "node --test"
   }
