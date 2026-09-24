@@ -7,10 +7,15 @@ import { makeFigmaFetch } from '../figma-fetch.mjs';
 // each caller can fall back to the cached snapshot instead of blocking forever.
 test('rejects with a clear message when the response stalls past the timeout', async () => {
   // A fetch that never resolves on its own but honours the abort signal (as a real fetch does).
+  // AbortSignal.timeout() uses an unref'd timer, and a mock holds no socket, so keep the
+  // event loop alive until the abort lands (a real stalled fetch holds its socket open).
   const hangingFetch = (_url, opts) =>
     new Promise((_resolve, reject) => {
-      opts.signal.addEventListener('abort', () =>
-        reject(Object.assign(new Error('The operation timed out'), { name: 'TimeoutError' })));
+      const keepAlive = setTimeout(() => {}, 10_000);
+      opts.signal.addEventListener('abort', () => {
+        clearTimeout(keepAlive);
+        reject(Object.assign(new Error('The operation timed out'), { name: 'TimeoutError' }));
+      });
     });
   const figmaFetch = makeFigmaFetch(hangingFetch, 30); // 30ms so the test is fast
   await assert.rejects(() => figmaFetch('https://api.figma.com/x'), /did not respond within/);
