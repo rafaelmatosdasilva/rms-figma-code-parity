@@ -33,8 +33,14 @@ const snap   = JSON.parse(readFileSync(join(ROOT, SNAP_VARS), 'utf8'));
 const motion = snap.motion || {};
 const mcfg   = cfg.figma?.motion || null;
 
-if (!mcfg || Object.keys(motion).length === 0) {
-  console.log('\n⏭  Motion parity - not configured (no snapshot.motion or figma.motion). Skipped.\n');
+if (!mcfg) {
+  console.log('\n⏭  Motion parity - not configured (no figma.motion in ds-config.json). Skipped.\n');
+  process.exit(0);
+}
+if (Object.keys(motion).length === 0) {
+  // Configured but nothing captured: say so plainly, never a quiet pass.
+  console.log('\n⏭  Motion parity - not verified: the vars snapshot has no motion values. Capture them with the');
+  console.log('   Phase 1 motion snippet (FLOAT durations and STRING easings in the Motion collection).\n');
   process.exit(0);
 }
 

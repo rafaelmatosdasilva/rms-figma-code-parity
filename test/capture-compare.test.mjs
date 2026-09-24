@@ -73,3 +73,61 @@ test('nesting: Figma sub-components against what the code nests', async () => {
   assert.deepEqual(r.notComparable, [{ parent: 'Modal', why: 'not seen in the code' }]);
   assert.deepEqual(r.codeOnly, [{ parent: 'Card', child: 'Avatar' }]);
 });
+
+test('components: padding on both sides, every corner, and line height from the text style', () => {
+  const v = (value, extra = {}) => ({ value, confidence: 'verified', rule: '.c', ...extra });
+  const code = { components: { c: { confidence: 'high', instance: { hasText: true }, props: {
+    paddingLeft: v('8px'), paddingRight: v('4px'), paddingTop: v('4px'), paddingBottom: v('4px'),
+    borderTopLeftRadius: v('6px'), borderTopRightRadius: v('6px'), borderBottomRightRadius: v('0px'), borderBottomLeftRadius: v('6px'),
+    fontSize: v('11px'), lineHeight: v('1.5'),
+  } } } };
+  const vars = { sizing: { 'padding/s': '4px', 'padding/m': '8px', 'radii/m': '6px' }, typography: { m: { size: '11px', lh: '16px' } } };
+  const r = compareComponents(code, { c: { paddingVar: { lr: 'padding/m', tb: 'padding/s' }, innerRadiusVar: 'radii/m', fontSizeVar: 'm' } }, vars, cfg, maps());
+  const d = Object.fromEntries(r.differ.map((x) => [x.field, x.code]));
+  assert.equal(d['padding (left/right)'], '4px');            // the right side is off
+  assert.equal(d.radius, '0px');                             // one corner is square
+  assert.equal(d['line height'], '16.5px');                  // 1.5 × 11px ≠ 16px
+  assert.equal(d['padding (top/bottom)'], undefined);
+});
+
+test('components: a page-level line height, a wrapper root and content-only state heights are not compared', () => {
+  const code = { components: {
+    b: { confidence: 'high', instance: { hasText: true }, props: { fontSize: { value: '11px', confidence: 'verified' }, lineHeight: { value: '20px', inherited: true, rule: 'html, body', confidence: 'single-source' } } },
+    w: { confidence: 'high', instance: { hasText: true }, props: { borderTopWidth: { value: '0px' }, borderRightWidth: { value: '0px' }, borderBottomWidth: { value: '0px' }, borderLeftWidth: { value: '0px' }, backgroundColor: { value: 'rgba(0, 0, 0, 0)' }, borderTopLeftRadius: { value: '0px' } },
+      states: { 'State=Default': { changed: { height: { value: '49px' } } } } },
+  } };
+  const r = compareComponents(code, { b: { fontSizeVar: 'm' }, w: { strokeOnDefault: true, variantHeight: { 'State=default': 40 } } }, { typography: { m: { size: '11px', lh: '16px' } } }, cfg, maps());
+  assert.equal(r.differ.length, 0, JSON.stringify(r.differ));
+  assert.match(r.notComparable.find((n) => n.field === 'stroke').why, /wrapper/);
+});
+
+test('components: a stroked design with no visible border, sides Figma names, and state opacity', () => {
+  const w = (t, r = '0px', b = '0px', l = '0px') => ({ borderTopWidth: { value: t, rule: '.x' }, borderRightWidth: { value: r }, borderBottomWidth: { value: b }, borderLeftWidth: { value: l }, borderTopColor: { value: 'rgb(0, 0, 0)' }, backgroundColor: { value: 'rgb(255, 255, 255)' } });
+  const code = { components: {
+    a: { confidence: 'high', instance: { hasText: true }, props: { ...w('0px'), borderTopColor: { value: 'rgba(0, 0, 0, 0)' } } },
+    s: { confidence: 'high', instance: { hasText: true }, props: w('0px', '0px', '1px', '0px') },
+    o: { confidence: 'high', instance: { hasText: true }, props: { opacity: { value: '1' } }, states: { 'Disabled=true': { changed: { opacity: { value: '0.4', rule: '.o:disabled' } } } } },
+  } };
+  const structure = { a: { strokeOnDefault: true }, s: { strokeOnDefault: true, strokeSides: 'right' }, o: { variantOpacity: { disabled: 0.24 } } };
+  const d = Object.fromEntries(compareComponents(code, structure, {}, cfg, maps()).differ.map((x) => [x.component, `${x.field}: ${x.figma} / ${x.code}`]));
+  assert.equal(d.s, 'stroke: border on right / border on bottom');
+  assert.equal(d.o, 'opacity (disabled): 0.24 / 0.4');
+});
+
+test('components: the extended capture adds width, stroke widths, opacity and text facts', () => {
+  const v = (value, extra = {}) => ({ value, confidence: 'verified', rule: '.k', ...extra });
+  const code = { components: { k: { confidence: 'high', instance: { hasText: true }, size: { width: 120 },
+    props: { width: v('120px'), borderTopWidth: v('1px'), borderRightWidth: v('1px'), borderBottomWidth: v('2px'), borderLeftWidth: v('1px'), borderTopColor: v('rgb(0, 0, 0)'), backgroundColor: v('rgb(255, 255, 255)'), opacity: v('1'), fontSize: v('12px'),
+      fontFamily: v('"Inter", sans-serif'), letterSpacing: v('0.6px'), textTransform: v('none'), lineHeight: v('18px') } } } };
+  const f = { k: { box: { width: 100, sizing: { h: 'FIXED' } }, stroke: { weights: [1, 1, 1, 1] }, opacity: 0.5,
+    text: { fontFamily: 'Inter', letterSpacing: { unit: 'PERCENT', value: 5 }, textCase: 'UPPER', lineHeight: { unit: 'PERCENT', value: 150 } } } };
+  const r = compareComponents(code, f, {}, cfg, maps());
+  const d = Object.fromEntries(r.differ.map((x) => [x.field, `${x.figma} / ${x.code}`]));
+  assert.equal(d.width, '100 / 120');
+  assert.equal(d['border bottom width'], '1 / 2px');
+  assert.equal(d.opacity, '0.5 / 1');
+  assert.equal(d['text case'], 'uppercase / none');
+  assert.equal(d['font family'], undefined);           // "Inter" = Inter
+  assert.equal(d['letter spacing'], undefined);        // 5% of 12px = 0.6px
+  assert.equal(d['line height'], undefined);           // 150% of 12px = 18px
+});

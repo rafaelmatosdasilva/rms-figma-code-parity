@@ -115,8 +115,16 @@ export function compareComponents(code, structure, vars, cfg, maps) {
     // padding belongs to the icon-only variant and says nothing about the labelled one.
     const iconOnly = c.instance && c.instance.hasText === false && f.fontSizeVar;
     const pad = (x) => (iconOnly ? { confidence: 'not-read', why: 'only icon-only instances were found; the design default has a label' } : x);
-    if (f.paddingVar?.lr) push(name, 'padding (left/right)', f.paddingVar.lr, pad(c.props?.paddingLeft), { expectedVar: sizeVar(f.paddingVar.lr), figmaValue: tokenValue(f.paddingVar.lr) });
-    if (f.paddingVar?.tb) push(name, 'padding (top/bottom)', f.paddingVar.tb, pad(c.props?.paddingTop), { expectedVar: sizeVar(f.paddingVar.tb), figmaValue: tokenValue(f.paddingVar.tb) });
+    // Padding: both sides of each axis (a component padded on one side only is a difference).
+    const bothSides = (label, token, [a, b]) => {
+      if (!token) return;
+      const extra = { expectedVar: sizeVar(token), figmaValue: tokenValue(token) };
+      const fa = pad(c.props?.[a]), fb = pad(c.props?.[b]);
+      const bad = [fa, fb].find((x) => x && x.confidence !== 'not-read' && x.confidence !== 'uncertain' && !(x.var === extra.expectedVar || valueMatch(extra.figmaValue, x.value) === true));
+      push(name, label, token, bad ?? fa, extra);
+    };
+    bothSides('padding (left/right)', f.paddingVar?.lr, ['paddingLeft', 'paddingRight']);
+    bothSides('padding (top/bottom)', f.paddingVar?.tb, ['paddingTop', 'paddingBottom']);
     const gp = c.parts?.gap?.props ?? c.props;
     if (f.gapVar) {
       const g = [gp?.columnGap, gp?.rowGap].find((x) => x?.var === sizeVar(f.gapVar) || valueMatch(tokenValue(f.gapVar), x?.value) === true) ?? gp?.columnGap;
@@ -126,7 +134,14 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       // A fill drawn on ::before carries the radius there.
       const r = c.parts?.radius?.props?.borderTopLeftRadius
         ?? (f.fillStructure === 'before' && c.before && toNum(c.before.borderTopLeftRadius) > 0 ? { value: c.before.borderTopLeftRadius, confidence: 'verified' } : c.props?.borderTopLeftRadius);
-      push(name, 'radius', f.innerRadiusVar, r, { expectedVar: sizeVar(f.innerRadiusVar), figmaValue: tokenValue(f.innerRadiusVar) });
+      // Every corner: a component rounded on some corners only is a difference (unless Figma's
+      // radius itself lives on ::before, where the top-left corner stands for the layer).
+      const extra = { expectedVar: sizeVar(f.innerRadiusVar), figmaValue: tokenValue(f.innerRadiusVar) };
+      const corners = c.parts?.radius?.props ?? c.props ?? {};
+      const others = r === c.props?.borderTopLeftRadius || r === c.parts?.radius?.props?.borderTopLeftRadius
+        ? ['borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'].map((k) => corners[k]).filter(Boolean) : [];
+      const bad = [r, ...others].find((x) => x && x.confidence !== 'not-read' && x.confidence !== 'uncertain' && !(x.var === extra.expectedVar || valueMatch(extra.figmaValue, x.value) === true));
+      push(name, 'radius', f.innerRadiusVar, bad ?? r, extra);
     }
     const ty = (k) => vars.typography?.[k] ?? null;
     // Font: Figma's font fields describe the component's first TEXT node, so the code side is the
@@ -134,6 +149,101 @@ export function compareComponents(code, structure, vars, cfg, maps) {
     const fp = c.parts?.font?.props ?? c.parts?.text?.props ?? c.props;
     if (f.fontSizeVar && ty(f.fontSizeVar)) push(name, 'font size', f.fontSizeVar, fp?.fontSize, { figmaValue: ty(f.fontSizeVar).size });
     if (f.fontWeightVar && ty(f.fontWeightVar)) push(name, 'font weight', f.fontWeightVar, fp?.fontWeight, { figmaValue: ty(f.fontWeightVar).weight });
+    // Line height from the same text style (a unitless line height is a multiple of the font size).
+    const lhText = f.text?.lineHeight;   // { unit: 'PIXELS' | 'PERCENT' | 'AUTO', value } from the extended capture
+    const lhFig = lhText && lhText.unit !== 'AUTO'
+      ? (lhText.unit === 'PERCENT' ? `${(lhText.value / 100) * toNum(fp?.fontSize?.value)}px` : `${lhText.value}px`)
+      : (f.fontSizeVar ? ty(f.fontSizeVar)?.lh : null);
+    // A line height inherited from a page-level rule (html, body, :root, *) is the page's, not the
+    // component's, so it is not compared.
+    const pageLevel = (r) => /^(html|body|:root|\*)(\s*,\s*(html|body|:root|\*))*$/i.test(String(r ?? '').trim());
+    if (lhFig && fp?.lineHeight && fp.lineHeight.confidence !== 'default' && !(fp.lineHeight.inherited && pageLevel(fp.lineHeight.rule))) {
+      const lh = fp.lineHeight, fs = toNum(fp.fontSize?.value);
+      const px = /^[\d.]+$/.test(String(lh.value).trim()) && fs ? `${toNum(lh.value) * fs}px` : lh.value;
+      push(name, 'line height', f.fontSizeVar, { ...lh, value: px }, { figmaValue: lhFig });
+    }
+    // Stroke. Figma's root stroke can be drawn on an inner layer in code, and a border can be
+    // reserved for a hover state, so only the clear cases are compared: Figma strokes the default
+    // variant and the code draws no visible border at all, or Figma names the sides (strokeSides)
+    // and the code draws others. Borders Figma never draws are the phantom-border check's job.
+    // A root that draws nothing at all (no border, no background, no radius) is a wrapper: the box
+    // Figma strokes is a child element in code. That is a naming gap, not a design difference.
+    const drawsNothing = ['Top', 'Right', 'Bottom', 'Left'].every((s) => toNum(c.props?.[`border${s}Width`]?.value) === 0)
+      && /^(transparent|rgba\([^)]*,\s*0\))$/i.test(String(c.props?.backgroundColor?.value ?? 'transparent').trim())
+      && toNum(c.props?.borderTopLeftRadius?.value) === 0;
+    if (f.strokeOnDefault === true && !low && c.props?.borderTopWidth && !c.before && drawsNothing) {
+      out.notComparable.push({ component: name, field: 'stroke', figma: 'draws a border', why: 'the code root draws nothing (a wrapper); name the part that draws the box in componentSelectors or the contract' });
+    } else if (f.strokeOnDefault === true && !low && c.props?.borderTopWidth && !c.before) {
+      const visible = (s) => { const w = c.props?.[`border${s}Width`]; return !!w && toNum(w.drawn ?? w.value) > 0; };
+      const colorSeen = !/^(transparent|rgba\([^)]*,\s*0\))$/i.test(String(c.props?.borderTopColor?.value ?? '').replace(/\s+/g, ' ').trim());
+      const drawn = ['Top', 'Right', 'Bottom', 'Left'].filter(visible).map((s) => s.toLowerCase());
+      const named = f.strokeSides && !['all', 'none'].includes(f.strokeSides) ? [f.strokeSides] : null;
+      const ok = named ? drawn.length === named.length && named.every((s) => drawn.includes(s)) : (drawn.length > 0 && colorSeen);
+      if (ok) out.match++;
+      else out.differ.push({ component: name, field: 'stroke', figma: named ? `border on ${named.join(', ')}` : 'draws a border', code: drawn.length && colorSeen ? `border on ${drawn.length === 4 ? 'all sides' : drawn.join(', ')}` : 'no visible border', rule: c.props?.borderTopWidth?.rule, at: c.props?.borderTopWidth?.at });
+    }
+    // Deeper facts from the extended Step 1c capture (present when the snapshot has them).
+    // Width: a component Figma sizes FIXED must have its width fixed in code too.
+    if (f.box?.sizing?.h === 'FIXED' && typeof f.box.width === 'number' && !low) {
+      const w = c.props?.width;
+      if (!w?.rule) out.notComparable.push({ component: name, field: 'width', figma: f.box.width, why: 'the code width follows its content or container' });
+      else if (Math.abs((c.size?.width ?? toNum(w.value)) - f.box.width) < 0.5) out.match++;
+      else out.differ.push({ component: name, field: 'width', figma: f.box.width, code: c.size?.width ?? toNum(w.value), rule: w.rule, at: w.at });
+    }
+    // Stroke weight per side, when Figma records it: each side's width, not only whether it draws.
+    if (Array.isArray(f.stroke?.weights) && !low && c.props?.borderTopWidth && !drawsNothing) {
+      ['Top', 'Right', 'Bottom', 'Left'].forEach((s, i) => {
+        const want = f.stroke.weights[i], got = c.props?.[`border${s}Width`];
+        if (typeof want !== 'number' || !got) return;
+        const drawnPx = toNum(got.drawn ?? got.value), declPx = toNum(got.value);
+        if (Math.abs(declPx - want) < 0.01 || Math.abs(drawnPx - want) < 0.01) out.match++;
+        else out.differ.push({ component: name, field: `border ${s.toLowerCase()} width`, figma: want, code: got.value, rule: got.rule, at: got.at });
+      });
+    }
+    // Root opacity.
+    if (typeof f.opacity === 'number' && f.opacity < 1 && c.props?.opacity) push(name, 'opacity', String(f.opacity), c.props.opacity, { figmaValue: String(f.opacity) });
+    // Text: family, letter spacing, text case and line height as Figma records them on the text node.
+    if (f.text && fp) {
+      const fs = toNum(fp.fontSize?.value);
+      const fam = String(fp.fontFamily?.value ?? '').split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+      if (f.text.fontFamily && fam) {
+        if (fam.toLowerCase() === String(f.text.fontFamily).toLowerCase()) out.match++;
+        else out.differ.push({ component: name, field: 'font family', figma: f.text.fontFamily, code: fam, rule: fp.fontFamily?.rule, at: fp.fontFamily?.at });
+      }
+      const ls = f.text.letterSpacing;
+      if (ls && fp.letterSpacing && fs) {
+        const want = ls.unit === 'PERCENT' ? (ls.value / 100) * fs : ls.value;
+        const got = /normal/i.test(fp.letterSpacing.value) ? 0 : toNum(fp.letterSpacing.value);
+        if (Math.abs(got - want) < 0.05) out.match++;
+        else out.differ.push({ component: name, field: 'letter spacing', figma: `${+want.toFixed(2)}px`, code: fp.letterSpacing.value, rule: fp.letterSpacing.rule, at: fp.letterSpacing.at });
+      }
+      const CASE = { UPPER: 'uppercase', LOWER: 'lowercase', TITLE: 'capitalize', ORIGINAL: 'none' };
+      if (f.text.textCase && CASE[f.text.textCase] && fp.textTransform) {
+        if (String(fp.textTransform.value) === CASE[f.text.textCase]) out.match++;
+        else out.differ.push({ component: name, field: 'text case', figma: CASE[f.text.textCase], code: fp.textTransform.value, rule: fp.textTransform.rule, at: fp.textTransform.at });
+      }
+    }
+
+    // Per state: height, stroke and opacity Figma records for each variant, against the state the
+    // capture produced (labels matched without case or spaces: "State=hover" = "State=Hover").
+    const key = (s) => String(s).toLowerCase().replace(/\s+/g, '');
+    const states = Object.fromEntries(Object.entries(c.states ?? {}).map(([k, v]) => [key(k), v]));
+    for (const [variant, h] of Object.entries(f.variantHeight ?? {})) {
+      const st = states[key(variant)];
+      if (!st || typeof h !== 'number') continue;
+      const hh = st.changed?.height ?? st.changed?.minHeight;
+      if (!hh || !hh.rule) continue;                       // same as the default, or only its content's height
+      if (Math.abs(toNum(hh.value) - h) < 0.5) out.match++;
+      else out.differ.push({ component: name, field: `height (${variant})`, figma: h, code: toNum(hh.value), rule: hh.rule, at: hh.at });
+    }
+    for (const [variant, op] of Object.entries(f.variantOpacity ?? {})) {
+      const st = Object.entries(states).find(([k]) => k.includes(key(variant)))?.[1];
+      const o = st?.changed?.opacity ?? null;
+      if (!st || typeof op !== 'number') continue;
+      const got = o ? toNum(o.value) : toNum(c.props?.opacity?.value ?? 1);
+      if (Math.abs(got - op) < 0.01) out.match++;
+      else out.differ.push({ component: name, field: `opacity (${variant})`, figma: op, code: got, rule: o?.rule, at: o?.at });
+    }
     // Background: does the component paint one? Figma often draws it on a child layer and code on the
     // element itself; both paint. Only "paints" vs "does not paint" is a difference.
     // A colour set in the element's own style attribute is page content (a swatch showing its colour),

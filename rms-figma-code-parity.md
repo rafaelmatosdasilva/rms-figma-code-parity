@@ -1087,12 +1087,15 @@ parity-checked. Both gates are **no-ops unless captured AND declared** in `ds-co
 const collections=await figma.variables.getLocalVariableCollectionsAsync();
 const idToVar={};
 for(const col of collections){for(const id of col.variableIds){const v=await figma.variables.getVariableByIdAsync(id);if(v)idToVar[id]=v;}}
-// Motion - EASING/TIMING variables → normalised CSS-comparable strings.
+// Motion - the Motion collection's variables → CSS-comparable strings. Figma variables are FLOAT
+// (durations, read as ms) or STRING (easing curves such as "cubic-bezier(0.4, 0, 0.2, 1)" or "ease-out");
+// EASING/TIMING are accepted too in case Figma adds dedicated types. The gate compares 200ms = 0.2s and
+// a keyword easing = its curve.
 function deref(id,modeId,d=0){let v=idToVar[id];if(!v)return null;let val=v.valuesByMode[modeId]??Object.values(v.valuesByMode)[0];let n=0;while(typeof val==='object'&&val?.type==='VARIABLE_ALIAS'&&n++<10){const a=idToVar[val.id];val=a?.valuesByMode[modeId]??Object.values(a?.valuesByMode??{})[0];}return val;}
-function motionStr(val){if(val==null)return null;if(typeof val==='number')return val+'ms';const b=val.easingFunctionCubicBezier||val.cubicBezier||val.bezier;if(b&&('x1'in b))return `cubic-bezier(${b.x1}, ${b.y1}, ${b.x2}, ${b.y2})`;if('value'in val)return val.value+(val.unit==='MILLISECONDS'||!val.unit?'ms':'');return JSON.stringify(val);}
+function motionStr(val){if(val==null)return null;if(typeof val==='number')return val+'ms';if(typeof val==='string')return val.trim();const b=val.easingFunctionCubicBezier||val.cubicBezier||val.bezier;if(b&&('x1'in b))return `cubic-bezier(${b.x1}, ${b.y1}, ${b.x2}, ${b.y2})`;if('value'in val)return val.value+(val.unit==='MILLISECONDS'||!val.unit?'ms':'');return JSON.stringify(val);}
 const MOTION_COLLECTION='Motion'; // fill from figma.motion (or leave and let it match by type)
 const motionOut={};
-for(const c of collections){if(MOTION_COLLECTION&&c.name!==MOTION_COLLECTION)continue;const mid=c.modes[0].modeId;for(const id of c.variableIds){const v=idToVar[id];if(!v||(v.resolvedType!=='EASING'&&v.resolvedType!=='TIMING'))continue;const s=motionStr(deref(id,mid));if(s!=null)motionOut[v.name]=s;}}
+for(const c of collections){if(MOTION_COLLECTION&&c.name!==MOTION_COLLECTION)continue;const mid=c.modes[0].modeId;for(const id of c.variableIds){const v=idToVar[id];if(!v||!['FLOAT','STRING','EASING','TIMING'].includes(v.resolvedType))continue;const s=motionStr(deref(id,mid));if(s!=null)motionOut[v.name]=s;}}
 // Effects - local effect styles → canonical box-shadow "x y blur spread color[, …]".
 function rgba(c){return `rgba(${Math.round(c.r*255)}, ${Math.round(c.g*255)}, ${Math.round(c.b*255)}, ${+(c.a??1).toFixed(3)})`;}
 function effShadow(e){const p=[`${e.offset?.x??0}px`,`${e.offset?.y??0}px`,`${e.radius??0}px`];if(e.spread)p.push(`${e.spread}px`);p.push(rgba(e.color||{r:0,g:0,b:0,a:1}));if(e.type==='INNER_SHADOW')p.push('inset');return p.join(' ');}
@@ -1191,6 +1194,40 @@ Navigate to your DS Components page, find each `COMPONENT_SET`, navigate to the 
 //                    uncontracted snapshot entry or a gapVar mismatch is a failure, and a
 //                    contracted gapVar whose frame no longer binds a gap in Figma is stale.
 //                    Omit if no child frames have bound gaps.
+```
+
+**Deeper facts (recommended).** Also record these on each component's entry, from the same
+`State=Default` node. The measured comparison (Gate [10] `MEASURED`, `--capture-code --compare`) uses
+each one when present: a fixed width, the stroke width on each side, opacity, and the text node's
+family, line height (px, % or auto), letter spacing and text case. Snapshots without them keep
+working; the comparison simply skips what Figma did not record.
+
+```js
+function deepFacts(node) {
+  const n = (v) => (typeof v === 'number' ? Math.round(v * 100) / 100 : null);
+  const out = {};
+  if ('layoutMode' in node) out.box = { width: n(node.width), height: n(node.height), layout: node.layoutMode,
+    sizing: { h: node.layoutSizingHorizontal, v: node.layoutSizingVertical },
+    align: { primary: node.primaryAxisAlignItems, counter: node.counterAxisAlignItems }, wrap: node.layoutWrap };
+  if ('paddingTop' in node) out.paddingPx = [node.paddingTop, node.paddingRight, node.paddingBottom, node.paddingLeft].map(n);
+  if ('topLeftRadius' in node) out.radiusPx = [node.topLeftRadius, node.topRightRadius, node.bottomRightRadius, node.bottomLeftRadius].map(n);
+  if ((node.strokes ?? []).some((s) => s.visible !== false)) out.stroke = {
+    weights: ['strokeTopWeight', 'strokeRightWeight', 'strokeBottomWeight', 'strokeLeftWeight'].map((k) => n(typeof node[k] === 'number' ? node[k] : node.strokeWeight)),
+    align: node.strokeAlign, dashed: (node.dashPattern ?? []).length > 0 };
+  if (typeof node.opacity === 'number' && node.opacity < 1) out.opacity = n(node.opacity);
+  const text = node.findOne?.((x) => x.type === 'TEXT');
+  if (text) {
+    const lh = text.lineHeight, ls = text.letterSpacing, fn = text.fontName;
+    out.text = {
+      fontFamily: fn && fn !== figma.mixed ? fn.family : null,
+      lineHeight: lh && lh !== figma.mixed ? (lh.unit === 'AUTO' ? { unit: 'AUTO' } : { unit: lh.unit, value: n(lh.value) }) : null,
+      letterSpacing: ls && ls !== figma.mixed ? { unit: ls.unit, value: n(ls.value) } : null,
+      textCase: text.textCase !== figma.mixed ? text.textCase : null,
+    };
+  }
+  return out;
+}
+// entry = { h, paddingVar, …, ...deepFacts(defaultVariant) }
 ```
 
 Capture `strokeOnAnyState` with a **deep recursive walk** across all variants:

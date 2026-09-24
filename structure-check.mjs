@@ -1809,6 +1809,7 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0
              || SHRINK_FAIL.length > 0 || MIXED_FAIL.length > 0 || VHEIGHT_FAIL.length > 0;
 
+let measuredFail = false;
 // ── Measured check (code capture) ─────────────────────────────────────────────
 // The checks above read CSS text. When the code capture measured the components in a browser (and
 // still matches the code), its field-by-field comparison with Figma is listed here too: a rendered
@@ -1822,12 +1823,16 @@ try {
     let vars = {};
     try { vars = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8')); } catch { /* optional */ }
     const r = compareComponents(cap, snap?.components ?? {}, vars, cfg, await loadParityMaps(ROOT, cfg));
+    // ds-config.json → renderedParityStrict: true makes these differences fail the gate.
+    const strictMeasured = cfg.renderedParityStrict === true;
+    const mark = strictMeasured ? '❌' : '⚠️ ';
     if (r.differ.length) {
-      console.log(`\n⚠️  MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma - advisory)`);
-      for (const d of r.differ) console.log(`   ⚠️  ${d.component} ${d.field}: Figma ${d.figma}${d.figmaValue ? ` (${d.figmaValue})` : ''}, rendered ${d.code}${d.codeVar ? ` via ${d.codeVar}` : ''}${d.at ? `  (${d.rule} · ${d.at})` : ''}`);
+      console.log(`\n${mark} MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma${strictMeasured ? '' : ' - advisory'})`);
+      for (const d of r.differ) console.log(`   ${mark} ${d.component} ${d.field}: Figma ${d.figma}${d.figmaValue ? ` (${d.figmaValue})` : ''}, rendered ${d.code}${d.codeVar ? ` via ${d.codeVar}` : ''}${d.at ? `  (${d.rule} · ${d.at})` : ''}`);
+      if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
   }
 } catch { /* the capture is optional */ }
 
-if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
+if (!anyFail && !measuredFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }

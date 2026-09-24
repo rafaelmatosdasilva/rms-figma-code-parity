@@ -30,7 +30,10 @@ export const TRACE = {
   paddingLeft: ['padding-left', 'padding-inline-start', 'padding-inline', 'padding'],
   rowGap: ['row-gap', 'gap'],
   columnGap: ['column-gap', 'gap'],
-  borderTopLeftRadius: ['border-top-left-radius', 'border-radius'],
+  borderTopLeftRadius: ['border-top-left-radius', 'border-start-start-radius', 'border-radius'],
+  borderTopRightRadius: ['border-top-right-radius', 'border-start-end-radius', 'border-radius'],
+  borderBottomRightRadius: ['border-bottom-right-radius', 'border-end-end-radius', 'border-radius'],
+  borderBottomLeftRadius: ['border-bottom-left-radius', 'border-end-start-radius', 'border-radius'],
   borderTopWidth: ['border-top-width', 'border-top', 'border-width', 'border-block-start', 'border'],
   borderRightWidth: ['border-right-width', 'border-right', 'border-width', 'border-inline-end', 'border'],
   borderBottomWidth: ['border-bottom-width', 'border-bottom', 'border-width', 'border-block-end', 'border'],
@@ -42,10 +45,14 @@ export const TRACE = {
   color: ['color'],
   backgroundColor: ['background-color', 'background'],
   opacity: ['opacity'],
+  width: ['width'],
+  fontFamily: ['font-family', 'font'],
+  letterSpacing: ['letter-spacing'],
+  textTransform: ['text-transform'],
 };
-const MEASURED = [...Object.keys(TRACE), 'width', 'maxHeight', 'fontFamily', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
+const MEASURED = [...Object.keys(TRACE), 'maxHeight', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
 const COLOR_PROPS = new Set(['color', 'backgroundColor', 'borderTopColor']);
-const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight']);
+const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight', 'fontFamily', 'letterSpacing', 'textTransform']);
 
 // Which slot of a box shorthand a property reads (1 to 4 values: top right bottom left).
 const BOX_SIDE = { paddingTop: 0, paddingRight: 1, paddingBottom: 2, paddingLeft: 3, borderTopWidth: 0, borderRightWidth: 1, borderBottomWidth: 2, borderLeftWidth: 3, borderTopColor: 0 };
@@ -72,7 +79,13 @@ export function partFor(declName, value, prop) {
     return parts[Math.min(end, parts.length - 1)] ?? value;
   }
   if (declName === 'gap') return prop === 'columnGap' ? (parts[1] ?? parts[0]) : parts[0];
-  if (declName === 'border-radius') return value.split('/')[0].trim().split(/\s+/)[0];
+  if (declName === 'border-radius') {
+    // Corners in order top-left, top-right, bottom-right, bottom-left (1 to 4 values, like a box).
+    const corners = splitTop(value.split('/')[0].trim());
+    const corner = { borderTopLeftRadius: 0, borderTopRightRadius: 1, borderBottomRightRadius: 2, borderBottomLeftRadius: 3 }[prop] ?? 0;
+    const pick = [[0, 0, 0, 0], [0, 1, 0, 1], [0, 1, 2, 1], [0, 1, 2, 3]][Math.min(corners.length, 4) - 1] ?? [0, 0, 0, 0];
+    return corners[pick[corner]] ?? corners[0] ?? value;
+  }
   if (/^border(-top|-right|-bottom|-left|-block-start|-block-end|-inline-start|-inline-end)?$/.test(declName) && /^(none|0)$/i.test(String(value).trim())) {
     return /Width$/.test(prop) ? '0px' : 'currentcolor';
   }
@@ -455,7 +468,7 @@ export async function captureComponents(ctx) {
       };
       if (base?.before) entry.before = base.before;
       // Parts: each measured and traced like the instance, keeping only the properties the part is for.
-      const PART_PROPS = { font: ['fontSize', 'fontWeight', 'lineHeight', 'color'], text: ['fontSize', 'fontWeight', 'lineHeight', 'color'], radius: ['borderTopLeftRadius'], gap: ['rowGap', 'columnGap'], before: ['borderTopLeftRadius', 'backgroundColor'] };
+      const PART_PROPS = { font: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], text: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], radius: ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'], gap: ['rowGap', 'columnGap'], before: ['borderTopLeftRadius', 'backgroundColor'] };
       for (const kind of Object.keys(loc.parts ?? {})) {
         const sel = `[data-parity-part~="${loc.i}-${kind}"]`;
         const pNode = await P.nodeOf(sel);
