@@ -2952,7 +2952,7 @@ function reportFull(label, items, shown) {
       let derived = [];
       if (cfg.a11y?.derivePairs !== false && modes.length) {
         const { deriveContrastPairs } = await import('./pair-derive.mjs');
-        derived = deriveContrastPairs(Object.keys(vsnap.color[modes[0]] || {}));
+        derived = deriveContrastPairs([...new Set(modes.flatMap((m) => Object.keys(vsnap.color[m] || {})))], { boundaries: cfg.a11y?.nonTextPairs === true });   // every mode's names
       }
       // Merge + dedupe by text|bg; an authored pair wins over a derived one with the same endpoints.
       const seen = new Set(); const pairs = []; let nAuthored = 0, nDerived = 0;
@@ -2981,6 +2981,21 @@ function reportFull(label, items, shown) {
         } else if (anyChecked) {
           console.log(`\nℹ️  Token contrast: all pairs meet WCAG AA across ${modes.length} mode(s) (${provenance}).`);
         }
+      }
+    } catch { /* advisory: never fails */ }
+    // State contrast from the code capture: each component's text in every mode and every state the
+    // capture produced (hover, selected, error…), no extra browser run. Advisory.
+    try {
+      const { readFreshSnapshot } = await import('./code-capture.mjs');
+      const cap = await readFreshSnapshot(ROOT, cfg);
+      if (cap) {
+        const { stateContrastFindings } = await import('./contrast-check.mjs');
+        const { findings, checked } = stateContrastFindings(cap);
+        if (findings.length) {
+          console.log(C.yellow(`\n⚠️  State contrast: ${findings.length} component state(s) below WCAG AA, as rendered (${checked} checked; disabled states exempt).`));
+          for (const f of findings.slice(0, 20)) console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.fg} on ${f.bg}`));
+          if (findings.length > 20) console.log(`     … ${findings.length - 20} more`);
+        } else if (checked) console.log(`\nℹ️  State contrast: every rendered component state meets WCAG AA (${checked} checked; disabled states exempt).`);
       }
     } catch { /* advisory: never fails */ }
   }

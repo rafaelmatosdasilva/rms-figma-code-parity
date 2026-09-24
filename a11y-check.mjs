@@ -57,12 +57,15 @@
 //   - Reading order, skip links, landmark completeness — and anything the render cannot reveal:
 //     only when the project declares it in ds-config.json, never imposed (No-imposed-structure).
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
+import { homedir } from 'os';
 import { join, resolve, dirname } from 'path';
 import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
 import { loadLocator } from './component-locator.mjs';
+import { loadModes } from './mode-resolver.mjs';
+import { modeSwitch } from './code-capture.mjs';
 
 // ── Pure, unit-testable core (exported; importing this module runs NOTHING) ─────
 // Parse a computed-style color. Returns {r,g,b,a} or null when it is not an rgb()/rgba()
@@ -178,6 +181,51 @@ export const A11Y_GUIDE = {
     why: 'The control works with a mouse, but the Tab key skips over it, so people who only use a keyboard cannot reach it.',
     fix: 'Use a real <button> or link, or add tabindex="0" so it can be focused.',
   },
+  target: {
+    title: (n) => `${plural(n, 'control is', 'controls are')} too small to tap or click reliably`,
+    why: 'A control smaller than 24 by 24 pixels, with other controls close by, is easy to miss or to hit the wrong one — hard for anyone with a tremor or on a touch screen.',
+    fix: 'Make the control at least 24 by 24 pixels (padding counts), or keep 24 pixels of space around it.',
+  },
+  tabtrap: {
+    title: (n) => `${plural(n, 'place traps', 'places trap')} the keyboard`,
+    why: 'Pressing Tab stops moving at some point, so someone using only a keyboard cannot get past it.',
+    fix: 'Let Tab move on (or Escape close) whatever is holding the focus.',
+  },
+  tabindex: {
+    title: (n) => `${plural(n, 'control jumps', 'controls jump')} the Tab order`,
+    why: 'A positive tabindex makes the Tab key visit this control out of reading order, which is confusing to follow.',
+    fix: 'Use tabindex="0" (or none) and put the control where it belongs in the page order.',
+  },
+  escape: {
+    title: (n) => `${plural(n, 'dialog does', 'dialogs do')} not close with Escape`,
+    why: 'People who use the keyboard expect Escape to close a dialog; without it they can get stuck.',
+    fix: 'Close the dialog on Escape and return the focus to what opened it.',
+  },
+  motion: {
+    title: (n) => `${plural(n, 'thing still moves', 'things still move')} when the person asked for less motion`,
+    why: 'The system setting "reduce motion" is on, but these still animate. Movement can make some people dizzy or sick.',
+    fix: 'Inside @media (prefers-reduced-motion: reduce), set the transition and animation to none (or near zero).',
+  },
+  forcedfocus: {
+    title: (n) => `${plural(n, 'focus indicator disappears', 'focus indicators disappear')} in high-contrast mode`,
+    why: 'Windows high-contrast mode removes shadows and background colours, so a focus style made only of those vanishes.',
+    fix: 'Add a real outline (it can be transparent normally: outline: 2px solid transparent) so high-contrast mode can show it.',
+  },
+  spacing: {
+    title: (n) => `${plural(n, 'piece of text gets', 'pieces of text get')} cut off with wider text spacing`,
+    why: 'People who need more space between letters, words and lines (a common reading aid) lose part of this text.',
+    fix: 'Do not fix the height or hide the overflow of text boxes; let them grow with their text.',
+  },
+  reflow: {
+    title: (n) => `${plural(n, 'page scrolls', 'pages scroll')} sideways on a narrow screen`,
+    why: 'At 320 pixels wide (a phone, or a page zoomed to 400%) the content does not fit, so people have to scroll in two directions to read it.',
+    fix: 'Let the layout wrap or stack at narrow widths instead of keeping a fixed width.',
+  },
+  semantics: {
+    title: (n) => `${plural(n, 'component is', 'components are')} announced as something else than the design system says`,
+    why: 'A screen reader announces the element by its role. The contract says what each component is; this one renders as something different.',
+    fix: 'Use the element or role the contract names (contract.authored.json → semantics), or correct the contract.',
+  },
 };
 const A11Y_ROLE_WORD = { button: 'A button', link: 'A link', textbox: 'An input field', searchbox: 'A search field', checkbox: 'A checkbox', radio: 'A radio button', switch: 'A switch', combobox: 'A dropdown', tab: 'A tab', slider: 'A slider' };
 // One readable line locating a single finding.
@@ -189,7 +237,10 @@ export function a11yItemLine(kind, f) {
   if (kind === 'focuscontrast') return `${f.desc} — its focus outline scores ${f.ratio} out of 21, needs at least ${f.threshold}`;
   if (kind === 'hovercontrast') { const what = f.text ? `the text "${f.text}"` : (f.desc || 'text'); return `${what} on hover — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold}`; }
   if (kind === 'name') return `${A11Y_ROLE_WORD[f.role] || `A ${f.role || 'control'}`} with no label`;
-  return f.desc;   // focus / ariastate / keyboard — the CSS selector locates the element
+  if (kind === 'target') return `${f.desc} — ${f.size} with another control within 24 pixels`;
+  if (kind === 'semantics') return `${f.desc} — announced as "${f.got}", the contract says "${f.want}"`;
+  const where = f.modes && f.modes.length > 1 ? ` (${f.modes.join(', ')})` : '';
+  return f.desc + where;   // focus / ariastate / keyboard / motion … — the CSS selector locates the element
 }
 // Structured record for --json (machines / an agent that fixes the code): exact locator +
 // numbers + the fix. Same facts as the plain lines, but parseable.
@@ -198,6 +249,9 @@ export function a11yFindingRecord(kind, f) {
   if (kind === 'contrast' || kind === 'hovercontrast') { rec.theme = f.theme ?? null; rec.text = f.text ?? null; rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
   if (kind === 'focuscontrast') { rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
   if (kind === 'name') rec.role = f.role ?? null;
+  if (kind === 'target') rec.size = f.size ?? null;
+  if (kind === 'semantics') { rec.rendered = f.got ?? null; rec.contract = f.want ?? null; }
+  if (f.modes) rec.modes = f.modes;
   return rec;
 }
 // Collapse axe-core's per-node violations into one row per rule (highest count first).
@@ -295,7 +349,7 @@ function sweepExpression(roots, doFocus, stateMap) {
   return `(() => {
     const roots = ${JSON.stringify(roots)};
     const rootEls = roots ? roots.flatMap(s => [...document.querySelectorAll(s)]) : [document.body];
-    const scope = roots ? rootEls.flatMap(r => [r, ...r.querySelectorAll('*')]) : [...document.body.querySelectorAll('*')];
+    const scope = roots ? [...new Set(rootEls.flatMap(r => [r, ...r.querySelectorAll('*')]))] : [...document.body.querySelectorAll('*')];   // roots may nest: each element once
     const vis = (el) => { const s = getComputedStyle(el); if (s.display==='none'||s.visibility==='hidden'||+s.opacity===0) return false; const r = el.getBoundingClientRect(); return r.width>0 && r.height>0; };
     const disabled = (el) => el.disabled===true || el.getAttribute('aria-disabled')==='true';
     const seen = new Set();
@@ -338,20 +392,25 @@ function sweepExpression(roots, doFocus, stateMap) {
         const isInteractive = el.matches(INTERACTIVE);
         // 3. Visible focus — does focusing change the look, and is that change actually visible?
         if (!disabled(el) && el.matches('a[href],button,input:not([type=hidden]),select,textarea,[tabindex],[role=button],[role=link]')) {
-          const b = getComputedStyle(el); const before = b.outlineStyle+'|'+b.outlineWidth+'|'+b.boxShadow+'|'+b.borderColor+'|'+b.borderWidth;
+          // A focus style may be an outline, a shadow, a border, a background change, an underline,
+          // or drawn on ::before / ::after: every one of those counts as a visible change.
+          const look = (s, pb, pa) => [s.outlineStyle, s.outlineWidth, s.boxShadow, s.borderColor, s.borderWidth, s.backgroundColor, s.textDecorationLine,
+            pb.outlineStyle, pb.boxShadow, pb.borderColor, pb.backgroundColor, pb.opacity, pa.outlineStyle, pa.boxShadow, pa.borderColor, pa.backgroundColor, pa.opacity].join('|');
+          const b = getComputedStyle(el); const before = look(b, getComputedStyle(el, '::before'), getComputedStyle(el, '::after'));
           try { el.focus(); } catch(e){}
-          const a = getComputedStyle(el); const after = a.outlineStyle+'|'+a.outlineWidth+'|'+a.boxShadow+'|'+a.borderColor+'|'+a.borderWidth;
+          const a = getComputedStyle(el); const after = look(a, getComputedStyle(el, '::before'), getComputedStyle(el, '::after'));
           if (before === after) { noFocus.push(desc); }
           else {
             // Something changed — capture the focus-indicator colour + its background so Node can
             // check it is perceivable (WCAG 1.4.11, >= 3:1). A ring that "changes" but is nearly the
             // same colour as its background is still invisible to a keyboard user.
-            let ind = null;
-            if (a.outlineStyle !== 'none' && parseFloat(a.outlineWidth) > 0) ind = a.outlineColor;
-            else if (a.boxShadow !== b.boxShadow && a.boxShadow !== 'none') { const m = a.boxShadow.match(/rgba?\\([^)]+\\)/); ind = m ? m[0] : null; }
+            let ind = null, outside = false;
+            if (a.outlineStyle !== 'none' && parseFloat(a.outlineWidth) > 0) { ind = a.outlineColor; outside = parseFloat(a.outlineOffset || '0') >= 0; }
+            else if (a.boxShadow !== b.boxShadow && a.boxShadow !== 'none') { const m = a.boxShadow.match(/rgba?\\([^)]+\\)/); ind = m ? m[0] : null; outside = !/inset/.test(a.boxShadow); }
             else if (a.borderColor !== b.borderColor) ind = a.borderColor;
             if (ind) {
-              const layers = []; let node = el;
+              // A ring drawn outside the element sits on what surrounds it: measure against the parent.
+              const layers = []; let node = outside && el.parentElement ? el.parentElement : el;
               while (node && node.nodeType===1) {
                 const bg = getComputedStyle(node).backgroundColor; layers.push(bg);
                 const mm = bg.match(/^rgba?\\(([^)]+)\\)/); const parts = mm ? mm[1].split(',') : null;
@@ -389,22 +448,120 @@ function sweepExpression(roots, doFocus, stateMap) {
   })()`;
 }
 
+// The role each component should render as, from the committed contract.authored.json
+// (components[name].semantics: { element, aria: { role } }). The explicit role wins over the element.
+const IMPLICIT_ROLE = { button: 'button', a: 'link', select: 'combobox', textarea: 'textbox', nav: 'navigation', ul: 'list', ol: 'list', li: 'listitem', dialog: 'dialog', img: 'img', table: 'table', form: 'form', main: 'main', header: 'banner', footer: 'contentinfo', h1: 'heading', h2: 'heading', h3: 'heading', h4: 'heading', h5: 'heading', h6: 'heading', 'input[type=checkbox]': 'checkbox', 'input[type=radio]': 'radio', 'input[type=range]': 'slider', input: 'textbox' };
+export function contractSemantics(ROOT, cfg = {}) {
+  const out = {};
+  let doc = null;
+  try { doc = JSON.parse(readFileSync(resolve(ROOT, cfg.contracts?.authored ?? 'contract.authored.json'), 'utf8')); } catch { return out; }
+  for (const [name, c] of Object.entries(doc?.components ?? {})) {
+    const s = c?.semantics;
+    if (!s) continue;
+    const role = s.aria?.role ?? IMPLICIT_ROLE[String(s.element ?? '').toLowerCase()] ?? null;
+    if (role) out[name] = String(role).toLowerCase();
+  }
+  return out;
+}
+// Chrome's accessibility tree names a few roles differently from ARIA.
+export const sameRole = (got, want) => got === want || (want === 'img' && got === 'image') || (want === 'textbox' && got === 'searchbox');
+
+// Deeper checks measured in the page (pure expression builders; exported for tests).
+//   targets(): interactive controls under 24×24 with another control inside the 24px circle (2.5.8);
+//              inline links in running text and disabled controls are exempt.
+//   clipped(): text boxes whose content overflows a hidden/clipped box (for the 1.4.12 comparison).
+//   moving():  elements that still transition or animate (for the prefers-reduced-motion pass).
+export function deepSweepExpression(roots, what) {
+  return `(() => {
+    const roots = ${JSON.stringify(roots)};
+    const rootEls = roots ? roots.flatMap(s => { try { return [...document.querySelectorAll(s)]; } catch { return []; } }) : [document.body];
+    const scope = roots ? [...new Set(rootEls.flatMap(r => [r, ...r.querySelectorAll('*')]))] : [...document.body.querySelectorAll('*')];   // roots may nest: each element once
+    const vis = (el) => { const s = getComputedStyle(el); if (s.display==='none'||s.visibility==='hidden'||+s.opacity===0) return false; const r = el.getBoundingClientRect(); return r.width>0 && r.height>0; };
+    const desc = (el) => (el.tagName.toLowerCase() + (el.id?('#'+el.id):'') + ((el.className && typeof el.className==='string') ? '.'+el.className.trim().split(/\\s+/).join('.') : '')).slice(0,80);
+    const what = ${JSON.stringify(what)};
+    if (what === 'targets') {
+      const SEL = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=checkbox],[role=radio],[role=switch],[role=tab],[role=menuitem],[role=option],[tabindex]:not([tabindex="-1"])';
+      const all = [...new Set(scope.filter(el => el.matches(SEL) && vis(el) && !el.disabled && el.getAttribute('aria-disabled')!=='true'))];
+      const rects = all.map(el => el.getBoundingClientRect());
+      const out = [];
+      all.forEach((el, i) => {
+        const r = rects[i];
+        if (r.width >= 24 && r.height >= 24) return;
+        if (el.tagName === 'A' && el.closest('p,li,td,dd') && (el.closest('p,li,td,dd').textContent.trim().length > el.textContent.trim().length + 10)) return;   // a link inside running text
+        if (el.tagName === 'INPUT' && el.labels && [...el.labels].some(l => { const lr = l.getBoundingClientRect(); return lr.width >= 24 && lr.height >= 24; })) return;   // its label is the target
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        const near = rects.some((o, j) => j !== i && !all[j].contains(el) && !el.contains(all[j]) &&
+          Math.hypot(Math.max(o.left - cx, 0, cx - o.right), Math.max(o.top - cy, 0, cy - o.bottom)) < 12);
+        if (near) out.push({ desc: desc(el), size: Math.round(r.width) + '×' + Math.round(r.height) });
+      });
+      return out;
+    }
+    if (what === 'clipped') {
+      const out = [];
+      for (const el of scope) {
+        if (!vis(el)) continue;
+        if (![...el.childNodes].some(n => n.nodeType===3 && n.textContent.trim())) continue;
+        const s = getComputedStyle(el);
+        const hides = /hidden|clip/.test(s.overflowX + s.overflowY) || s.textOverflow === 'ellipsis';
+        if (hides && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1)) out.push(desc(el));
+      }
+      return out;
+    }
+    if (what === 'moving') {
+      const out = [];
+      const secs = (v) => Math.max(0, ...String(v).split(',').map(x => (x.trim().endsWith('ms') ? parseFloat(x) / 1000 : parseFloat(x)) || 0));
+      for (const el of scope) {
+        if (!vis(el)) continue;
+        const s = getComputedStyle(el);
+        const anim = s.animationName !== 'none' && secs(s.animationDuration) > 0.01;
+        const trans = s.transitionProperty !== 'none' && secs(s.transitionDuration) > 0.01;
+        if (anim || trans) out.push(desc(el) + (anim ? ' (animation)' : ' (transition)'));
+      }
+      return [...new Set(out)].slice(0, 200);
+    }
+    if (what === 'reflow') return { scrollWidth: document.documentElement.scrollWidth, width: window.innerWidth };
+    if (what === 'dialogs') return [...document.querySelectorAll('dialog[open],[role=dialog],[role=alertdialog],[aria-modal=true]')].filter(vis).map(desc);
+    if (what === 'active') {
+      // A unique identity (position among all elements) plus a readable label: two links that look
+      // alike are still two different stops.
+      const a = document.activeElement;
+      if (!a || a === document.body) return null;
+      return [...document.querySelectorAll('*')].indexOf(a) + '|' + desc(a);
+    }
+    return null;
+  })()`;
+}
+
 // ── axe-core (opt-in, I32): broaden coverage toward full WCAG rule set ───────────
 // Fetch the scanner source once (any CDN, pinned; no npm dependency), inject it into the
 // already-open page and run it. Adds the rules our own five checks do not cover — non-text
 // contrast, target size, duplicate ids, ARIA validity, and more — mapped to plain findings.
 // Degrades to null on any failure (offline, blocked), so the core check is never affected.
-async function fetchAxeSource() {
+// The pinned version is kept in ~/.cache after the first download (or a11y.axePath points at a
+// local copy), so later runs are fast and work offline. A cached file that no longer looks like
+// axe-core is ignored and fetched again.
+const AXE_VERSION = '4.10.2';
+async function fetchAxeSource(cfg = {}) {
+  const looksLikeAxe = (s) => typeof s === 'string' && s.length > 100000 && s.includes('axe.run');
+  if (cfg.a11y?.axePath) { try { const s = readFileSync(resolve(cfg.a11y.axePath), 'utf8'); if (looksLikeAxe(s)) return s; } catch { /* fall through */ } }
+  const cacheDir = join(homedir(), '.cache', 'rms-figma-code-parity');
+  const cached = join(cacheDir, `axe-${AXE_VERSION}.min.js`);
+  try { const s = readFileSync(cached, 'utf8'); if (looksLikeAxe(s)) return s; } catch { /* not cached yet */ }
   try {
-    const r = await fetch('https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.10.2/axe.min.js', { signal: AbortSignal.timeout(15000) });
-    return r.ok ? await r.text() : null;
+    const r = await fetch(`https://cdnjs.cloudflare.com/ajax/libs/axe-core/${AXE_VERSION}/axe.min.js`, { signal: AbortSignal.timeout(15000) });
+    const s = r.ok ? await r.text() : null;
+    if (looksLikeAxe(s)) { try { mkdirSync(cacheDir, { recursive: true }); writeFileSync(cached, s); } catch { /* cache is optional */ } return s; }
+    return null;
   } catch { return null; }
 }
-async function runAxe(send, sessionId, axeSource) {
+// Runs the WCAG 2.0/2.1/2.2 A and AA rules explicitly (so target size and friends are always on),
+// scoped to the checked components when there are any.
+async function runAxe(send, sessionId, axeSource, roots = null) {
   if (!axeSource) return null;
   try {
     await send('Runtime.evaluate', { expression: axeSource, returnByValue: false }, sessionId);
-    const expr = `axe.run(document, { resultTypes: ['violations'] })
+    const ctx = roots ? `{ include: ${JSON.stringify(roots.map((s) => [s]))} }` : 'document';
+    const expr = `axe.run(${ctx}, { resultTypes: ['violations'], runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] } })
       .then(r => JSON.stringify(r.violations.map(v => ({ id: v.id, help: v.help, impact: v.impact, helpUrl: v.helpUrl, count: v.nodes.length, targets: v.nodes.slice(0, 4).map(n => (n.target || []).join(' ')) }))))
       .catch(e => 'ERR:' + e.message)`;
     const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId);
@@ -437,11 +594,14 @@ async function main() {
   const plugins = cfg.paths?.plugins ?? [];
   const pluginSrc = cfg.paths?.pluginCSS ?? [];
 
-  const modes = (cfg.figma?.modes?.length ? cfg.figma.modes : [{ name: 'Light', snapshotKey: 'light' }])
-    .map((m) => ({ name: m.name || m.snapshotKey || 'light', scheme: (m.snapshotKey || m.name || 'light').toLowerCase().includes('dark') ? 'dark' : 'light' }));
+  // Every colour mode, switched the way ds-config says it is switched (media emulation, a class or a
+  // data attribute on the root, high contrast): the same modeSwitch() the code capture uses.
+  const modes = (cfg.figma?.modes?.length ? loadModes(cfg) : [{ name: 'Light', snapshotKey: 'light', cssSelector: 'root' }])
+    .map((m) => ({ name: m.name || m.snapshotKey || 'light', sw: modeSwitch(m) }))
+    .filter((m) => !m.sw.unsupported);
   const locator = await loadLocator(ROOT, cfg);   // the one shared component finder
   const selOf = (name) => locator.selectorFor(name);
-  const roots = components.length ? components.map(selOf) : null;
+  let roots = components.length ? components.map(selOf) : null;
 
   const builtUiPath = (plugin) => {
     const i = plugins.indexOf(plugin);
@@ -464,6 +624,14 @@ async function main() {
   }
 
   const sg = urlList.length ? null : styleguideTarget(cfg, ROOT);
+  // On the styleguide, only the design system's own components are checked: the page's navigation,
+  // badges and notes are the styleguide's chrome, not the DS.
+  if (sg && !roots) {
+    let names = locator.names();
+    try { names = [...new Set([...names, ...Object.keys(JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {})])]; } catch { /* optional */ }
+    const sels = names.map(selOf).filter((s) => { try { return !!s && /^[.#[a-z]/i.test(s); } catch { return false; } });
+    if (sels.length) roots = sels;
+  }
   let targets;
   if (urlList.length) {
     targets = urlList.map((u) => ({ label: u, url: u }));
@@ -535,7 +703,7 @@ async function main() {
 
   let axeSource = null;
   if (RUN_AXE) {
-    axeSource = await fetchAxeSource();
+    axeSource = await fetchAxeSource(cfg);
     if (!axeSource) console.log('ℹ️  [a11y] --axe: could not load axe-core (offline or blocked) — the broader scan was skipped; the core checks still ran.');
   }
 
@@ -562,35 +730,56 @@ async function main() {
       }
     } catch { /* Accessibility domain unavailable — skip name/role, not a fail */ }
 
-    // 1. Contrast per theme; 3/4/5. focus + state-exposure + keyboard once (first theme).
+    // A real Tab key press first: script focus then counts as keyboard focus, so :focus-visible
+    // styles show exactly as a keyboard user sees them.
+    const pressKey = async (key, code, keyCode) => {
+      await send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: keyCode }, sessionId);
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode }, sessionId);
+    };
+    try { await pressKey('Tab', 'Tab', 9); } catch { /* input domain unavailable: script focus only */ }
+
+    // 1. Contrast, 3. focus (and its ring contrast) in EVERY mode; 4/5. state exposure and keyboard
+    // reachability once (they do not depend on the theme). A finding repeated in several modes is
+    // reported once, with the modes it happens in.
     let first = true;
+    const once = new Map();
+    const note = (kind, desc, mode, extra = {}) => {
+      const k = `${kind}|${desc}`;
+      if (once.has(k)) { once.get(k).modes.push(mode); return; }
+      const f = { kind, plugin: label, desc, modes: [mode], ...extra };
+      once.set(k, f); findings.push(f);
+    };
     for (const mode of modes) {
-      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: mode.scheme }] }, sessionId);
-      const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, first, STATE_MAP), returnByValue: true }, sessionId);
+      await send('Emulation.setEmulatedMedia', { features: mode.sw.media }, sessionId);
+      if (mode.sw.apply) await send('Runtime.evaluate', { expression: mode.sw.apply }, sessionId);
+      const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, true, STATE_MAP), returnByValue: true }, sessionId);
       const { textEls = [], noFocus = [], faintFocus = [], ariaState = [], notKeyboard = [] } = r.result.value || {};
       for (const f of contrastFindings(textEls, mode.name)) findings.push({ plugin: label, ...f });
+      for (const desc of noFocus) note('focus', desc, mode.name);
+      // Focus indicator visible? (WCAG 1.4.11 for the focus ring — computed in Node)
+      for (const f of faintFocus) {
+        const raw = parseColor(f.color); if (!raw) continue;
+        const bg = effectiveBg(f.bgLayers);
+        const fg = raw.a < 1 ? over(raw, bg) : raw;
+        const ratio = contrastRatio(fg, bg);
+        if (ratio + 1e-9 < 3) note('focuscontrast', f.desc, mode.name, { ratio: Math.round(ratio * 100) / 100, threshold: 3 });
+      }
       if (first) {
-        for (const desc of noFocus) findings.push({ kind: 'focus', plugin: label, desc });
         for (const desc of ariaState) findings.push({ kind: 'ariastate', plugin: label, desc });
         for (const desc of notKeyboard) findings.push({ kind: 'keyboard', plugin: label, desc });
-        // Focus indicator visible? (WCAG 1.4.11 for the focus ring — computed in Node)
-        for (const f of faintFocus) {
-          const raw = parseColor(f.color); if (!raw) continue;
-          const bg = effectiveBg(f.bgLayers);
-          const fg = raw.a < 1 ? over(raw, bg) : raw;
-          const ratio = contrastRatio(fg, bg);
-          if (ratio + 1e-9 < 3) findings.push({ kind: 'focuscontrast', plugin: label, desc: f.desc, ratio: Math.round(ratio * 100) / 100, threshold: 3 });
-        }
       }
+      if (mode.sw.undo) await send('Runtime.evaluate', { expression: mode.sw.undo }, sessionId);
       first = false;
     }
+    await send('Emulation.setEmulatedMedia', { features: modes[0].sw.media }, sessionId);
+    if (modes[0].sw.apply) await send('Runtime.evaluate', { expression: modes[0].sw.apply }, sessionId);
     // Interaction-state contrast (:hover) — force the pseudo-state via CDP and re-measure. Reuses the
     // contrast sweep; reports only text that reads fine at rest but fails while hovered (opt-in --states).
     if (RUN_STATES) {
       try {
         await send('DOM.enable', {}, sessionId);
         await send('CSS.enable', {}, sessionId);
-        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: modes[0].scheme }] }, sessionId);
+        await send('Emulation.setEmulatedMedia', { features: modes[0].sw.media }, sessionId);
         const doc = await send('DOM.getDocument', { depth: -1 }, sessionId);
         const q = await send('DOM.querySelectorAll', { nodeId: doc.root.nodeId, selector: 'a[href],button,[role=button],[role=link],input:not([type=hidden]),select,textarea,[tabindex]' }, sessionId);
         const ids = (q.nodeIds || []).slice(0, 400);
@@ -604,7 +793,77 @@ async function main() {
         for (const id of ids) { try { await send('CSS.forcePseudoState', { nodeId: id, forcedPseudoClasses: [] }, sessionId); } catch {} }
       } catch { /* CSS/DOM domain unavailable — skip the hover pass, not a fail */ }
     }
-    if (axeSource) { const v = await runAxe(send, sessionId, axeSource); if (v) for (const row of v) axeViolations.push(row); }
+    // ── Deeper checks (WCAG 2.2): target size, a real Tab walk, dialogs and Escape, reduced motion,
+    //    forced colours, text spacing, reflow (opt-in a11y.reflow), and semantics against the contract.
+    //    Each one is isolated: a failure in one never stops the others or the check as a whole.
+    const evalv = async (expr) => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, sessionId)).result?.value;
+    const media0 = modes[0].sw.media;
+    const step = async (fn) => { try { await fn(); } catch { /* this check is skipped on this page, never a failure */ } };
+    await step(async () => {
+      for (const x of (await evalv(deepSweepExpression(roots, 'targets'))) ?? []) findings.push({ kind: 'target', plugin: label, ...x });
+    });
+    await step(async () => {
+      // Positive tabindex, then a real walk: Tab through the page and watch where the focus goes.
+      const positive = await evalv(`[...document.querySelectorAll('[tabindex]')].filter(e => +e.getAttribute('tabindex') > 0).map(e => (e.tagName.toLowerCase() + (e.id ? '#' + e.id : '')).slice(0, 60))`);
+      for (const d of positive ?? []) findings.push({ kind: 'tabindex', plugin: label, desc: d });
+      await evalv(`document.activeElement && document.activeElement.blur && document.activeElement.blur()`);
+      const seq = [];
+      for (let i = 0; i < 60; i++) { await pressKey('Tab', 'Tab', 9); seq.push(await evalv(deepSweepExpression(null, 'active'))); }
+      const distinct = new Set(seq.filter(Boolean));
+      for (let i = 2; i < seq.length; i++) {
+        if (seq[i] && seq[i] === seq[i - 1] && seq[i] === seq[i - 2] && distinct.size > 1) { findings.push({ kind: 'tabtrap', plugin: label, desc: seq[i].split('|').slice(1).join('|') }); break; }
+      }
+    });
+    await step(async () => {
+      const open = (await evalv(deepSweepExpression(null, 'dialogs'))) ?? [];
+      if (!open.length) return;
+      await evalv(`(() => { const d = document.querySelector('dialog[open],[role=dialog],[role=alertdialog],[aria-modal=true]'); const f = d && d.querySelector('button,a[href],input,select,textarea,[tabindex]'); (f || d)?.focus?.(); })()`);
+      await pressKey('Escape', 'Escape', 27);
+      const still = new Set((await evalv(deepSweepExpression(null, 'dialogs'))) ?? []);
+      for (const d of open) if (still.has(d)) findings.push({ kind: 'escape', plugin: label, desc: d });
+    });
+    await step(async () => {
+      await send('Emulation.setEmulatedMedia', { features: [...media0, { name: 'prefers-reduced-motion', value: 'reduce' }] }, sessionId);
+      for (const d of (await evalv(deepSweepExpression(roots, 'moving'))) ?? []) findings.push({ kind: 'motion', plugin: label, desc: d });
+    });
+    await step(async () => {
+      const normal = new Set(findings.filter((f) => f.kind === 'focus' && f.plugin === label).map((f) => f.desc));
+      await send('Emulation.setEmulatedMedia', { features: [...media0, { name: 'forced-colors', value: 'active' }] }, sessionId);
+      const r2 = await evalv(sweepExpression(roots, true, STATE_MAP));
+      for (const d of r2?.noFocus ?? []) if (!normal.has(d)) findings.push({ kind: 'forcedfocus', plugin: label, desc: d });
+    });
+    await send('Emulation.setEmulatedMedia', { features: media0 }, sessionId).catch(() => {});
+    await step(async () => {
+      // WCAG 1.4.12: the spacing a reader may set; only text that is newly cut off counts.
+      const before = new Set((await evalv(deepSweepExpression(roots, 'clipped'))) ?? []);
+      await evalv(`(() => { const s = document.createElement('style'); s.id = '__parity_spacing'; s.textContent = '* { line-height: 1.5 !important; letter-spacing: 0.12em !important; word-spacing: 0.16em !important; } p { margin-bottom: 2em !important; }'; document.head.appendChild(s); })()`);
+      for (const d of (await evalv(deepSweepExpression(roots, 'clipped'))) ?? []) if (!before.has(d)) findings.push({ kind: 'spacing', plugin: label, desc: d });
+      await evalv(`document.getElementById('__parity_spacing')?.remove()`);
+    });
+    if (cfg.a11y?.reflow === true) await step(async () => {
+      await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 640, deviceScaleFactor: 1, mobile: false }, sessionId);
+      const r3 = await evalv(deepSweepExpression(null, 'reflow'));
+      if (r3 && r3.scrollWidth > r3.width + 1) findings.push({ kind: 'reflow', plugin: label, desc: `${label}: ${r3.scrollWidth}px wide at 320px` });
+      await send('Emulation.clearDeviceMetricsOverride', {}, sessionId);
+    });
+    await step(async () => {
+      // Rendered role against the contract's authored semantics (contract.authored.json).
+      const want = contractSemantics(ROOT, cfg);
+      if (!Object.keys(want).length) return;
+      await send('DOM.enable', {}, sessionId);
+      const doc = await send('DOM.getDocument', { depth: 0 }, sessionId);
+      for (const [comp, role] of Object.entries(want)) {
+        if (components.length && !components.includes(comp)) continue;
+        let q;
+        try { q = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: selOf(comp) }, sessionId); } catch { continue; }
+        if (!q?.nodeId) continue;
+        const ax = await send('Accessibility.getPartialAXTree', { nodeId: q.nodeId, fetchRelatives: false }, sessionId);
+        const got = String(ax?.nodes?.[0]?.role?.value ?? '').toLowerCase();
+        if (got && !sameRole(got, role)) findings.push({ kind: 'semantics', plugin: label, desc: `${comp} (${selOf(comp)})`, got, want: role });
+      }
+    });
+
+    if (axeSource) { const v = await runAxe(send, sessionId, axeSource, roots); if (v) for (const row of v) axeViolations.push(row); }
     await send('Target.closeTarget', { targetId });
   }
 
@@ -623,7 +882,8 @@ async function main() {
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  const buckets = [['contrast', contrast], ['hovercontrast', hoverCon], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard]].filter(([, l]) => l.length);
+  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'motion', 'forcedfocus', 'spacing', 'reflow', 'semantics'].map((k) => [k, findings.filter((f) => f.kind === k)]);
+  const buckets = [['contrast', contrast], ['hovercontrast', hoverCon], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard], ...more].filter(([, l]) => l.length);
   const total = buckets.reduce((n, [, l]) => n + l.length, 0);
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';
 

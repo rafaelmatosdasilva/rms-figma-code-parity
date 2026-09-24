@@ -623,7 +623,42 @@ bespoke app that exposes no page index is the only case that needs a `--url` / `
 
 **Live hover contrast via `--states`:** opt in (or `a11y.interactionStates:true`) and it forces `:hover` (CDP `CSS.forcePseudoState`) on the interactive elements and re-measures, flagging text that reads fine at rest but drops below AA while hovered — the one interaction-state case axe cannot see (it reads the resting DOM).
 
-**Not yet (v2, by design):** forcing `:active`; and **reflow / text-resize** (WCAG 1.4.10 / 1.4.4) — these need a real screen target (they false-positive on a component catalog), so run them against a `--url` screen. Reading order / skip-links / landmarks are covered by `--axe` above.
+**Deeper checks (every run, every page).** Each is isolated: a check that cannot run on a page is skipped
+there, never a failure.
+- **Every colour mode, switched properly** — media emulation, a class or a data attribute on the root, or
+  high contrast, the same way the code capture switches them — and contrast, focus and the focus ring are
+  checked in every mode (a finding in several modes is reported once, with its modes).
+- **Real keyboard focus** — a Tab key press first, so `:focus-visible` styles show as a keyboard user sees
+  them. A focus style drawn with a background change, an underline or on `::before`/`::after` counts; a ring
+  drawn outside the element is measured against the parent's background.
+- **Target size (2.5.8)** — a control under 24×24 with another control inside its 24px circle. Links in
+  running text, and inputs whose label is the target, are exempt.
+- **Keyboard walk** — a real Tab walk: a focus trap, and any positive `tabindex` (visits out of order).
+- **Dialogs and Escape** — an open dialog that does not close on Escape.
+- **Reduced motion (2.3.3)** — under `prefers-reduced-motion: reduce`, anything that still transitions or
+  animates.
+- **Forced colours** — under `forced-colors: active` (Windows high contrast), a focus indicator that
+  disappears because it was only a shadow or a background.
+- **Text spacing (1.4.12)** — the spacing a reader may set (line height 1.5, letter spacing 0.12em, word
+  spacing 0.16em); text that becomes cut off.
+- **Semantics** — each component's rendered role (accessibility tree) against the contract's authored
+  `semantics` (`contract.authored.json`).
+- **Reflow at 320px (1.4.10)** — opt in with `a11y.reflow: true` for real screens (a component catalog is
+  not meant to reflow).
+- **State contrast, no browser needed** — from the code capture: each component's text against its own
+  background in every mode and every state the capture produced (hover, selected, error…). Disabled states
+  are exempt. Printed with the token contrast in the audit.
+- **Token contrast** — see-through text is blended over its background; a see-through background (no
+  known surface under it) is skipped; disabled pairs are exempt; pairs come from every mode's token names.
+  Border, outline and focus-ring tokens are paired at 3:1 with `a11y.nonTextPairs: true` (opt-in: a border is
+  often decorative); dividers never are.
+- **On the styleguide, only the design system's components are checked** (their selectors), not the page's
+  own navigation and notes.
+- **axe-core** is cached in `~/.cache/rms-figma-code-parity` after the first download (or `a11y.axePath`
+  points at a local copy), runs the WCAG 2.0/2.1/2.2 A and AA rules explicitly, and is scoped to the
+  checked components.
+
+**Not yet:** forcing `:active`.
 
 #### Evals (I7, a separate entry point — measures agent OUTPUT, never gates the repo)
 
