@@ -1,17 +1,10 @@
 # rms-figma-code-parity
 
-Audits whether code — including code written by an AI agent — actually conforms to your design system: not just how it looks, but its real tokens, component contracts, and documented intent. It tells you exactly what is out of sync and where to fix it, and emits machine-readable facts an agent can build against without guessing.
+Checks that your code actually matches your design system: the real colours, sizes, fonts and component rules from Figma, not just whether it looks about right. It tells you exactly what is out of sync and where to fix it. It works the same on code you wrote and on code an AI wrote.
 
-## The idea — four layers
+## How it works
 
-It is not a "does this look like Figma?" visual diff. It turns your design system into executable rules, organized as four layers:
-
-- **Facts** — what Figma actually has: the captured snapshot + a W3C DTCG `tokens.json` (real token names and values).
-- **Contracts** — what the code must satisfy per component: `<component>.contract.json` (props, states, variants, slots, relationships).
-- **Intent** — why a component exists and how it should be used: `design-intent.json` (from Figma descriptions, annotations, and your guidelines).
-- **Evaluation** — whether generated code satisfies those constraints: the evals (an advisory trend, never the source of truth).
-
-Two deterministic checks stand on the Facts: **parity** (your repo's own code vs the Facts — *is the DS built right?*) and **evaluation** (an agent's generated code vs the Contracts + Intent — *does the agent use the DS right?*). The many individual checks below are implementations of this model — the mechanical checks are the authority; an LLM judge is optional and secondary.
+It is not a "does this look like Figma?" screenshot comparison. It reads what your design system really defines in Figma (the tokens, and each component's parts, states and options) and checks your code against that, precisely. It also writes those facts out in a simple form, so AI tools build with the real design system instead of guessing.
 
 ## Install (once per computer)
 
@@ -40,8 +33,8 @@ rms-figma-code-parity --init
 
 Then the easy way is to just ask, in plain language, inside Claude Code:
 
-- *"run the parity on the whole DS"* — checks everything
-- *"run the parity on input"* — checks the `input` component (and its sub-parts) and reports only that
+- *"run the parity on the whole design system"*: checks everything
+- *"run the parity on input"*: checks the `input` component (and its parts) and reports only that
 
 Or from the terminal:
 
@@ -50,53 +43,44 @@ rms-figma-code-parity                       # the whole design system
 rms-figma-code-parity --component input     # one component (or a few: input,button)
 ```
 
-## Run just one check
-
-Each check is its own script, so you can run only one. Accessibility, for example, on the whole system or on one component:
-
-```bash
-node ~/.claude/skills/rms-figma-code-parity/a11y-check.mjs                    # whole system
-node ~/.claude/skills/rms-figma-code-parity/a11y-check.mjs --component input   # one component
-```
-
-Add `--a11y` to list every finding. (Inside Claude Code you can also just ask: *"run only the accessibility check on input"*.)
-
 ## What it checks
 
-Every run compares the code against Figma. In plain terms:
+Every run compares your code against Figma and reports it in plain words:
 
-- **Data is up to date** — you are comparing against today's Figma, not an old copy.
-- **Figma frame unchanged** — the design still looks like the version you approved.
-- **Token values** — colors, sizes and fonts match Figma, in every mode (light, dark).
-- **Tokens used in screens exist in CSS** — nothing a screen uses is missing from the code.
-- **Every mode is covered** — things that should change between light and dark actually do.
-- **Exception lists are valid** — your "ignore this" notes still point at real things.
-- **No invented CSS variables** — every variable really comes from Figma.
-- **Docs tell the truth** — your docs mention only tokens and variables that exist.
-- **No invented text casing** — no forced UPPERCASE the design never asked for.
-- **No hand-built DS components** — a screen uses the DS component, not a local look-alike styled by hand (opt-in via `reimplementationSurfaces[]`).
-- **Clean CSS** — no unused variables, and nothing that contradicts Figma.
-- **Nested components keep their own styles** — one component's styles do not leak into another.
-- **Structure** — the right height, spacing and corners, from tokens.
-- **All states are built** — hover, disabled, selected and the rest each exist and use the right values.
-- **Component props match Figma** — the same names, defaults and options as Figma.
-- **Sub-components match Figma** — the parts Figma nests are the ones the code uses.
-- **Templates compose the right components** — each template/page uses the components Figma composes (opt-in via `templates[]`).
-- **Markup** — ids, classes and icons match, and every control the design shows is actually built.
-- **Required pieces are in place** — icon slots, component slots and form controls.
-- **Icons** — come from the shared set and match Figma.
-- **Transitions** — use the durations and easings from the design.
-- **Motion** — motion values match Figma (only when your DS defines them).
-- **Shadows** — shadows match Figma (only when your DS defines them).
-- **Renders correctly in a browser** — the real rendered result matches, not just the code on paper.
-- **What this audit actually checked** — shows what was and was not covered, so nothing slips through.
+- **Data is up to date:** you are checking against today's Figma, not an old copy.
+- **Figma frame unchanged:** the design still looks like the version you approved.
+- **Token values** match: colours, sizes and fonts, in every mode (light and dark).
+- **Tokens used in** screens exist in the code: nothing a screen uses is missing.
+- **Every mode is** covered: things that should change between light and dark really do.
+- **Exception lists are** valid: your "ignore this" notes still point at real things.
+- **No invented CSS** variables: every variable traces back to a real Figma token.
+- **Docs tell the** truth: they mention only things that actually exist.
+- **No invented text** casing: no forced UPPERCASE the design never asked for.
+- **No hand-built DS** components: a screen uses the real component, not a hand-styled copy.
+- **Clean CSS:** nothing unused, nothing that contradicts Figma.
+- **Nested components keep** their own styles: one component's look does not leak into another.
+- **Structure:** the right height, spacing and corners, from the design.
+- **All states are** built: hover, disabled, selected and the rest, each with the right values.
+- **Component props match** Figma: the same names, defaults and choices.
+- **Sub-components match Figma:** the parts Figma nests are the ones the code uses.
+- **Templates compose the** right components: each page uses the components Figma composes.
+- **Markup:** ids, classes and icons match, and every control the design shows is built.
+- **Required pieces are** in place: icon slots, component slots and form controls.
+- **Icons:** from the shared set, drawn the same as Figma.
+- **Transitions:** the durations and easings from the design.
+- **Motion:** movement values match Figma, when your design defines them.
+- **Shadows:** match Figma, when your design defines them.
+- **Renders correctly in** a browser: checked on the real result, not just the code on paper.
+- **What this audit** covered: so you can see nothing slipped through.
 
-It also does an **accessibility** check and tells you, in plain words, anything that would make the design hard to use — text that's hard to read, a button with no label, something you can't reach with the keyboard — and how to fix it. And it writes a plain summary of your design system that AI tools can read, so they build with the real thing instead of guessing. All of this is advice; it never blocks the check.
+It also does an **accessibility** check: it flags anything that would make the design hard to use (text that is hard to read, a button with no label, something you cannot reach with the keyboard) and tells you, in plain words, how to fix it.
+
+Everything is advice with a clear fix. It points at the problem, it does not silently change your code.
 
 ## That's it
 
-Commit the files it creates (the `*.snapshot.json`) so your whole team and CI run against the same design. Deeper setup and options live in the skill's own doc.
+Commit the files it creates so your whole team and CI check against the same design. The deeper setup and every option live in the full guide.
 
 ## License
 
-[MIT](LICENSE) © Rafael Matos da Silva. Free to use, modify and distribute; keep the copyright notice.
+[MIT](LICENSE) © Rafael Matos da Silva. Free to use, change and share. Just keep the copyright line.
