@@ -5,7 +5,7 @@ import { rawGapMatches } from '../raw-gap.mjs';
 test('flush (gap 0) accepts 0 and 0px, rejects a stray gap', () => {
   assert.equal(rawGapMatches('0', 0), true);
   assert.equal(rawGapMatches('0px', 0), true);
-  assert.equal(rawGapMatches('4px', 0), false);        // the switch-content bug: DS flush, code gap/xs
+  assert.equal(rawGapMatches('4px', 0), false);        // the switch-body bug: DS flush, code gap/xs
   assert.equal(rawGapMatches('var(--gap-xs)', 0), false);
 });
 

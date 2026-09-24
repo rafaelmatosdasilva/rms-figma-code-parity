@@ -7,12 +7,12 @@ test('pairs text with the background sharing its qualifier (state or variant)', 
   const pairs = deriveContrastPairs([
     'badge/label/negative/color', 'badge/background/negative/color',
     'badge/label/positive/color', 'badge/background/positive/color',
-    'buttonList/text/hover/color', 'buttonList/background/hover/color',
+    'menuList/text/hover/color', 'menuList/background/hover/color',
   ]);
   const by = (t) => pairs.find((p) => p.text === t);
   assert.equal(by('badge/label/negative/color').bg, 'badge/background/negative/color');
   assert.equal(by('badge/label/positive/color').bg, 'badge/background/positive/color');
-  assert.equal(by('buttonList/text/hover/color').bg, 'buttonList/background/hover/color');
+  assert.equal(by('menuList/text/hover/color').bg, 'menuList/background/hover/color');
 });
 
 test('falls back to the default / only background when the qualifier has no match', () => {

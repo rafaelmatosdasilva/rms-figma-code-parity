@@ -11,11 +11,11 @@
 //
 // Contract shape (structure-contract.mjs):
 //   export const RENDERED_ASSERTIONS = [
-//     { plugin: 'impact-atlas', selector: '.statusBar', prop: 'height', expected: '56px',
-//       note: 'DS statusBar 789:38384' },
+//     { plugin: 'my-app', selector: '.toolbar', prop: 'height', expected: '56px',
+//       note: 'DS toolbar height' },
 //     // probe: HTML injected into <body> when the selector matches nothing
 //     // (for components only created at runtime, e.g. toasts)
-//     { plugin: 'impact-atlas', selector: '.toast', probe: '<div class="toast">✓</div>',
+//     { plugin: 'my-app', selector: '.toast', probe: '<div class="toast">✓</div>',
 //       prop: 'height', expected: '32px', note: 'DS toast success state' },
 //   ];
 // prop is a camelCase computed-style key (height, paddingLeft, columnGap, minHeight…).
@@ -298,7 +298,7 @@ for (const [plugin, asserts] of Object.entries(byPlugin)) {
     await send('DOM.enable', {}, sessionId);
     await send('CSS.enable', {}, sessionId);
     // Inject pseudo-assert probes into a persistent host (the scheme-grouped pass
-    // above runs its own throwaway host, so runtime-only elements like buttonList
+    // above runs its own throwaway host, so runtime-only elements like menuList
     // probes must be re-injected here for DOM.querySelector to resolve them).
     const injectExpr = `(() => {
       const host = document.createElement('div');

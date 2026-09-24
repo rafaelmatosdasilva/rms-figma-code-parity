@@ -1602,7 +1602,7 @@ function reportFull(label, items, shown) {
     const usageCorpus = usageParts.join('\n');
     // Class names composed at runtime legitimise the whole family. The prefix is
     // rarely a standalone literal - it is the tail of a longer string, as in
-    //   '<div class="buttonList issue-item t-' + iss.type + '">'
+    //   '<div class="menuList result-item t-' + iss.type + '">'
     // so take the trailing name-ish fragment of any string spliced with + or ${…}.
     const dynamicPrefixes = extractDynamicClassPrefixes(usageCorpus);
     const deadClasses = [...defined.entries()]

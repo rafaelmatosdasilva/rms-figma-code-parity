@@ -679,12 +679,12 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
 //   'top'|'right'|'bottom'|'left'- CSS must use `border-<side>:` and NOT the shorthand.
 //   'none'                       - the component draws NO border of its own (its stroke flag
 //                                  comes from a nested sub-component or a consumer wrapper, not
-//                                  its own frame - e.g. dividerSection's nested buttonSecondary).
+//                                  its own frame - e.g. sectionHeader's nested buttonSecondary).
 //                                  Documents that and skips the CSS side assertion.
 const BSIDES_FAIL = [], BSIDES_PASS = [];
 // A strokeful component that omits strokeSides used to be silently skipped - which is
 // exactly how a full-border ("border:") bug reaches a component that Figma strokes on
-// only one side (overflowList, 2026-08). So strokeSides is now MANDATORY whenever Figma
+// only one side (moreMenu, 2026-08). So strokeSides is now MANDATORY whenever Figma
 // draws any stroke: an undeclared strokeful component fails here unless it is explicitly
 // parked in ds-config.json → knownUndeclaredStrokeSides (same escape-hatch pattern as the
 // other known* lists). Park entries are tech-debt, not exemptions - declare the real value
@@ -706,7 +706,7 @@ if (themeCSS && Object.keys(COMPONENT_CSS_SELECTORS).length) {
     const selCfg = COMPONENT_CSS_SELECTORS[comp];
     if (!selCfg) continue;   // declared but no base selector to verify against (plugin-side border)
     // The border commonly lives on the same child element as the radius (a visual box inside the
-    // component root - e.g. a checkbox's `.checkbox-box`), not on `main`. Honour strokeSel, then
+    // component root - e.g. a checkbox's `.checkbox-mark`), not on `main`. Honour strokeSel, then
     // radiusSel, then main, so a component whose border is on a child is still verified correctly.
     const borderSel = selCfg.strokeSel ?? selCfg.radiusSel ?? selCfg.main;
     const mainBlock = findBlock(themeCSS, borderSel, themeIndex);
@@ -928,7 +928,7 @@ for (const [comp, snapComp] of Object.entries(components)) {
 // A DS component with a fixed (hug) height renders that exact height in Figma. In
 // code it's often placed as a flex-column child (a list row, a toolbar item); a
 // flex child with `height:Npx` but no `flex-shrink:0` compresses below Npx when the
-// container runs short (the buttonList shrinking-rows bug 2026-07-12). So any component
+// container runs short (the menuList shrinking-rows bug 2026-07-12). So any component
 // whose snapshot height is a fixed number and whose base rule pins that height via
 // `height`/`min-height` MUST also declare `flex-shrink:0` (harmless when it's never a
 // flex child, so it's required defensively). Exempt via ds-config → knownShrinkExceptions.
@@ -1097,7 +1097,7 @@ for (const [comp, contract] of Object.entries(CONTRACT)) {
 
 // ── Gate [3e]: CSS property assertions ───────────────────────────────────────
 // Verifies arbitrary CSS properties on any selector - for plugin-specific
-// selectors that mirror DS components (e.g. buttonListRow) but aren't in CONTRACT.
+// selectors that mirror DS components (e.g. menuListRow) but aren't in CONTRACT.
 //
 // Export CSS_PROPERTY_ASSERTIONS from structure-contract.mjs as an array of:
 //   { sel, prop, expected }    - CSS value must equal exactly this string
@@ -1612,11 +1612,11 @@ if (CANN_UNDOC.length > 0) {
 //
 // Export BUTTON_CLASS_RULES from structure-contract.mjs as an array of:
 //   { modifier, allowedBases }
-//   modifier     - class that triggers the check (e.g. 'buttonUnpair')
+//   modifier     - class that triggers the check (e.g. 'buttonCompact')
 //   allowedBases - at least one of these classes must also be on the button
 //
-// Catches wrong-base errors like buttonTertiary+buttonUnpair instead of
-// buttonQuaternary+buttonUnpair, independent of which project defines them.
+// Catches wrong-base errors like buttonTertiary+buttonCompact instead of
+// buttonGhost+buttonCompact, independent of which project defines them.
 const BCLASS_FAIL = [], BCLASS_PASS = [];
 
 if (BUTTON_CLASS_RULES.length) {
@@ -1665,7 +1665,7 @@ if (BUTTON_CLASS_RULES.length) {
 //
 // WHY THIS GATE EXISTS: Gate [3b] only checks the contract.main selector. When a
 // component has multiple states with distinct geometry (e.g. toast loading h=48 vs
-// success h=32, or buttonList default vs hover/selected padding-right + gap), every
+// success h=32, or menuList default vs hover/selected padding-right + gap), every
 // non-main state was invisible to every gate - a completely wrong value could ship
 // without a single gate detecting it. Gate [3j] closes that gap: declare state geometry
 // once in contract.states and every future run verifies it automatically.

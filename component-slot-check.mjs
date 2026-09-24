@@ -62,12 +62,15 @@ function findClassInSlot(html, selector) {
   return clsM ? clsM[1] : '';
 }
 
-// Individual CTA button component classes that require slot declarations.
-// Repeating components (buttonList, overflowList, segmented-control, badge, etc.)
-// intentionally excluded - they appear N times per list and don't need per-slot entries.
-const DECLARED_COMPONENT_CLASSES = new Set([
-  'buttonPrimary', 'buttonSecondary', 'buttonTertiary', 'buttonQuaternary',
-]);
+// Component classes whose every <button id> must carry a slot declaration. Taken from the
+// project itself: ds-config.json → declaredComponentClasses, else every class the project
+// already declares in COMPONENT_USAGES (once one usage of a component is declared, all of its
+// id'd buttons must be). Repeating list components are simply never declared, so they stay out.
+const DECLARED_COMPONENT_CLASSES = new Set(
+  Array.isArray(cfg.declaredComponentClasses)
+    ? cfg.declaredComponentClasses
+    : COMPONENT_USAGES.map((u) => u.expectedClass).filter(Boolean),
+);
 
 // ── Run checks ────────────────────────────────────────────────────────────────
 let pass = true;

@@ -57,8 +57,8 @@ export const CONTRACT = {
 // probe = HTML injected when the selector matches nothing (runtime-only components).
 export const RENDERED_ASSERTIONS = [
   // Example:
-  // { plugin: 'my-plugin', selector: '.statusBar', prop: 'height', expected: '56px',
-  //   note: 'DS statusBar h' },
+  // { plugin: 'my-plugin', selector: '.toolbar', prop: 'height', expected: '56px',
+  //   note: 'DS toolbar h' },
   // { plugin: 'my-plugin', selector: '.toast', prop: 'columnGap', expected: '4px',
   //   probe: '<div class="toast"><span class="toast-icon"></span><span>Done</span></div>',
   //   note: 'DS toast icon↔title gap/s' },
@@ -76,9 +76,9 @@ export const RENDERED_ASSERTIONS = [
 // Key = normalized selector, value = reason (prefix with a category tag).
 export const PLUGIN_DS_OVERRIDES = {
   // Example:
-  // '.scroll-area':
+  // '.scroll-region':
   //   'LAYOUT - scroll container content padding is per-plugin placement, not identity',
-  // '.node.node-external':
+  // '.node.item-linked':
   //   'DS-FRAME STATE - dashed dimmed pill designed in the DS frame, no component variant exists',
 };
 
@@ -139,7 +139,7 @@ export const FONT_SCALE_TO_CSS = {
 //   skipTBPadding - omit top/bottom padding check (height-based layout, no tb padding in CSS)
 export const COMPONENT_CSS_SELECTORS = {
   // button: { main: '.button' },
-  // input:  { main: '.inputWrap', fontSel: '.inputField', skipTBPadding: true },
+  // input:  { main: '.inputGroup', fontSel: '.textInput', skipTBPadding: true },
   // card:   { main: '.card', radiusSel: '.card::before' },
 };
 
@@ -151,7 +151,7 @@ export const COMPONENT_CSS_SELECTORS = {
 //   expectedVar - property must use var(expectedVar) (e.g. '--radius-full')
 // Use for plugin-level wrappers that mirror a DS component's geometry.
 export const CSS_PROPERTY_ASSERTIONS = [
-  // Example: a .listRow wrapper that mirrors the buttonList DS component
+  // Example: a .listRow wrapper that mirrors the menuList DS component
   // { sel: '.listRow',         prop: 'height',        expected:    '40px'          },
   // { sel: '.listRow',         prop: 'border-bottom', present:     true            },
   // { sel: '.listRow',         prop: 'border',        present:     false           },

@@ -2,7 +2,7 @@
 //
 // Figma text styles here carry no forced casing, so a `text-transform:
 // uppercase | lowercase | capitalize` in the token / component CSS is INVENTED
-// styling that drifts from Figma (real case: a `.section-label` "uppercase group
+// styling that drifts from Figma (real case: a `.group-label` "uppercase group
 // heading" that had no Figma text style behind it, and spread into two plugins).
 // This catches that class of drift at the source — the same "no all-caps" rule
 // the docs-truth gate enforces on a styleguide, applied to the DS CSS itself.

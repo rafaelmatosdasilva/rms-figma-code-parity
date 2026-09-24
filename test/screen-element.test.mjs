@@ -10,7 +10,9 @@ const GATE = 'screen-element-check.mjs';
 
 function fixture({ elements, code, strict = false, exempt = [], plugin = 'p', rowSeparators }) {
   const files = {
-    'ds-config.json': { screenElementStrict: strict, knownScreenElementExemptions: exempt },
+    'ds-config.json': { screenElementStrict: strict, knownScreenElementExemptions: exempt, paths: { snapshotStructure: 'struct.json' } },
+    // The DS separator class is derived from the captured components (a name that says divider).
+    'struct.json': { components: { rowDivider: {}, switch: {}, badge: {} } },
     [`apps/${plugin}/ui.html`]: code,
   };
   if (elements) {
@@ -23,29 +25,29 @@ function fixture({ elements, code, strict = false, exempt = [], plugin = 'p', ro
 
 test('[feature screen-el] a button whose label sits inside a <button> is IN CODE', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonPrimary', label: 'Save as default' }],
-    code: '<button class="buttonPrimary"><span>Save as default</span></button>',
+    elements: [{ component: 'buttonPrimary', label: 'Save changes' }],
+    code: '<button class="buttonPrimary"><span>Save changes</span></button>',
   }));
   assert.equal(code, 0, out);
   assert.match(out, /IN CODE\s+1/);
   assert.match(out, /MISSING\s+0/);
 });
 
-test('[regression screen-el] label only in an id / comment / JS identifier is MISSING (the Preflight gap)', () => {
+test('[regression screen-el] label only in an id / comment / JS identifier is MISSING (the Export gap)', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonSecondary', label: 'Preflight' }],
-    code: '<div id="preflight-section"></div><!-- Preflight report --><script>function requestPreflight(){ const x = 1 > 0; }</script>',
+    elements: [{ component: 'buttonSecondary', label: 'Export' }],
+    code: '<div id="export-section"></div><!-- Export report --><script>function requestExport(){ const x = 1 > 0; }</script>',
   }));
   assert.equal(code, 0, out);          // advisory by default — does not block
   assert.match(out, /MISSING\s+1/);
-  assert.match(out, /Preflight/);
+  assert.match(out, /Export/);
   assert.match(out, /ADVISORY/);
 });
 
 test('[feature screen-el] the same gap is a hard FAIL under screenElementStrict', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonSecondary', label: 'Preflight' }],
-    code: '<div id="preflight-section"></div>',
+    elements: [{ component: 'buttonSecondary', label: 'Export' }],
+    code: '<div id="export-section"></div>',
     strict: true,
   }));
   assert.equal(code, 1, out);
@@ -53,10 +55,10 @@ test('[feature screen-el] the same gap is a hard FAIL under screenElementStrict'
 });
 
 test('[regression screen-el] visible text of the WRONG kind is not a counterpart', () => {
-  // "Preflight" is visible text, but not inside a button — a bare label is not the control.
+  // "Export" is visible text, but not inside a button — a bare label is not the control.
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonSecondary', label: 'Preflight' }],
-    code: '<span>Preflight</span>', strict: true,
+    elements: [{ component: 'buttonSecondary', label: 'Export' }],
+    code: '<span>Export</span>', strict: true,
   }));
   assert.equal(code, 1, out);
   assert.match(out, /has no button counterpart/);
@@ -64,8 +66,8 @@ test('[regression screen-el] visible text of the WRONG kind is not a counterpart
 
 test('[feature screen-el] a dynamic label set as a quoted JS string counts as present', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonPrimary', label: 'Scan selection' }],
-    code: `<button class="buttonPrimary" id="scan"></button><script>btn.textContent = count > 0 ? 'Scan selection' : 'Scan file';</script>`,
+    elements: [{ component: 'buttonPrimary', label: 'Run on selection' }],
+    code: `<button class="buttonPrimary" id="run"></button><script>btn.textContent = count > 0 ? 'Run on selection' : 'Run on page';</script>`,
     strict: true,
   }));
   assert.equal(code, 0, out);
@@ -74,7 +76,7 @@ test('[feature screen-el] a dynamic label set as a quoted JS string counts as pr
 
 test('[regression screen-el] radioButton is classified as radio, not button (name contains "button")', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'radioButton', label: 'PDF CMYK Vector' }],
+    elements: [{ component: 'radioButton', label: 'High quality' }],
     code: '<div>nothing here</div>', strict: true,
   }));
   assert.equal(code, 1, out);
@@ -83,8 +85,8 @@ test('[regression screen-el] radioButton is classified as radio, not button (nam
 
 test('[feature screen-el] a radio label inside a .radioButton is IN CODE', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'radioButton', label: 'PDF CMYK Vector' }],
-    code: '<label class="radioButton"><span class="radioButton-label">PDF CMYK Vector</span></label>',
+    elements: [{ component: 'radioButton', label: 'High quality' }],
+    code: '<label class="radioButton"><span class="radio-label">High quality</span></label>',
   }));
   assert.equal(code, 0, out);
   assert.match(out, /IN CODE\s+1/);
@@ -93,9 +95,9 @@ test('[feature screen-el] a radio label inside a .radioButton is IN CODE', () =>
 
 test('[feature screen-el] a deliberate different realization is silenced by an exemption', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonSecondary', label: 'Preflight' }],
-    code: '<div id="preflight-section"></div>',
-    exempt: ['p/Preflight'], strict: true,
+    elements: [{ component: 'buttonSecondary', label: 'Export' }],
+    code: '<div id="export-section"></div>',
+    exempt: ['p/Export'], strict: true,
   }));
   assert.equal(code, 0, out);
   assert.match(out, /MISSING\s+0/);
@@ -105,8 +107,8 @@ test('[feature screen-el] a button built with the WRONG DS variant is a MISMATCH
   // The label IS hosted by a <button>, so the family match passes — but the design says
   // buttonTertiary and the code built buttonSecondary. That divergence must surface.
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonTertiary', label: 'Save as default' }],
-    code: '<button class="buttonSecondary"><span>Save as default</span></button>',
+    elements: [{ component: 'buttonTertiary', label: 'Save changes' }],
+    code: '<button class="buttonSecondary"><span>Save changes</span></button>',
   }));
   assert.equal(code, 0, out);                       // advisory by default
   assert.match(out, /MISMATCH\s+1/);
@@ -116,8 +118,8 @@ test('[feature screen-el] a button built with the WRONG DS variant is a MISMATCH
 
 test('[feature screen-el] a wrong-variant MISMATCH is a hard FAIL under screenElementStrict', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonTertiary', label: 'Save as default' }],
-    code: '<button class="buttonSecondary"><span>Save as default</span></button>',
+    elements: [{ component: 'buttonTertiary', label: 'Save changes' }],
+    code: '<button class="buttonSecondary"><span>Save changes</span></button>',
     strict: true,
   }));
   assert.equal(code, 1, out);
@@ -126,8 +128,8 @@ test('[feature screen-el] a wrong-variant MISMATCH is a hard FAIL under screenEl
 
 test('[feature screen-el] the right variant is IN CODE with no MISMATCH', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonTertiary', label: 'Save as default' }],
-    code: '<button class="buttonTertiary"><span>Save as default</span></button>',
+    elements: [{ component: 'buttonTertiary', label: 'Save changes' }],
+    code: '<button class="buttonTertiary"><span>Save changes</span></button>',
   }));
   assert.equal(code, 0, out);
   assert.match(out, /IN CODE\s+1/);
@@ -135,12 +137,12 @@ test('[feature screen-el] the right variant is IN CODE with no MISMATCH', () => 
 });
 
 test('[regression screen-el] a neighbouring button of another class is not mistaken for the control', () => {
-  // "Export PDF" sits in its own buttonPrimary; a buttonSecondary sibling precedes it. The check
+  // "Download file" sits in its own buttonPrimary; a buttonSecondary sibling precedes it. The check
   // must read the ENCLOSING <button>, not the nearest class in a character window.
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'buttonPrimary', label: 'Export PDF' }],
-    code: '<button class="buttonSecondary"><span>Save as default</span></button>'
-        + '<button class="buttonPrimary"><span>Export PDF</span></button>',
+    elements: [{ component: 'buttonPrimary', label: 'Download file' }],
+    code: '<button class="buttonSecondary"><span>Save changes</span></button>'
+        + '<button class="buttonPrimary"><span>Download file</span></button>',
     strict: true,
   }));
   assert.equal(code, 0, out);                       // no false MISMATCH
@@ -148,10 +150,10 @@ test('[regression screen-el] a neighbouring button of another class is not mista
   assert.match(out, /MISMATCH\s+0/);
 });
 
-test('[feature screen-el] fewer dividerLines than the design places between rows is a SEP GAP', () => {
+test('[feature screen-el] fewer rowDividers than the design places between rows is a SEP GAP', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'switch', label: 'Crop marks' }],
-    code: '<label class="switch"><span>Crop marks</span></label><div class="dividerLine"></div>',
+    elements: [{ component: 'switch', label: 'Show grid' }],
+    code: '<label class="switch"><span>Show grid</span></label><div class="rowDivider"></div>',
     rowSeparators: 3,
   }));
   assert.equal(code, 0, out);                       // advisory by default
@@ -161,18 +163,18 @@ test('[feature screen-el] fewer dividerLines than the design places between rows
 
 test('[feature screen-el] a SEP GAP is a hard FAIL under screenElementStrict', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'switch', label: 'Crop marks' }],
-    code: '<label class="switch"><span>Crop marks</span></label><div class="dividerLine"></div>',
+    elements: [{ component: 'switch', label: 'Show grid' }],
+    code: '<label class="switch"><span>Show grid</span></label><div class="rowDivider"></div>',
     rowSeparators: 3, strict: true,
   }));
   assert.equal(code, 1, out);
   assert.match(out, /SEP GAP\s+1/);
 });
 
-test('[feature screen-el] enough separators (dividerLine or <hr>) closes the SEP GAP', () => {
+test('[feature screen-el] enough separators (rowDivider or <hr>) closes the SEP GAP', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'switch', label: 'Crop marks' }],
-    code: '<label class="switch"><span>Crop marks</span></label><div class="dividerLine"></div><hr>',
+    elements: [{ component: 'switch', label: 'Show grid' }],
+    code: '<label class="switch"><span>Show grid</span></label><div class="rowDivider"></div><hr>',
     rowSeparators: 2, strict: true,
   }));
   assert.equal(code, 0, out);
@@ -185,11 +187,23 @@ test('[feature screen-el] inert when no snapshot exists', () => {
   assert.match(out, /skipped/i);
 });
 
-test('[feature screen-el] decorative components (dividerLine, badge) are not required', () => {
+test('[feature screen-el] decorative components (rowDivider, badge) are not required', () => {
   const { code, out } = runGate(GATE, fixture({
-    elements: [{ component: 'dividerLine', label: '' }, { component: 'badge', label: 'New' }],
+    elements: [{ component: 'rowDivider', label: '' }, { component: 'badge', label: 'New' }],
     code: '<div></div>', strict: true,
   }));
   assert.equal(code, 0, out);
   assert.match(out, /MISSING\s+0/);
+});
+
+test('[feature screen-el] ds-config separatorClasses overrides the derived divider class', () => {
+  const files = fixture({
+    elements: [{ component: 'switch', label: 'Show grid' }],
+    code: '<label class="switch"><span>Show grid</span></label><div class="line"></div><div class="line"></div>',
+    rowSeparators: 2, strict: true,
+  });
+  files['ds-config.json'].separatorClasses = ['.line'];
+  const { code, out } = runGate(GATE, files);
+  assert.equal(code, 0, out);
+  assert.match(out, /SEP GAP\s+0/);
 });

@@ -65,7 +65,7 @@ function isCovered(sel) {
     // Multi-selector rule: ".a, .b { }" - check comma-split parts
     if (cssEl.split(',').map(s => s.trim()).includes(norm)) return true;
     // Compound/child selector: propertyMap selector is a PREFIX of a CSS rule's selector.
-    // e.g. ".depth-option.done" is covered by ".depth-option.done .depth-circle"
+    // e.g. ".step-option.done" is covered by ".step-option.done .step-dot"
     if (cssEl.startsWith(norm + ' ') || cssEl.startsWith(norm + ':') || cssEl.startsWith(norm + '.')) return true;
   }
   return false;

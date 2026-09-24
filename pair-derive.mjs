@@ -2,7 +2,7 @@
 //
 // I28 checks WCAG contrast for text/bg token pairs, but only ones the project AUTHORS in
 // a11y.tokenPairs - authored data someone must maintain. Most DSes already encode the role in the
-// token NAME by convention (`buttonList/text/default/color`, `buttonList/background/hover/color`), so
+// token NAME by convention (`menuList/text/default/color`, `menuList/background/hover/color`), so
 // the pairs can be DERIVED: within one component, pair each text/label/icon token with the background
 // token that shares its qualifier (state or variant), falling back to the component's default/only
 // background. Component-scoped + qualifier-matched, so it never explodes into every-text × every-bg.
