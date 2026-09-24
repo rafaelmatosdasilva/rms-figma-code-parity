@@ -23,6 +23,7 @@ import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { resolveStatus } from './decision-status.mjs';
 
 const LAYERS = ['system', 'foundations', 'components', 'patterns', 'templates', 'pages', 'flows'];
 
@@ -174,6 +175,7 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
       },
       guidance: (agWhenNot || agUseInstead.length)         // authored: when NOT to use, and what instead
         ? { whenNotToUse: agWhenNot, useInstead: agUseInstead.length ? agUseInstead : null } : null,
+      status: resolveStatus(ag, pr.description),           // I33: current/deprecated/experimental + what won + why
       facts: {
         height: s.h ?? null,
         paddingVar: s.paddingVar || null,

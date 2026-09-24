@@ -12,7 +12,8 @@ export function collectDeprecatedTokens(dict, prefix = '', out = []) {
   if (!dict || typeof dict !== 'object') return out;
   for (const [k, v] of Object.entries(dict)) {
     if (k.startsWith('$') || !v || typeof v !== 'object') continue;
-    if (v.$value !== undefined) { if (v.$deprecated === true) out.push(prefix ? `${prefix}.${k}` : k); }
+    // $deprecated is true or (DTCG) a string explaining the deprecation.
+    if (v.$value !== undefined) { if (v.$deprecated === true || (typeof v.$deprecated === 'string' && v.$deprecated !== '')) out.push(prefix ? `${prefix}.${k}` : k); }
     else collectDeprecatedTokens(v, prefix ? `${prefix}.${k}` : k, out);
   }
   return out;
@@ -34,9 +35,9 @@ export function pruneCandidates({ built = [], usage = null, tokensDict = null } 
   const deprecatedTokens = tokensDict ? collectDeprecatedTokens(tokensDict) : [];
 
   const singleOptionVariants = [];   // a "variant" prop with exactly one option - an axis that does not vary
-  const deprecatedComponents = [];   // a contract explicitly marked deprecated (forward-compat field)
+  const deprecatedComponents = [];   // a contract marked deprecated (I33 status, or the legacy boolean)
   for (const { name, contract } of built) {
-    if (contract?.deprecated === true) deprecatedComponents.push(name);
+    if (contract?.deprecated === true || contract?.status?.state === 'deprecated') deprecatedComponents.push(name);
     for (const p of (contract?.props || [])) {
       if (p?.type === 'enum' && Array.isArray(p.options) && p.options.length === 1)
         singleOptionVariants.push({ component: name, prop: p.name, option: p.options[0] });

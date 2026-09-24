@@ -335,16 +335,26 @@ with `ds-config.json → contracts.auto: false`. It splits captured from authore
   `bindings` (Figma prop → `{ attribute: "codeName" }` for a rename, `{ slot: "slotName" }` for a slot),
   plus optional `semantics`, `notes`, `version`, `description`, `propDescriptions`, and optional
   **agent guidance** — `whenNotToUse` (string), `useInstead` (a name or a list) and `neverCombineWith`
-  (a list) — so an AI knows when not to reach for a component and what pairings are invalid. Decisions
+  (a list) — so an AI knows when not to reach for a component and what pairings are invalid — and an
+  optional **decision status** (I33): `status` (`current` | `deprecated` | `experimental`), `supersededBy`
+  (the component that won), `since`, and `rationale` (the *why*), so an agent never finds two right
+  answers with no note saying which one won. Decisions
   only, no captured values, so it is safe to commit and applies in CI. Scaffolded once (empty bindings),
   then hand-owned; the generator never rewrites it.
 - **`contracts/`** (**local, gitignored**) — the generated CAPTURED views, refreshed every run:
   `tokens.json` (W3C DTCG: `$type`/`$value`, per-mode under `$extensions`, referenced by
   `{family.token}`), one **standard** `<name>.contract.json` each (`id`, `version`, `props[]` with
   `bindings.figma`/`bindings.code`, `anatomy`, `states`, `variants`, `semantics`, plus optional `whenNotToUse`/`useInstead` and
-  `relationships` — `composesWith` derived from the composition snapshot, `neverCombineWith` authored),
+  `relationships` — `composesWith` derived from the composition snapshot, `neverCombineWith` authored,
+  and a `status` block when the DS says something about the decision: authored fields win, and a Figma
+  component description that already uses a tag convention fills the gaps — `@deprecated [why]`,
+  `@experimental`, `@status <state>`, `@use-instead <Name>` (also `@superseded-by`/`@replaced-by`),
+  `@since <x>`, `@why <text>`; the convention is read, never imposed, and no tags + nothing authored = no
+  field. A deprecated **token** whose Figma description names its replacement or reason gets that
+  explanation as its DTCG `$deprecated` string (`"Use radii/button instead. too sharp"`) instead of a bare `true`),
   `contract.schema.json`, and an `llms.txt` AI index (which also lists each component's guidance and
-  composition). They carry the DS's real values, so a single
+  composition, tags a non-current component `[deprecated]`/`[experimental]`, and gives it a
+  `status: deprecated · use X instead · since 2.0 · why: …` line). They carry the DS's real values, so a single
   `.gitignore` keeps them local. When these are present, a token divergence also **cites its source**:
   the token's verified value from `tokens.json` and the file that declares it, so a fix (by a person or
   an agent) is applied against the real fact, not a guess. Absent contracts, the citation degrades to
@@ -355,7 +365,12 @@ authored decisions win). Nothing generates a surface from any of it. **Gate 14**
 `bindings` to resolve a prop rename or slot instead of guessing (a wrong binding never masks a real gap
 — it still fails); no other gate reads the contract. A malformed `bindings` entry (a typo'd key) is
 flagged in the run output, never silently ignored. Each run also reports **advisory** signals (never
-pass/fail): breaking vs additive contract changes since the last run, newly-deprecated tokens, token
+pass/fail): breaking vs additive contract changes since the last run, newly-deprecated tokens and
+components; **decision status** (I33: how many components are deprecated / experimental, and every decision
+an agent would misread — guidance (`useInstead`) or composition that still sends it to a deprecated
+component, a `supersededBy` that names no DS component or a component that is itself deprecated (the chain
+is followed to the one that won), and a deprecation with neither a replacement nor a reason; first 12 each
+run, all with `--status`); token
 references that resolve to nothing (a silent-failure risk), and tokens used where a different `$type`
 is expected; **contract completeness** (how many emitted contracts carry a description, semantics and
 whenNotToUse/useInstead guidance, naming those with no description so agent-readiness gaps are visible;

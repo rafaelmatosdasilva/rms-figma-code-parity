@@ -3037,10 +3037,31 @@ function reportFull(label, items, shown) {
         for (const c of breaks.slice(0, 20)) console.log(C.yellow(`     · ${c.msg}${c.consumers ? `  · used by ${c.consumers} component(s) — a shared-contract change` : ''}`));
       }
       if (deprecs.length) {
-        console.log(C.yellow(`⚠️  ${deprecs.length} token(s) newly deprecated:`));
+        console.log(C.yellow(`⚠️  ${deprecs.length} token(s)/component(s) newly deprecated:`));
         for (const c of deprecs.slice(0, 12)) console.log(C.yellow(`     · ${c.msg}${c.consumers ? `  · used by ${c.consumers} component(s)` : ''}`));
       }
       if (additiveN) console.log(`   +${additiveN} additive change(s)`);
+      // Decision status (I33, advisory): which components are current / deprecated / experimental,
+      // and any guidance that still sends an agent to a deprecated one (the "two right answers"
+      // case). Only shown when the DS says something. Never fails. Full list with --status.
+      {
+        const sc = r.statusCounts || {};
+        const si = r.statusIssues || [];
+        const marked = (sc.deprecated || 0) + (sc.experimental || 0);
+        if (marked || si.length) {
+          const bits = [];
+          if (sc.deprecated) bits.push(`${sc.deprecated} deprecated`);
+          if (sc.experimental) bits.push(`${sc.experimental} experimental`);
+          if (sc.current) bits.push(`${sc.current} marked current`);
+          console.log(`ℹ️  Decision status: ${bits.join(' · ') || 'no component marked'}  (llms.txt tells agents which one won and why)`);
+          if (si.length) {
+            console.log(C.yellow(`⚠️  ${si.length} decision(s) an agent would misread:`));
+            const detail = process.argv.includes('--status');
+            for (const f of (detail ? si : si.slice(0, 12))) console.log(C.yellow(`     · ${f.msg}`));
+            if (!detail && si.length > 12) console.log(C.dim('     Run with --status to list them all.'));
+          }
+        }
+      }
       if (r.undefinedRefs?.length) {
         console.log(C.yellow(`⚠️  ${r.undefinedRefs.length} undefined token reference(s) — used in a contract but defined nowhere (silent-failure risk):`));
         for (const u of r.undefinedRefs.slice(0, 20)) console.log(C.yellow(`     · ${u}`));
