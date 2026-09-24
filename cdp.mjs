@@ -75,16 +75,24 @@ export async function launchChrome(chromePath, { tmpPrefix = 'parity-chrome-' } 
   } catch (e) { kill(); throw e; }
 }
 
-// Connect to a DevTools socket. Returns { send, ws, close }.
+// Connect to a DevTools socket. Returns { send, on, ws, close }.
 // send(method, params, sessionId) resolves with the result or rejects with "<method>: <message>".
+// on(method, fn) subscribes to a protocol event; fn(params, sessionId). Returns an unsubscribe.
 export async function connectCDP(wsUrl) {
   const ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let msgId = 0;
   const pending = new Map();
+  const listeners = new Map();
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); return; }
+    if (m.method) for (const fn of listeners.get(m.method) ?? []) { try { fn(m.params, m.sessionId); } catch { /* listener error */ } }
+  };
+  const on = (method, fn) => {
+    if (!listeners.has(method)) listeners.set(method, new Set());
+    listeners.get(method).add(fn);
+    return () => listeners.get(method)?.delete(fn);
   };
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const id = ++msgId;
@@ -92,7 +100,7 @@ export async function connectCDP(wsUrl) {
     ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
   });
   const close = () => { try { ws.close(); } catch { /* already closed */ } };
-  return { send, ws, close };
+  return { send, on, ws, close };
 }
 
 // Open a page in a new target and attach a flat session with the Runtime domain enabled.

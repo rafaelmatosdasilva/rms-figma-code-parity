@@ -419,6 +419,57 @@ enhancement, read as data the any-plan capture wrote — never a plan-gated API 
 candidate multi-mode collections but never assumes (modes may be theme/density/locale, not brands). Override paths with
 `ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
 
+#### The code capture (`--capture-code`, run on its own)
+
+Figma is captured once per run into snapshots every gate reads. `rms-figma-code-parity --capture-code`
+does the same for the code: it writes `.parity-out/code.snapshot.json` (local, keep `.parity-out`
+gitignored), where every fact says **where it came from** and **how sure the reading is**. It runs on
+its own and changes no gate result; it is the foundation for gates that read code once, and for a
+future where code can be an author too.
+
+- **Two readings of every token.** Chrome (via `cdp.mjs`) opens the theme and the built pages, switches
+  into each mode the way its `cssSelector` says (media emulation, a class, a data attribute, a viewport
+  width) and reads every custom property as the browser resolved it, including tokens a page injects at
+  runtime. `css-source.mjs` reads the same CSS statically: a real block parser (`@media`, `@layer`,
+  `@supports`, nesting, strings, `;` inside `url()`), local `@import` followed, `<style>` blocks read out
+  of HTML, file and line kept, and each mode resolved by the actual cascade (importance, specificity,
+  source order), so a later `:root` that silently overrides a dark block is seen as the browser sees it.
+- **Components measured where they render.** Each component (found through `component-locator.mjs`) is
+  measured in the generated styleguide or the built pages: a plain instance first, one that carries text
+  next; a usage with extra classes or an id is copied into a neutral host without them (and the removed
+  extras are recorded); a hidden one is measured as a copy; else a probe from `structure-contract.mjs`; else
+  a bare element built from the selector, its contract children and the parts the selector map names
+  (lowest confidence, and never a height, since it has no content). The parts the contract names
+  (`fontSel`, `radiusSel`, `gapSel`, `beforeSel`) and the first element holding text (what Figma's font
+  fields describe) are measured too. Numbers are repeatable: fixed viewport and pixel ratio, fonts loaded,
+  transitions off.
+- **Every value traced.** `CSS.getMatchedStylesForNode` names the declaration that won (importance, then
+  cascade order, inline last), its `var()` token, its rule and its source `file:line` (the built page's
+  line is kept as `renderedAt`). Inherited values name the ancestor rule; values no author rule sets are
+  labelled browser defaults and are not code facts. When another rule beats the component's own base rule,
+  the override is recorded (`overrides: { baseRule, baseValue, baseAt }`).
+- **States produced for real.** From each component's `propertyMap`: `:hover`/`:focus`/`:active` forced,
+  classes, attributes, `:disabled`/`:checked` applied, a BEM modifier swapped in; a state that cannot be put
+  on the instance is looked for, on every page, on an element already in it. Anything still not produced
+  is listed with the reason.
+- **Confidence on every fact.** `verified` (the browser and the source agree on the rule that won),
+  `single-source`, `uncertain` (the readings disagree: reported as a reading problem, never as a design
+  difference), `not-read` with the reason, or `default`. Known browser rules are applied, not flagged:
+  border widths drawn in whole pixels (the declared `1.5px` stays the code's fact, `drawn: 1px` beside it),
+  a unitless line-height is a multiple of the font size, a `min-height` larger than `height` wins.
+- **Cached by content.** A hash of every input; an unchanged project reuses the snapshot instantly
+  (`--force` recaptures). `ds-config.json → codeReading: { browser: "auto" | "off", pages: [...], out }`.
+  Without Chrome every fact is `single-source` from the static reading and says why.
+
+**`--capture-code --compare`** lays the capture beside the Figma snapshots, field by field, and writes
+`.parity-out/code-vs-figma.json`. Tokens resolve exactly as Gate 3 resolves them (the trailing `/color`
+dropped, then `parity-map` `EXPLICIT` / `EXPLICIT_SIZING`, then the naming convention; `SKIP_TOKENS`,
+`NULL_TOKENS` and an explicit `null` skipped). Component fields: a height only where the code fixes one (a
+`height` rule compared as the drawn box, a `min-height` by its value), padding, gap and radius by token or
+value, font against the first text element, background as "paints or not" (Figma often paints on a child
+layer, code on the element). On a project whose parity is green this is a calibration: every difference is
+either a capture bug to fix or a real fact about the code that no gate looks at yet.
+
 #### Adoption baseline / ratchet (opt-in, gate-level)
 
 A real codebase is rarely 100% green on day one. Rather than a wall of red (ignored) or turning gates
