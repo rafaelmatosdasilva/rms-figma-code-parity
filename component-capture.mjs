@@ -370,7 +370,53 @@ export async function captureComponents(ctx) {
         if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
         if (sw.viewport) await setWidth(1280);
       }
+      await backToFirstMode();
       return perMode;
+    };
+    // The page is left in the first mode, so a rule traced next is the one the first mode's values
+    // come from (not a dark-mode rule beside light-mode values).
+    const backToFirstMode = async () => { const sw = modeSwitch(modes[0], { styleguide: !!page.generated }); if (!sw.unsupported) await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId); };
+    // Many elements at once: each mode is switched once for the whole list. Switching a mode restyles
+    // the whole page, so on a large styleguide this is most of the measuring time.
+    const measureMany = async (sels) => {
+      const perSel = sels.map(() => ({}));
+      if (!sels.length) return perSel;
+      for (const mode of modes) {
+        const sw = modeSwitch(mode, { styleguide: !!page.generated });
+        if (sw.unsupported) continue;
+        await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+        if (sw.viewport) await setWidth(sw.viewport);
+        if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
+        const vals = (await send('Runtime.evaluate', { expression: `[${sels.map(measureExpression).join(',\n')}]`, returnByValue: true }, sessionId)).result?.value ?? [];
+        vals.forEach((v, i) => { perSel[i][mode.snapshotKey] = v; });
+        if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+        if (sw.viewport) await setWidth(1280);
+      }
+      await backToFirstMode();
+      return perSel;
+    };
+    // States, batched: each mode is switched once, and every state is put on and taken off inside it.
+    // The winning rules are traced in the first mode, where the state's reported values come from.
+    const measureStates = async (jobs) => {
+      const sMode = jobs.map(() => ({})), sTrace = jobs.map(() => ({}));
+      for (const [mi, mode] of modes.entries()) {
+        const sw = modeSwitch(mode, { styleguide: !!page.generated });
+        if (sw.unsupported) continue;
+        await send('Emulation.setEmulatedMedia', { features: sw.media }, sessionId);
+        if (sw.viewport) await setWidth(sw.viewport);
+        if (sw.apply) await send('Runtime.evaluate', { expression: sw.apply }, sessionId);
+        for (const [ji, j] of jobs.entries()) {
+          try {
+            await applyRecipe(send, sessionId, j.i, j.nodeId, j.how, true);
+            sMode[ji][mode.snapshotKey] = (await send('Runtime.evaluate', { expression: measureExpression(capSel(j.i)), returnByValue: true }, sessionId)).result?.value;
+            if (mi === 0) sTrace[ji] = await trace(j.nodeId);
+          } finally { await applyRecipe(send, sessionId, j.i, j.nodeId, j.how, false).catch(() => {}); }
+        }
+        if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
+        if (sw.viewport) await setWidth(1280);
+      }
+      await backToFirstMode();
+      return { sMode, sTrace };
     };
     const setWidth = (width) => send('Emulation.setDeviceMetricsOverride', { width: Math.round(width), height: 900, deviceScaleFactor: ctx.deviceScaleFactor ?? 2, mobile: false }, sessionId);
     // The component at each Figma breakpoint width, in the first mode: the values a responsive token
@@ -392,7 +438,7 @@ export async function captureComponents(ctx) {
     };
     const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true }, sessionId)).result?.value;
     const close = async () => { off(); await send('Target.closeTarget', { targetId }).catch(() => {}); };
-    return { sessionId, where, trace, nodeOf, measureAll, measureAt, evaluate, close };
+    return { sessionId, where, trace, nodeOf, measureAll, measureMany, measureStates, measureAt, evaluate, close };
   }
 
   // One measured + traced element → facts, checked against the static reading of the winning rule.
@@ -485,23 +531,35 @@ export async function captureComponents(ctx) {
     // Only the last page builds bare elements, so a real instance anywhere always wins.
     const specs = list.map((c) => ({ selector: c.selector, probe: c.probe ?? null, allowBare: pi === pages.length - 1, children: c.children ?? [], parts: c.parts ?? {} }));
     const located = (await P.evaluate(locateExpression(specs))) ?? [];
+    // Every located instance and part, measured in each mode at once, before any state is applied.
+    const partSel = (i, kind) => `[data-parity-part~="${i}-${kind}"]`;
+    const sels = located.filter((l) => !l.error && l.how).flatMap((l) => [capSel(l.i), ...Object.keys(l.parts ?? {}).map((k) => partSel(l.i, k))]);
+    let pre = new Map();
+    const stateJobs = [];
+    try { const m = await P.measureMany(sels); pre = new Map(sels.map((sel, i) => [sel, m[i]])); } catch { /* measured one by one below */ }
     for (const loc of located) {
       const comp = list[loc.i];
       if (loc.error) { notes.push(`${comp.name}: selector ${comp.selector} is not valid CSS (${loc.error})`); pending.delete(comp.name); continue; }
       if (!loc.how) continue;
       pending.delete(comp.name);
-      try { await captureOne(P, page, comp, loc); }
+      try { await captureOne(P, page, comp, loc, pre, stateJobs); }
       catch (e) { notes.push(`${comp.name}: could not be measured (${String(e.message || e).split('\n')[0]})`); }
+    }
+    if (stateJobs.length) {
+      try {
+        const { sMode, sTrace } = await P.measureStates(stateJobs);
+        stateJobs.forEach((j, ji) => { (j.entry.states ??= {})[j.st.label] = stateEntry(j.st, j.how.describe, sMode[ji], sTrace[ji], j.props); });
+      } catch (e) { notes.push(`states on ${page.label}: could not be measured (${String(e.message || e).split('\n')[0]})`); }
     }
     await P.close();
   }
   for (const c of pending.values()) notes.push(`${c.name}: no instance found (selector ${c.selector})`);
   return pass2(notes);
 
-  async function captureOne(P, page, comp, loc) {
+  async function captureOne(P, page, comp, loc, pre = new Map(), stateJobs = []) {
     {
       const nodeId = await P.nodeOf(capSel(loc.i));
-      const perMode = await P.measureAll(capSel(loc.i));
+      const perMode = pre.get(capSel(loc.i)) ?? await P.measureAll(capSel(loc.i));
       const atBreakpoints = ctx.breakpoints?.length ? await P.measureAt(capSel(loc.i), ctx.breakpoints) : null;
       const traced = nodeId ? await P.trace(nodeId) : {};
       const base = perMode[firstMode];
@@ -524,7 +582,7 @@ export async function captureComponents(ctx) {
         const sel = `[data-parity-part~="${loc.i}-${kind}"]`;
         const pNode = await P.nodeOf(sel);
         if (!pNode) continue;
-        const pMode = await P.measureAll(sel);
+        const pMode = pre.get(sel) ?? await P.measureAll(sel);
         const pTraced = await P.trace(pNode);
         const pSel = kind === 'text' ? null : comp.parts?.[kind];
         const pStat = pSel ? staticComponentReading(staticSources, pSel, staticRootVars) : {};
@@ -534,11 +592,7 @@ export async function captureComponents(ctx) {
       for (const st of comp.states ?? []) {
         const how = stateRecipe(comp.selector, st.selector);
         if (how.error || !nodeId) { deferred.push({ comp: comp.name, st, why: how.error ?? 'instance not addressable' }); continue; }
-        await applyRecipe(send, P.sessionId, loc.i, nodeId, how, true);
-        const sMode = await P.measureAll(capSel(loc.i));
-        const sTrace = await P.trace(nodeId);
-        await applyRecipe(send, P.sessionId, loc.i, nodeId, how, false);
-        (entry.states ??= {})[st.label] = stateEntry(st, how.describe, sMode, sTrace, props);
+        stateJobs.push({ i: loc.i, nodeId, how, st, props, entry });   // measured for the whole page at once
       }
       result[comp.name] = entry;
     }

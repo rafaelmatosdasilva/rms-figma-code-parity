@@ -77,7 +77,7 @@ export function compareTokens(code, vars, cfg, maps) {
 }
 
 // A Figma colour token's CSS variable, resolved the way Gate 3 resolves it.
-function colorVarOf(token, spec, maps) {
+export function colorVarOf(token, spec, maps) {
   const dropColor = (spec.dropSegments ?? []).includes('color');
   const t = dropColor ? String(token).replace(/\/color$/, '') : token;
   return Object.prototype.hasOwnProperty.call(maps.EXPLICIT, t) ? maps.EXPLICIT[t] : tokenToVar(t, spec);

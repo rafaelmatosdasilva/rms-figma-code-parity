@@ -27,3 +27,11 @@ test('does NOT hang on a large embedded data blob (the ICC/base64 case) and stay
 test('returns nothing for a fragment with no name-ish trailing prefix', () => {
   assert.deepEqual(extractDynamicClassPrefixes(`const a = '' + x;`), []);
 });
+
+test('a large corpus is scanned in linear time (a template prefix is found from its "${", not from every position)', async () => {
+  const { extractDynamicClassPrefixes } = await import('../dynamic-class-prefixes.mjs');
+  const big = 'x'.repeat(3_000_000) + ' `badge-${t}` `a}b-${c}` ' + 'y'.repeat(1_000_000);
+  const t0 = Date.now();
+  assert.deepEqual(extractDynamicClassPrefixes(big), ['badge-', 'b-']);
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+});

@@ -399,9 +399,9 @@ function sweepExpression(roots, doFocus, stateMap) {
     const vis = (el) => { const s = getComputedStyle(el); if (s.display==='none'||s.visibility==='hidden'||+s.opacity===0) return false; const r = el.getBoundingClientRect(); return r.width>0 && r.height>0; };
     const disabled = (el) => el.disabled===true || el.getAttribute('aria-disabled')==='true';
     const seen = new Set();
-    // The design-system component an element belongs to (the innermost root around it), so a bare
-    // "button" still says where it is.
-    const ownerOf = (el) => { if (!roots) return ''; let best = null, depth = -1; for (const s of roots) { let r; try { r = el.closest(s); } catch { continue; } if (!r || r === el) continue; let d = 0; for (let n = r; n; n = n.parentElement) d++; if (d > depth) { depth = d; best = s; } } return best ? ' in ' + best : ''; };
+    // The design-system component an element belongs to (the innermost root around it, or the
+    // element itself when it is one), so a bare "button" still says where it is.
+    const ownerOf = (el) => { if (!roots) return ''; let best = null, depth = -1; for (const s of roots) { let r; try { r = el.closest(s); } catch { continue; } if (!r) continue; let d = 0; for (let n = r; n; n = n.parentElement) d++; if (d > depth) { depth = d; best = s; } } return best ? ' in ' + best : ''; };
     const textEls = [];
     for (const el of scope) {
       if (seen.has(el)) continue; seen.add(el);
@@ -1106,6 +1106,16 @@ async function main() {
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';
 
   const axe = RUN_AXE ? summarizeAxe(axeViolations) : [];
+  // Findings name the component they sit in ("… in .chip"); that component links to Figma.
+  const { figmaLinker } = await import('./figma-link.mjs');
+  const linkFor = figmaLinker(ROOT, cfg);
+  const bySel = new Map(locator.names().map((n) => [selOf(n), n]));
+  // The owner is the selector the sweep matched; a component's selector can also be written as a
+  // list or with its own class first, so the first class of each is compared too.
+  const firstClass = (sel) => String(sel ?? '').match(/\.(-?[_a-zA-Z][\w-]*)/)?.[1];
+  const byClass = new Map(locator.names().map((n) => [firstClass(selOf(n)), n]).filter(([k]) => k));
+  const ownerName = (desc) => { const m = String(desc ?? '').match(/ in (.+)$/); return m ? bySel.get(m[1]) ?? byClass.get(firstClass(m[1])) ?? null : null; };
+  const figmaOf = (desc) => { const n = ownerName(desc); return n ? linkFor(n) : null; };
   // Must-pass (a11yStrict) also counts axe's serious and critical violations, not only this check's own.
   const severeAxe = axe.filter((v) => v.impact === 'serious' || v.impact === 'critical').length;
 
@@ -1114,7 +1124,7 @@ async function main() {
     target: targets.map((t) => t.label),
     usedStyleguide: !!sg,
     themes, strict: STRICT, total, cannotMeasure: cannot.length,
-    issues: buckets.flatMap(([kind, list]) => list.map((f) => a11yFindingRecord(kind, f))),
+    issues: buckets.flatMap(([kind, list]) => list.map((f) => { const r = a11yFindingRecord(kind, f); const u = figmaOf(f.desc); if (u) r.figma = u; return r; })),
     ...(RUN_AXE ? { axe, severeAxe } : {}),
   });
   if (JSON_OUT) { try { mkdirSync(dirname(resolve(JSON_OUT)), { recursive: true }); writeFileSync(resolve(JSON_OUT), JSON.stringify(machine(), null, 2) + '\n'); } catch { /* the file is a convenience */ } }
@@ -1137,8 +1147,15 @@ async function main() {
       console.log(`     What to do:     ${g.fix}`);
       if (VERBOSE) {
         console.log(`     Where:`);
-        for (const f of list.slice(0, 100)) console.log(`       - ${a11yItemLine(kind, f)}`);
+        for (const f of list.slice(0, 100)) {
+          const inSel = String(f.desc ?? '').match(/ in (.+)$/)?.[1];
+          const where = kind === 'contrast' || kind === 'hovercontrast' ? (inSel ? ` · in ${ownerName(f.desc) ?? inSel}` : f.desc ? ` · ${f.desc}` : '') : '';
+          console.log(`       - ${a11yItemLine(kind, f)}${where}`);
+        }
         if (list.length > 100) console.log(`       - ...and ${list.length - 100} more`);
+        // The design-system components these sit in, opened in Figma.
+        const owners = [...new Set(list.map((f) => ownerName(f.desc)).filter(Boolean))];
+        for (const n of owners.slice(0, 10)) { const u = linkFor(n); if (u) console.log(`       🔗 ${n} in Figma: ${u}`); }
       }
       console.log('');
     }

@@ -1684,17 +1684,20 @@ function reportFull(label, items, shown) {
       const cssChunks = /\.(css|scss)$/.test(f)
         ? [text]
         : [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]);
-      for (const chunk of cssChunks) {
-        // Strip comments first: a class named in prose ("replaces the former .infoBadge")
-        // is documentation, not a rule, and counting it as a definition reports it dead
-        // forever. Only real selectors should register as defined.
-        const noComments = chunk.replace(/\/\*[\s\S]*?\*\//g, ' ');
+      const chunkStarts = /\.(css|scss)$/.test(f)
+        ? [0]
+        : [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m.index + m[0].indexOf(m[1]));
+      cssChunks.forEach((chunk, ci) => {
+        // Blank comments first (same length, so line numbers hold): a class named in prose
+        // ("replaces the former .infoBadge") is documentation, not a rule, and counting it as a
+        // definition reports it dead forever. Only real selectors should register as defined.
+        const noComments = chunk.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' '));
         // Selector position only: a class token that precedes a combinator, comma or
         // the opening brace of a rule. Avoids matching '.foo' inside a value or URL.
         for (const m of noComments.matchAll(/(^|[\s,>+~(])\.(-?[_a-zA-Z][\w-]*)(?=[\s,>+~){:.\[]|$)/gm)) {
-          if (!defined.has(m[2])) defined.set(m[2], rel);
+          if (!defined.has(m[2])) defined.set(m[2], `${rel}:${text.slice(0, chunkStarts[ci] + m.index + m[1].length).split('\n').length}`);
         }
-      }
+      });
       // Everything that is not a stylesheet is potential usage.
       let rest = text;
       for (const chunk of cssChunks) rest = rest.replace(chunk, ' ');
@@ -2996,8 +2999,18 @@ function reportFull(label, items, shown) {
         }
         const provenance = `${nDerived} derived from token names${nAuthored ? ` + ${nAuthored} declared` : ''}`;
         if (all.length) {
+          // Where each text token is declared in code, from the code capture when it is fresh.
+          let whereOf = () => null;
+          try {
+            const { readFreshSnapshot } = await import('./code-capture.mjs');
+            const { colorVarOf, loadParityMaps } = await import('./capture-compare.mjs');
+            const { resolveNamingSpec } = await import('./naming-convention.mjs');
+            const cap = await readFreshSnapshot(ROOT, cfg);
+            const spec = resolveNamingSpec(cfg), maps = await loadParityMaps(ROOT, cfg);
+            if (cap) whereOf = (t) => { const v = colorVarOf(t, spec, maps); return v && cap.tokens?.[v]?.declaredAt ? `${v} · ${cap.tokens[v].declaredAt}` : null; };
+          } catch { /* locations are a convenience */ }
           console.log(C.yellow(`\n⚠️  Token contrast: ${all.length} pair(s) below WCAG AA (${provenance}, per mode).`));
-          for (const f of all.slice(0, 20)) console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}`));
+          for (const f of all.slice(0, 20)) { const w = whereOf(f.text); console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}${w ? `  (${w})` : ''}`)); }
           console.log('   Advisory: pairs are derived from the token-name convention and/or declared in ds-config → a11y.tokenPairs; the engine only surfaces the math.');
         } else if (anyChecked) {
           console.log(`\nℹ️  Token contrast: all pairs meet WCAG AA across ${modes.length} mode(s) (${provenance}).`);
