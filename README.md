@@ -91,7 +91,7 @@ Every run compares the code against Figma. In plain terms:
 - **Renders correctly in a browser** — the real rendered result matches, not just the code on paper.
 - **What this audit actually checked** — shows what was and was not covered, so nothing slips through.
 
-It also runs an advisory **accessibility** pass, reported in **plain language** (what is wrong, why it matters, how to fix it). It checks colour contrast per theme, accessible names, visible focus **and** whether the focus ring is actually visible (≥ 3:1), state exposed to assistive tech, and keyboard reachability. It prefers your **styleguide** as the render target (every component in every state on one page, no dev server), and adds `--json` for an agent/CI, `--axe` for the broader WCAG rules (non-text contrast, target size, labels, landmarks…), and `--states` for hover-state contrast. It also emits the machine-readable layers for AI tools — the DTCG `tokens.json` (Facts), per-component `contract.json` (Contracts), `design-intent.json` (Intent), and an `llms.txt` index — plus optional **evals** that score an agent's generated code against the Contracts + Intent (the Evaluation layer). None of these ever block the audit.
+It also does an **accessibility** check and tells you, in plain words, anything that would make the design hard to use — text that's hard to read, a button with no label, something you can't reach with the keyboard — and how to fix it. And it writes a plain summary of your design system that AI tools can read, so they build with the real thing instead of guessing. All of this is advice; it never blocks the check.
 
 ## That's it
 
