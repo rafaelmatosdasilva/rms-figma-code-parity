@@ -20,6 +20,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadModes, buildResolver } from './mode-resolver.mjs';
+import { loadCssSources } from './css-source.mjs';
 
 const ROOT = process.cwd();
 
@@ -132,9 +133,8 @@ const NEUTRAL_MAPS = PMAP?.NEUTRAL_MAPS ?? null;
 const NEUTRAL_VAR_RE = PMAP?.NEUTRAL_VAR_RE ?? /^--neutral-(\d+)$/;
 const MODES = loadModes(cfg);
 
-const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
-  .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n')
-  .replace(/\/\*[\s\S]*?\*\//g, '');
+// The theme files as sources, local @import followed (css-source.mjs, shared with the code capture).
+const rawCss = loadCssSources(ROOT, THEME_PATHS).files;
 const { resolve, rootVars } = buildResolver(rawCss, MODES, { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE });
 function resolveScalar(varName, depth = 0) {   // sizing (single-mode) resolver - reuses :root vars
   if (depth > 8) return null;

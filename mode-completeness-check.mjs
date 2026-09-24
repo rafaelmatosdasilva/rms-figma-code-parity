@@ -26,6 +26,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { loadModes, loadCollections, allModes, buildResolver } from './mode-resolver.mjs';
+import { loadCssSources } from './css-source.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
@@ -54,9 +55,8 @@ try {
 // ── Resolver over EVERY mode across every axis/collection ──────────────────────
 const COLOR_MODES  = loadModes(cfg);
 const COLLECTIONS  = loadCollections(cfg);
-const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
-  .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n')
-  .replace(/\/\*[\s\S]*?\*\//g, '');
+// The theme files as sources, local @import followed (css-source.mjs, shared with the code capture).
+const rawCss = loadCssSources(ROOT, THEME_PATHS).files;
 const { resolve, resolveRaw } = buildResolver(rawCss, allModes(cfg), { NL, ND, NEUTRAL_MAPS, NEUTRAL_VAR_RE });
 
 // ── token → CSS var (via the shared, DS-declarable convention) ─────────────────

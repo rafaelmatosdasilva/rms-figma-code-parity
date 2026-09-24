@@ -17,6 +17,7 @@
 // Exit 2 = component-state-tokens.json missing (gate did NOT run - never a pass).
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { declaredVarNames } from './css-source.mjs';
 import { join } from 'path';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 
@@ -61,12 +62,8 @@ const hiddenOnly   = new Set(Array.isArray(parsed._hiddenOnly) ? parsed._hiddenO
 const hiddenToggle = new Set(Array.isArray(parsed._hiddenToggleable) ? parsed._hiddenToggleable : []);
 
 // ── Collect declared CSS vars ─────────────────────────────────────────────────
-const declared = new Set();
-const sources = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-for (const f of sources) {
-  const txt = readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  for (const m of txt.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);
-}
+// Every declared var in the theme and app CSS, plus stylesheets they @import (css-source.mjs).
+const declared = declaredVarNames(ROOT, [...THEME_PATHS, ...PLUGIN_CSS]);
 // Case-insensitive index + component-code usage: a state token whose var is declared
 // under a different case, or runtime-injected (token CSS loaded from a backend, absent
 // from static files) but USED in the code, DOES have a CSS variable. A token neither

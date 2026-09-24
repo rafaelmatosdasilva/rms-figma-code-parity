@@ -329,6 +329,13 @@ if (process.argv.includes('--capture-code')) {
   process.exit(r.status ?? 1);
 }
 
+// ── --check-ui <file>: check a generated UI against the component catalog (ui-check.mjs) ──
+if (process.argv.includes('--check-ui')) {
+  const passthrough = process.argv.slice(2).filter((a) => a !== '--check-ui');
+  const r = spawnSync('node', [join(SCRIPT_DIR, 'ui-check.mjs'), ...passthrough], { cwd: ROOT, stdio: 'inherit' });
+  process.exit(r.status ?? 1);
+}
+
 // ── --trend: no config needed - just show history and exit ────────────────────
 if (SHOW_TREND) {
   const histPath = join(ROOT, 'parity-history.json');
@@ -1035,7 +1042,7 @@ async function bootstrapConfig() {
   // Only gitignore secrets and auto-generated transients.
   // ds-config.json, parity-map.mjs, structure-contract.mjs contain no secrets -
   // commit them so CI can run parity without interactive setup.
-  const toAdd     = ['.env', 'bound-tokens.json', 'component-state-tokens.json', 'component-state-bindings.json', 'parity-check-result.json']
+  const toAdd     = ['.env', 'bound-tokens.json', 'component-state-tokens.json', 'component-state-bindings.json', 'parity-check-result.json', '.parity-out/']
     .filter(e => !giContent.split('\n').some(l => l.trim() === e));
   if (toAdd.length) {
     const block = '\n# rms-parity: secrets + auto-generated transients - do not commit\n' + toAdd.join('\n') + '\n';
@@ -1250,7 +1257,7 @@ function reportFull(label, items, shown) {
       return { pass: false, lines: [C.yellow('🚧 STRUCTURE cannot verify - no compiled component CSS.'), ...guidance] };
     }
     const pass = r.status === 0;
-    const summary    = out.split('\n').filter(l => /✅|❌/.test(l) && l.trim()).map(l => l.trim());
+    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  .*: Figma .*, rendered /.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n')
       .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
       .map(l => '  ' + l.trim()).slice(0, 20);
@@ -2337,6 +2344,20 @@ function reportFull(label, items, shown) {
   // audit's a11y advisory covers the same components the user scoped the run to.
   const a11yArgs = [...SCOPE_COMPONENTS.flatMap((c) => ['--component', c]), ...(process.argv.includes('--a11y') ? ['--a11y'] : [])];
 
+  // Code capture: the code side read once per run (code-capture.mjs), the mirror of the Figma
+  // capture. Cached by content, so an unchanged project reuses it at once. Gates that need facts
+  // only the capture has (the browser reading, rendered nesting) read the snapshot, and Gate [18]
+  // reports its coverage. ds-config.json → codeReading.capture: "off" skips it. Never fails the audit.
+  // Inside a git hook (pre-commit sets GIT_INDEX_FILE; pass --hook from any other hook) the capture
+  // is static only, so a commit never waits for the browser; codeReading.hookBrowser: true opts in.
+  if (cfg.codeReading?.capture !== 'off') {
+    const inHook = !!process.env.GIT_INDEX_FILE || process.argv.includes('--hook');
+    try {
+      const { captureCode } = await import('./code-capture.mjs');
+      await captureCode(ROOT, cfg, { browser: !inHook || cfg.codeReading?.hookBrowser === true });
+    } catch (e) { /* the gates keep their own readings; Gate [17] says the capture is missing */ }
+  }
+
   // Subprocess gates - all launch concurrently
   const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rReimpl, rCase, rA11y] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
@@ -2467,7 +2488,7 @@ function reportFull(label, items, shown) {
   addGate('Renders correctly in a browser  (real computed styles vs the DS spec)',
     parseGeneric(rRendered, /✅|❌|⏭/));
   addGate('What this audit actually checked  (which DS components & states are covered)',
-    parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT/));
+    parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT|CODE CAPTURE/));
 
   // ── Adoption baseline / ratchet (feature #2) ────────────────────────────────────
   // Let a real (imperfect) codebase adopt the audit without either a wall of red or turning gates
@@ -2797,7 +2818,7 @@ function reportFull(label, items, shown) {
   // authoritative index (llms.txt + contracts); this flags hand-maintained surfaces that restate a
   // CLUSTER of DS names so they can reference the generated index instead of keeping a copy. Opt-in,
   // never fails: runs only on surfaces the project declares in ds-config duplication.surfaces
-  // (generated surfaces like the showroom are NOT listed - showing every component is their job).
+  // (generated surfaces like the styleguide are NOT listed - showing every component is their job).
   {
     const dupSurfaces = (cfg.duplication?.surfaces ?? []).flat().filter(Boolean);
     if (dupSurfaces.length) {
@@ -3085,15 +3106,17 @@ function reportFull(label, items, shown) {
       console.log(C.yellow('\n⚠️  design-intent generation failed (never fails the audit): ' + e.message));
     }
     // Living style guide — heavier artifact, kept OPT-IN: only on explicit --docs
-    // (or ds-config.json → showroom.auto) AND when a showroom template is
-    // configured. It reads the design-intent just written above.
-    if ((docsForced || cfg.showroom?.auto) && cfg.showroom && cfg.showroom.template) {
+    // (or ds-config.json → styleguide.auto) AND when a styleguide template is
+    // configured. It reads the design-intent just written above. (`showroom` is the
+    // older name of the same config block and is still read.)
+    const sgCfg = cfg.styleguide ?? cfg.showroom;
+    if ((docsForced || sgCfg?.auto) && sgCfg?.template) {
       try {
-        const { generateShowroom } = await import('./showroom-gen.mjs');
-        const r = await generateShowroom(ROOT, cfg, {});
-        console.log(`🖼  Showroom → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · filled ${r.filled.join(', ')})`);
+        const { generateStyleguide } = await import('./styleguide-gen.mjs');
+        const r = await generateStyleguide(ROOT, cfg.styleguide ? cfg : { ...cfg, styleguide: sgCfg }, {});
+        console.log(`🖼  Styleguide → ${r.out.replace(ROOT + '/', '')}  (${r.components} components · filled ${r.filled.join(', ')})`);
       } catch (e) {
-        console.log(C.yellow('\n⚠️  showroom generation failed (never fails the audit): ' + e.message));
+        console.log(C.yellow('\n⚠️  styleguide generation failed (never fails the audit): ' + e.message));
       }
     }
   }

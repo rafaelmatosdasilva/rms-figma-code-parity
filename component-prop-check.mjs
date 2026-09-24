@@ -23,9 +23,10 @@
 // Exit 2 = the component-props snapshot is missing (gate did NOT run, never a pass) -
 //          it should be committed; run the audit with FIGMA_TOKEN to generate it.
 
-import { readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
-import { join, extname, basename, relative, resolve } from 'path';
+import { readFileSync, existsSync, writeFileSync } from 'fs';
+import { join, relative, resolve } from 'path';
 import { loadLocator } from './component-locator.mjs';
+import { createApiReader } from './component-api.mjs';
 
 const ROOT = process.cwd();
 
@@ -62,7 +63,6 @@ if (!Object.entries(SNAP).some(([k, v]) => k !== '_updated' && v?.properties && 
 
 const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
 const KNOWN_PROP_EXCEPTIONS = new Set(cfg.knownPropExceptions ?? []);   // "Component/prop"
-const COMPONENT_FILES = cfg.componentFiles ?? {};                        // Figma name -> file path
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 // Documented intentional renames: Figma property name -> code prop name, per component.
 // e.g. { "buttonPrimary": { "size": "buttonSize", "labelContent": "label" } }
@@ -95,148 +95,19 @@ const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 // Figma property keys carry a node-id suffix: "Show Label#958:0" -> "Show Label".
 const cleanFigmaProp = (k) => k.replace(/#[\d:]+$/, '').trim();
 const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
-const baseSelectorNorm = (name) => norm(LOCATOR.classFor(name));
 
-// ── Discover candidate source files ───────────────────────────────────────────
-const SRC_DIRS = (cfg.componentSrcDirs ?? ['src', 'components', 'app', 'lib', 'packages']).map(d => join(ROOT, d));
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs']);
-const CODE_EXT = new Set(['.vue', '.tsx', '.jsx', '.ts', '.js', '.svelte']);
-function walk(dir, out) {
-  let entries = [];
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    if (e.name.startsWith('.') && e.name !== '.') continue;
-    const p = join(dir, e.name);
-    if (e.isDirectory()) { if (!SKIP_DIR.has(e.name)) walk(p, out); }
-    else if (CODE_EXT.has(extname(e.name)) && !/\.(test|spec|stories)\./.test(e.name)) out.push(p);
-  }
-}
-const candidateFiles = [];
-for (const d of SRC_DIRS) if (existsSync(d)) walk(d, candidateFiles);
-if (!candidateFiles.length) walk(ROOT, candidateFiles);   // fallback: whole repo (minus SKIP_DIR)
-const fileText = new Map();
-const readText = (f) => { if (!fileText.has(f)) { try { fileText.set(f, readFileSync(f, 'utf8')); } catch { fileText.set(f, ''); } } return fileText.get(f); };
-
-// ── Prop extractors, keyed by extension. Each returns a Set of prop names. ─────
-// Union of everything found; over-collecting a few names is fine (only unmatched
-// Figma properties fail, and extra code props are advisory).
-function idsFromDestructure(block) {
-  const out = [];
-  for (const m of block.matchAll(/(?:^|[,{])\s*([A-Za-z_$][\w$]*)\s*(?::|=|,|\})/g)) {
-    if (m[1] && m[1] !== 'props') out.push(m[1]);
-  }
-  return out;
-}
-function extractVue(text) {
-  const names = new Set();
-  // defineProps<{ ... }>()
-  for (const m of text.matchAll(/defineProps\s*<\s*\{([\s\S]*?)\}\s*>\s*\(/g))
-    for (const p of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*[?:]/g)) names.add(p[1]);
-  // defineProps({ ... })  and options  props: { ... }
-  for (const m of text.matchAll(/(?:defineProps\s*\(|[^.\w]props\s*:)\s*\{([\s\S]*?)\}\s*[),]/g))
-    for (const p of m[1].matchAll(/(?:^|[,{])\s*([A-Za-z_$][\w$]*)\s*:/g)) names.add(p[1]);
-  // defineProps([ 'a', 'b' ])  and options  props: [ 'a', 'b' ]
-  for (const m of text.matchAll(/(?:defineProps\s*\(|[^.\w]props\s*:)\s*\[([\s\S]*?)\]/g))
-    for (const p of m[1].matchAll(/['"`]([A-Za-z_$][\w$]*)['"`]/g)) names.add(p[1]);
-  return names;
-}
-function extractReact(text) {
-  const names = new Set();
-  // interface XProps { ... }  /  type XProps = { ... }
-  for (const m of text.matchAll(/(?:interface|type)\s+\w*Props\b[^{]*\{([\s\S]*?)\}/g))
-    for (const p of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*[?:]/g)) names.add(p[1]);
-  // destructured function params: function C({ a, b }  /  const C = ({ a, b }
-  for (const m of text.matchAll(/(?:function\s+[A-Z][\w$]*|(?:const|let|var)\s+[A-Z][\w$]*\s*=)\s*(?:function\s*)?\(\s*\{([\s\S]*?)\}/g))
-    for (const id of idsFromDestructure(m[1])) names.add(id);
-  // C.propTypes = { a: ..., b: ... }
-  for (const m of text.matchAll(/\.propTypes\s*=\s*\{([\s\S]*?)\}/g))
-    for (const p of m[1].matchAll(/(?:^|[,{])\s*([A-Za-z_$][\w$]*)\s*:/g)) names.add(p[1]);
-  return names;
-}
-function extractSvelte(text) {
-  const names = new Set();
-  for (const m of text.matchAll(/export\s+let\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]);
-  return names;
-}
-const PROP_EXTRACTORS = {
-  '.vue': extractVue,
-  '.svelte': extractSvelte,
-  '.tsx': extractReact, '.jsx': extractReact, '.ts': extractReact, '.js': extractReact,
-};
-function extractProps(file) {
-  const fn = PROP_EXTRACTORS[extname(file)];
-  return fn ? fn(readText(file)) : new Set();
-}
-
-const _LIT = `(['"\`][^'"\`]*['"\`]|true|false|-?\\d+(?:\\.\\d+)?)`;
-const _unq = (s) => String(s).replace(/^['"\`]|['"\`]$/g, '').trim();
-// Best-effort: code prop -> default value (normalised prop name -> literal string).
-// Covers React default params & defaultProps, Vue withDefaults / defineProps({default}).
-function extractDefaults(text) {
-  const out = new Map();
-  const put = (name, val) => { if (name) out.set(norm(name), _unq(val)); };
-  for (const m of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*=\\s*${_LIT}`, 'g'))) put(m[1], m[2]);   // ({ a = 'x' })
-  for (const m of text.matchAll(/withDefaults\s*\([\s\S]*?,\s*\{([\s\S]*?)\}\s*\)/g))
-    for (const p of m[1].matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*:\\s*${_LIT}`, 'g'))) put(p[1], p[2]);
-  for (const m of text.matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*:\\s*\\{[^{}]*\\bdefault\\s*:\\s*${_LIT}`, 'g'))) put(m[1], m[2]);
-  for (const m of text.matchAll(/defaultProps\s*=\s*\{([\s\S]*?)\}/g))
-    for (const p of m[1].matchAll(new RegExp(`([A-Za-z_$][\\w$]*)\\s*:\\s*${_LIT}`, 'g'))) put(p[1], p[2]);
-  return out;
-}
-// Best-effort: code prop -> the set of string-literal options it accepts, from a TS
-// union type (`size?: 'small' | 'medium' | 'large'`). Used to check variant coverage.
-function extractOptions(text) {
-  const out = new Map();
-  for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:\s*((?:['"`][^'"`]*['"`]\s*\|\s*)+['"`][^'"`]*['"`])/g)) {
-    const opts = [...m[2].matchAll(/['"`]([^'"`]*)['"`]/g)].map(x => norm(x[1]));
-    if (opts.length >= 2) out.set(norm(m[1]), new Set(opts));
-  }
-  return out;
-}
-// #4: a Figma INSTANCE_SWAP property is a SLOT, not a value prop - it maps to a code
-// slot (Vue <slot>, React children/ReactNode). Best-effort detection of the code's slots.
-function extractSlots(text) {
-  const named = new Set();
-  let hasDefault = false;
-  for (const m of text.matchAll(/<slot\b[^>]*\bname\s*=\s*['"`]([\w-]+)['"`]/g)) named.add(norm(m[1]));  // Vue named
-  if (/<slot(\s|\/|>)/.test(text) && !/<slot\b[^>]*\bname\s*=/.test(text)) hasDefault = true;            // Vue default
-  for (const m of text.matchAll(/defineSlots\s*<\s*\{([\s\S]*?)\}/g))
-    for (const p of m[1].matchAll(/([A-Za-z_$][\w$]*)\s*[?:]/g)) named.add(norm(p[1]));                  // Vue defineSlots
-  if (/\bchildren\b/.test(text)) hasDefault = true;                                                      // React children
-  for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*\??\s*:\s*React\.?ReactNode/g)) named.add(norm(m[1])); // React ReactNode props as slots
-  return { named, hasDefault };
-}
-
-// ── Resolve a Figma component name to its code file ───────────────────────────
-// 1) explicit componentFiles map  2) base selector present (Vue <style>)
-// 3) a declared component name matches  4) the file basename matches
-function declaredNames(text) {
-  const out = [];
-  for (const m of text.matchAll(/\bname\s*:\s*['"`]([A-Za-z0-9_-]+)['"`]/g)) out.push(m[1]);          // Vue options / defineOptions
-  for (const m of text.matchAll(/(?:function|class)\s+([A-Z][\w$]*)/g)) out.push(m[1]);                // React fn/class
-  for (const m of text.matchAll(/(?:const|let|var)\s+([A-Z][\w$]*)\s*=\s*(?:styled|React|forwardRef|memo|\()/g)) out.push(m[1]);
-  return out;
-}
-function resolveFile(figmaName) {
-  if (COMPONENT_FILES[figmaName]) {
-    const p = join(ROOT, COMPONENT_FILES[figmaName]);
-    return existsSync(p) ? { file: p, how: 'componentFiles' } : { file: null, how: 'componentFiles(missing)' };
-  }
-  const fig = norm(figmaName);
-  const sel = baseSelectorNorm(figmaName);
-  const bySelector = [], byName = [], byBasename = [];
-  for (const f of candidateFiles) {
-    const t = readText(f);
-    const tn = norm(t);
-    if (sel.length >= 4 && tn.includes(sel)) bySelector.push(f);
-    if (declaredNames(t).some(n => norm(n) === fig)) byName.push(f);
-    if (norm(basename(f, extname(f))) === fig) byBasename.push(f);
-  }
-  const pick = bySelector.length ? bySelector : byName.length ? byName : byBasename;
-  if (pick.length === 1) return { file: pick[0], how: bySelector.length ? 'selector' : byName.length ? 'name' : 'basename' };
-  if (pick.length > 1)  return { file: null, how: `ambiguous (${pick.length} files)` };
-  return { file: null, how: 'not found' };
-}
+// ── Read the code: which file is each component, and its props ────────────────
+// component-api.mjs is the one reader (shared with the code capture): standard files the project
+// already produces (Custom Elements Manifest, docgen JSON, Storybook index, Code Connect), the
+// project's own TypeScript compiler when installed, then text patterns. Each prop says how sure
+// the reading is; when two sources disagree the value is reported as unreadable, never as wrong.
+let FIGMA_NODE_IDS = {};
+try {
+  const st = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {};
+  FIGMA_NODE_IDS = Object.fromEntries(Object.entries(st).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
+} catch { /* optional: joins Code Connect files by node id */ }
+const API = createApiReader(ROOT, cfg, { classFor: LOCATOR.classFor, nodeIds: FIGMA_NODE_IDS });
+const resolveFile = (figmaName) => API.fileFor(figmaName);
 
 // ── Compare Figma properties to code props, per component ─────────────────────
 // Deterministic: a Figma property matches a code prop only by EXACT name (normalised)
@@ -343,12 +214,14 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
     for (const fp of figNames) rows.push({ component: figmaName, figmaProp: fp, figmaValue: figmaValueOf(figDefs.get(fp)), codeProp: 'not in code', codeValue: `(no code file: ${how})`, status: 'missing' });
     continue;
   }
-  const text = readText(file);
-  const codeNorm     = new Map([...extractProps(file)].map(p => [norm(p), p]));   // normName -> original
-  const codeDefaults = extractDefaults(text);                                     // normName -> default literal
-  const codeOptions  = extractOptions(text);                                      // normName -> Set(option norms)
+  const api = API.apiFor(figmaName);
+  const codeNorm     = new Map(Object.keys(api.props).map(p => [norm(p), p]));   // normName -> original
+  const codeDefaults = new Map(Object.entries(api.props).filter(([, f]) => f.default != null).map(([p, f]) => [norm(p), f.default]));
+  const codeOptions  = new Map(Object.entries(api.props).filter(([, f]) => Array.isArray(f.options)).map(([p, f]) => [norm(p), new Set(f.options.map(norm))]));
+  const unsure       = new Map(Object.entries(api.props).filter(([, f]) => f.confidence === 'uncertain').map(([p, f]) => [norm(p), f.readings]));
   const cbind    = contractBindings(figmaName);                            // authored Figma->code bindings (the contract hub)
-  const aliases  = { ...(PROP_ALIASES[figmaName] ?? {}), ...cbind.attr };  // a contract-declared rename wins over inference
+  // A Code Connect mapping is pairing evidence; a documented alias or a contract binding wins over it.
+  const aliases  = { ...(api.codeConnect ?? {}), ...(PROP_ALIASES[figmaName] ?? {}), ...cbind.attr };
   const rel = relative(ROOT, file);
 
   // #1/#3: for a matched prop, compare Figma's default value, variant options and type
@@ -358,6 +231,11 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
   const checkValues = (fp, def, codeName) => {
     if (KNOWN_PROP_EXCEPTIONS.has(`${figmaName}/${fp}`)) return { status: 'match', codeValue: '(exempt)' };
     const cn = norm(codeName);
+    if (unsure.has(cn)) {
+      const r = Object.entries(unsure.get(cn)).map(([src, v]) => `${src} ${JSON.stringify(v)}`).join(' · ');
+      VALUE_INFO.push(`${figmaName}/${fp}: the code sources disagree on "${codeName}" (${r}) - not compared  (${rel})`);
+      return { status: 'match', codeValue: '(readings disagree)' };
+    }
     const figDefault = def?.defaultValue;
     const codeDefault = codeDefaults.get(cn);
     if (figDefault != null && figDefault !== '' && codeDefault != null && norm(figDefault) !== norm(codeDefault)) {
@@ -385,7 +263,7 @@ for (const [figmaName, entry] of Object.entries(SNAP)) {
     return { status: 'match', codeValue: codeDefault != null ? `default ${codeDefault}` : '(present)' };
   };
 
-  const codeSlots = extractSlots(text);
+  const codeSlots = { named: new Set(api.slots.named), hasDefault: api.slots.default };
   const matchedCode = new Set();
   const missingHere = [];
   for (const fp of figNames) {

@@ -12,6 +12,7 @@
 // fill structure and default stroke, from figma-structure.snapshot.json.
 // A code fact the capture could not read reliably is "not comparable", never a difference.
 
+import { pathHash } from './icon-source.mjs';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -135,7 +136,10 @@ export function compareComponents(code, structure, vars, cfg, maps) {
     if (f.fontWeightVar && ty(f.fontWeightVar)) push(name, 'font weight', f.fontWeightVar, fp?.fontWeight, { figmaValue: ty(f.fontWeightVar).weight });
     // Background: does the component paint one? Figma often draws it on a child layer and code on the
     // element itself; both paint. Only "paints" vs "does not paint" is a difference.
-    if (f.fillStructure && !low) {
+    // A colour set in the element's own style attribute is page content (a swatch showing its colour),
+    // not the component's design, so it is not compared.
+    const inlineFill = /\(style attribute\)/.test(String(c.props?.backgroundColor?.rule ?? ''));
+    if (f.fillStructure && !low && !inlineFill) {
       const paints = (x) => x === 'direct' || x === 'before';
       if (paints(f.fillStructure) === paints(c.fill)) out.match++;
       else out.differ.push({ component: name, field: 'background', figma: paints(f.fillStructure) ? 'paints a background' : 'no background', code: paints(c.fill) ? 'paints a background' : 'no background', rule: c.props?.backgroundColor?.rule, at: c.props?.backgroundColor?.at });
@@ -144,11 +148,59 @@ export function compareComponents(code, structure, vars, cfg, maps) {
   return out;
 }
 
+// Icons: each Figma icon (figma-icons.snapshot.json, keyed by sprite id) against the code's symbol of
+// the same id, by viewBox and path data. Code-only symbols are counted (they may be app icons).
+export function compareIcons(code, figmaIcons) {
+  const out = { match: 0, differ: [], missingInCode: [], codeOnly: 0 };
+  const icons = code.icons ?? {};
+  for (const [id, f] of Object.entries(figmaIcons ?? {})) {
+    if (id.startsWith('_') || !f || typeof f !== 'object') continue;
+    const c = icons[id];
+    if (!c) { out.missingInCode.push(id); continue; }
+    const diffs = [];
+    if (f.viewBox && c.viewBox && f.viewBox !== c.viewBox) diffs.push(`viewBox Figma ${f.viewBox}, code ${c.viewBox}`);
+    if (Array.isArray(f.paths) && pathHash(f.paths) !== c.pathHash) diffs.push(`path data differs (Figma ${f.paths.length} path(s), code ${c.paths})`);
+    if (diffs.length) out.differ.push({ id, what: diffs.join(' · '), at: c.definedAt?.[0] });
+    else out.match++;
+  }
+  out.codeOnly = Object.keys(icons).filter((id) => !(id in (figmaIcons ?? {}))).length;
+  return out;
+}
+
+// Nesting: the sub-components Figma nests in each component (component-composition.snapshot.json)
+// against what the code nests (rendered page or source). A parent never seen in the code is not
+// comparable; a child Figma nests that the code never shows inside it is a difference.
+export function compareNesting(code, composition) {
+  const out = { match: 0, differ: [], notComparable: [], codeOnly: [] };
+  const nest = code.nesting ?? {};
+  const skip = (n) => /^icon[-/ ]/i.test(n) || String(n).startsWith('.');
+  for (const [parent, list] of Object.entries(composition ?? {})) {
+    if (parent.startsWith('_') || !Array.isArray(list)) continue;
+    const kids = list.filter((k) => k !== parent && !skip(k));
+    if (!kids.length) continue;
+    const seen = nest[parent];
+    if (!seen) { out.notComparable.push({ parent, why: 'not seen in the code' }); continue; }
+    for (const k of kids) {
+      if (seen.contains?.[k]) out.match++;
+      else out.differ.push({ parent, child: k, figma: 'nests it', code: seen.instancesSeen ? `not inside any of ${seen.instancesSeen} rendered instance(s)` : 'not in its source' });
+    }
+    for (const k of Object.keys(seen.contains ?? {})) if (!kids.includes(k) && !skip(k)) out.codeOnly.push({ parent, child: k });
+  }
+  return out;
+}
+
 export async function compareCapture(ROOT, cfg, code, { readJSON }) {
   const vars = readJSON(resolve(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json')) ?? {};
   const structure = readJSON(resolve(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'))?.components ?? {};
+  const figmaIcons = cfg.paths?.snapshotIcons ? readJSON(resolve(ROOT, cfg.paths.snapshotIcons)) : null;
+  const composition = readJSON(resolve(ROOT, 'component-composition.snapshot.json'));
   const maps = await loadParityMaps(ROOT, cfg);
-  return { tokens: compareTokens(code, vars, cfg, maps), components: compareComponents(code, structure, vars, cfg, maps) };
+  return {
+    tokens: compareTokens(code, vars, cfg, maps),
+    components: compareComponents(code, structure, vars, cfg, maps),
+    ...(figmaIcons ? { icons: compareIcons(code, figmaIcons) } : {}),
+    ...(composition ? { nesting: compareNesting(code, composition) } : {}),
+  };
 }
 
 export function compareReport(r) {
@@ -158,6 +210,11 @@ export function compareReport(r) {
   lines.push(`  components  ${c.match} match · ${c.differ.length} differ · ${c.notComparable.length} not comparable · ${c.notCaptured.length} not captured`);
   for (const d of t.differ.slice(0, 20)) lines.push(`    ✗ token ${d.token} (${d.mode}) → ${d.cssVar}: Figma ${d.figma}, code ${d.code}${d.at ? `  (${d.at})` : ''}`);
   for (const d of t.missingInCode.slice(0, 20)) lines.push(`    ✗ token ${d.token} (${d.mode}) → ${d.cssVar}: not in the code`);
+  if (r.icons) lines.push(`  icons       ${r.icons.match} match · ${r.icons.differ.length} differ · ${r.icons.missingInCode.length} missing in code · ${r.icons.codeOnly} only in code`);
+  if (r.nesting) lines.push(`  nesting     ${r.nesting.match} match · ${r.nesting.differ.length} differ · ${r.nesting.notComparable.length} not comparable · ${r.nesting.codeOnly.length} only in code`);
   for (const d of c.differ.slice(0, 30)) lines.push(`    ✗ ${d.component} ${d.field}: Figma ${d.figma}${d.figmaValue ? ` (${d.figmaValue})` : ''}, code ${d.code}${d.codeVar ? ` via ${d.codeVar}` : ''}${d.at ? `  (${d.rule} · ${d.at})` : ''}`);
+  for (const d of (r.icons?.differ ?? []).slice(0, 20)) lines.push(`    ✗ icon #${d.id}: ${d.what}${d.at ? `  (${d.at})` : ''}`);
+  for (const id of (r.icons?.missingInCode ?? []).slice(0, 20)) lines.push(`    ✗ icon #${id}: not in the code`);
+  for (const d of (r.nesting?.differ ?? []).slice(0, 20)) lines.push(`    ✗ ${d.parent} → ${d.child}: Figma nests it, code ${d.code}`);
   return lines.join('\n');
 }

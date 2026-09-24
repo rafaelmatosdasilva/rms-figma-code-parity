@@ -49,6 +49,21 @@ test('[bugfix base-root] a dark @media block above the base :root does not poiso
     'theme.css': '@media (prefers-color-scheme: dark) { :root { --brand: #000000; } }\n:root { --brand: #ffffff; }',
     'figma-vars.snapshot.json': { color: { light: { 'brand/color': '#ffffff' }, dark: { 'brand/color': '#000000' } } },
   });
+  // The base is read from :root (no light failure). In dark mode the LATER :root wins the cascade,
+  // so a browser really shows #ffffff there: that is a real failure, and it is reported.
+  assert.doesNotMatch(out, /\[color\/Light\]/, out);
+  assert.match(out, /\[color\/Dark\] brand → --brand[\s\S]*Figma: #000000\s+CSS: #ffffff/, out);
+  assert.equal(code, 1, out);
+});
+
+test('the theme is read like the browser: every :root block and @import count', () => {
+  const { code, out } = runGate(GATE, {
+    'ds-config.json': { paths, figma: { colorCollection: 'Color' } },
+    'parity-map.mjs': EMPTY_PARITY_MAP,
+    'theme.css': '@import "brand.css";\n:root { --a: #111111; }\n:root { --b: #222222; }\n@media (prefers-color-scheme: dark) { :root { --a: #eeeeee; --b: #dddddd; --c: #cccccc; } }',
+    'brand.css': ':root { --c: #333333; }',
+    'figma-vars.snapshot.json': { color: { light: { 'a/color': '#111111', 'b/color': '#222222', 'c/color': '#333333' }, dark: { 'a/color': '#eeeeee', 'b/color': '#dddddd', 'c/color': '#cccccc' } } },
+  });
   assert.equal(code, 0, out);
 });
 
@@ -66,4 +81,19 @@ test('[bugfix media-mode] a generic media: color mode resolves its OWN override,
   // compared Wide against the BASE #ffffff → mismatch vs Figma #000000 → exit 1. The fix reads the
   // @media override (#000000) → match → exit 0.
   assert.equal(code, 0, out);
+});
+
+test('a token block under an ancestor of :root is still read, and listed as never applied by a browser', () => {
+  const { code, out } = runGate(GATE, {
+    'ds-config.json': { paths, figma: { colorCollection: 'Color', modes: [
+      { name: 'Light', snapshotKey: 'light', cssSelector: 'root' },
+      { name: 'Contrast', snapshotKey: 'contrast', cssSelector: 'data:theme=contrast' },
+    ] } },
+    'parity-map.mjs': EMPTY_PARITY_MAP,
+    'theme.css': ':root { --brand: #ffffff; }\n[data-theme="contrast"] :root { --brand: #000000; }',
+    'figma-vars.snapshot.json': { color: { light: { 'brand/color': '#ffffff' }, contrast: { 'brand/color': '#000000' } } },
+  });
+  assert.equal(code, 0, out);
+  assert.match(out, /NEVER APPLIED 1/);
+  assert.match(out, /theme\.css:2\s+\[data-theme="contrast"\] :root\s+→ write :root\[data-theme="contrast"\]/);
 });

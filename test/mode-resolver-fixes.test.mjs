@@ -75,5 +75,15 @@ test('[bugfix base-root] a preceding @media block does not poison the base :root
   const css = '@media (prefers-color-scheme: dark) { :root { --fg: #000000; } } :root { --fg: #ffffff; }';
   const r = buildResolver(css, TWO_MODES, {});
   assert.equal(r.resolve('--fg', 'light'), '#ffffff');   // old: matched the @media :root first → #000000
-  assert.equal(r.resolve('--fg', 'dark'),  '#000000');
+  // In dark mode the LATER :root wins the cascade, so a browser shows #ffffff there too.
+  assert.equal(r.resolve('--fg', 'dark'),  '#ffffff');
+  // Written the usual way round, the dark block overrides the base.
+  const ok = buildResolver(':root { --fg: #ffffff; } @media (prefers-color-scheme: dark) { :root { --fg: #000000; } }', TWO_MODES, {});
+  assert.equal(ok.resolve('--fg', 'dark'), '#000000');
+});
+
+test('the resolver follows local @import when given file sources, and reads every :root block', () => {
+  const r = buildResolver([{ file: 'a.css', text: ':root { --a: var(--b); }' }, { file: 'b.css', text: ':root { --b: #123456; }' }], TWO_MODES, {});
+  assert.equal(r.resolve('--a', 'light'), '#123456');
+  assert.equal(buildResolver(':root { --x: 1px; } :root { --y: 2px; }', TWO_MODES, {}).resolveRaw('--y', 'light'), '2px');
 });

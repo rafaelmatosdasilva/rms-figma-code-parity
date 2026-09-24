@@ -14,6 +14,7 @@
 // Exit 0 = all CSS vars traceable.  Exit 1 = uninvented vars found.
 
 import { readFileSync, existsSync } from 'fs';
+import { declaredVarNames } from './css-source.mjs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
 import { resolveNamingSpec, tokenToVar, varToToken } from './naming-convention.mjs';
@@ -87,15 +88,11 @@ const rawCss = [...THEME_PATHS, ...PLUGIN_CSS]
   .map(readCssContent)
   .join('\n')
   .replace(/\/\*[\s\S]*?\*\//g, '');
-const declared = new Set();
-for (const m of rawCss.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) declared.add('--' + m[1]);
+// Every declared var, plus stylesheets the theme and app CSS @import (css-source.mjs).
+const declared = declaredVarNames(ROOT, [...THEME_PATHS, ...PLUGIN_CSS], { stripScripts: true });
 
 // ── Theme vars (for plugin override detection) ────────────────────────────────
-const themeRaw = THEME_PATHS
-  .filter(p => existsSync(join(ROOT, p))).map(readCssContent)
-  .join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
-const themeVarsDeclared = new Set();
-for (const m of themeRaw.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) themeVarsDeclared.add('--' + m[1]);
+const themeVarsDeclared = declaredVarNames(ROOT, THEME_PATHS, { stripScripts: true });
 
 // ── Plugin CSS override detection ─────────────────────────────────────────────
 // Any plugin :root block that re-declares a theme var will override the DS token

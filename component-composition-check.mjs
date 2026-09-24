@@ -17,9 +17,11 @@
 // Exit 1 = a Figma-nested sub-component is missing from the code.
 // Exit 2 = the composition snapshot is missing (gate did NOT run; capture via the plugin).
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
-import { join, extname, basename, relative } from 'path';
+import { readFileSync, existsSync } from 'fs';
+import { join, relative } from 'path';
 import { loadLocator } from './component-locator.mjs';
+import { componentSourceFiles, textReader, resolveComponentFile, usedComponents as usedIn } from './component-source.mjs';
+import { readFreshSnapshot } from './code-capture.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -40,11 +42,9 @@ const SNAP = JSON.parse(readFileSync(join(ROOT, SNAP_PATH), 'utf8'));
 
 const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
 const KNOWN_EXCEPTIONS    = new Set(cfg.knownCompositionExceptions ?? []);   // "Parent/Child"
-const COMPONENT_FILES     = cfg.componentFiles ?? {};
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 
 const norm    = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-const esc     = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // safe to interpolate into a RegExp
 const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
 const selNorm = (name) => norm(LOCATOR.classFor(name));
 
@@ -54,58 +54,16 @@ for (const list of Object.values(SNAP)) if (Array.isArray(list)) for (const n of
 for (const n of Object.keys(COMPONENT_SELECTORS)) universe.add(n);
 const uni = [...universe].map(n => ({ name: n, nameNorm: norm(n), selNorm: selNorm(n) }));
 
-// ── Discover source files ─────────────────────────────────────────────────────
-const SRC_DIRS = (cfg.componentSrcDirs ?? ['src', 'components', 'app', 'lib', 'packages']).map(d => join(ROOT, d));
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs']);
-const CODE_EXT = new Set(['.vue', '.tsx', '.jsx', '.ts', '.js', '.svelte']);
-function walk(dir, out) {
-  let entries = [];
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    if (e.name.startsWith('.') && e.name !== '.') continue;
-    const p = join(dir, e.name);
-    if (e.isDirectory()) { if (!SKIP_DIR.has(e.name)) walk(p, out); }
-    else if (CODE_EXT.has(extname(e.name)) && !/\.(test|spec|stories)\./.test(e.name)) out.push(p);
-  }
-}
-const files = [];
-for (const d of SRC_DIRS) if (existsSync(d)) walk(d, files);
-if (!files.length) walk(ROOT, files);
-const _txt = new Map();
-const read = (f) => { if (!_txt.has(f)) { try { _txt.set(f, readFileSync(f, 'utf8')); } catch { _txt.set(f, ''); } } return _txt.get(f); };
-
-// ── Resolve a component to its code file (explicit map, base selector, name, basename) ──
-function declaredNames(text) {
-  const out = [];
-  for (const m of text.matchAll(/\bname\s*:\s*['"`]([A-Za-z0-9_-]+)['"`]/g)) out.push(m[1]);
-  for (const m of text.matchAll(/(?:function|class)\s+([A-Z][\w$]*)/g)) out.push(m[1]);
-  return out;
-}
-function resolveFile(name) {
-  if (COMPONENT_FILES[name]) { const p = join(ROOT, COMPONENT_FILES[name]); return existsSync(p) ? p : null; }
-  const nn = norm(name), sn = selNorm(name);
-  const bySel = [], byName = [], byBase = [];
-  for (const f of files) {
-    const t = read(f), tn = norm(t);
-    if (sn.length >= 4 && tn.includes(sn)) bySel.push(f);
-    if (declaredNames(t).some(d => norm(d) === nn)) byName.push(f);
-    if (norm(basename(f, extname(f))) === nn) byBase.push(f);
-  }
-  const pick = bySel.length ? bySel : byName.length ? byName : byBase;
-  return pick.length === 1 ? pick[0] : null;
-}
-
-// Which DS components does a file use? A sub-component is "used" when its base selector,
-// or its name as a JSX tag / import, appears in the file.
-function usedComponents(file) {
-  const t = read(file), tn = norm(t);
-  const used = new Set();
-  for (const u of uni) {
-    if (u.selNorm.length >= 4 && tn.includes(u.selNorm)) { used.add(u.name); continue; }
-    if (new RegExp(`<${esc(u.name)}\\b|\\b${esc(u.name)}\\b\\s*(?:from|,|})`).test(t)) used.add(u.name);   // JSX tag / import
-  }
-  return used;
-}
+// ── Read the code (component-source.mjs, shared with the code capture) ────────
+const files = componentSourceFiles(ROOT, cfg);
+const read = textReader();
+const resolveFile = (name) => resolveComponentFile(name, { ROOT, cfg, files, read, classFor: LOCATOR.classFor }).file;
+// Which DS components does a file use? Its base selector, or its name as a JSX tag / import.
+const usedComponents = (file) => usedIn(read(file), uni);
+// Nesting seen in the rendered page (code capture), so markup built by JavaScript counts too.
+// Only a snapshot that still matches the code is used.
+const CAPTURE = await readFreshSnapshot(ROOT, cfg).catch(() => null);
+const renderedChildren = (name) => new Set(Object.entries(CAPTURE?.nesting?.[name]?.contains ?? {}).filter(([, c]) => c.renderedIn?.length).map(([n]) => n));
 
 // ── HTML mode (frameworkComponents:false, opt-in) ─────────────────────────────
 // A plain-HTML/CSS DS consumer has all its components as classes in the plugin markup + theme
@@ -153,9 +111,11 @@ for (const [name, list] of Object.entries(SNAP)) {
   if (!nested.length) continue;
 
   const file = resolveFile(name);
-  if (!file) { NOFILE.push(`${name}: Figma nests [${nested.join(', ')}] but no code component file found - set ds-config.json → componentFiles["${name}"]`); continue; }
-  const used = usedComponents(file);
-  const rel = relative(ROOT, file);
+  const rendered = renderedChildren(name);
+  if (!file && !rendered.size) { NOFILE.push(`${name}: Figma nests [${nested.join(', ')}] but no code component file found - set ds-config.json → componentFiles["${name}"]`); continue; }
+  const used = file ? usedComponents(file) : new Set();
+  for (const r of rendered) used.add(r);
+  const rel = file ? relative(ROOT, file) : 'rendered page';
 
   for (const child of nested) {
     if (KNOWN_EXCEPTIONS.has(`${name}/${child}`)) { OK.push(`${name} → ${child} (exempt)`); continue; }

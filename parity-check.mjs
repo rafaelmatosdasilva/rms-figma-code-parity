@@ -22,7 +22,8 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadTokensDict, tokenSource } from './fix-hint.mjs';
-import { parseVarBlock, stripAtRules } from './mode-resolver.mjs';   // single source of truth (identical copies removed)
+import { loadCssSources, rootTokens, blankComments, neverAppliedRootSelectors } from './css-source.mjs';
+import { readFreshSnapshot } from './code-capture.mjs';   // the cascade-aware theme reader (shared with the code capture)
 import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';   // shared Figma↔code naming convention
 
 const ROOT     = process.cwd();
@@ -51,8 +52,8 @@ const SNAPSHOT_PATH = cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json';
 //     "root"                - :root { }
 //     "dark-media"          - @media (prefers-color-scheme: dark) { :root { } }
 //     "high-contrast-media" - @media (prefers-contrast: more) { :root { } }
-//     "class:<name>"        - .<name> :root { } or :root.<name> { }
-//     "data:<attr>=<val>"   - [data-theme="dark"] :root { }
+//     "class:<name>"        - :root.<name> { }   (the older ".<name> :root { }" is still read, and flagged)
+//     "data:<attr>=<val>"   - :root[data-theme="dark"] { }   (the older "[data-theme=…] :root" likewise)
 //
 // Legacy: cfg.figma.lightMode / cfg.figma.darkMode → synthesized to two-mode array
 const figmaCfg = cfg.figma ?? {};
@@ -129,53 +130,20 @@ const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
   .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n');
 const css = rawCss.replace(/\/\*[\s\S]*?\*\//g, '');
 
-// parseVarBlock + stripAtRules are imported from mode-resolver.mjs (identical copies removed - one home).
-function parseSelectorVars(css, selector) {
-  let m;
-  if (selector === 'root') {
-    m = stripAtRules(css).match(/:root\s*\{([\s\S]*?)\}/);
-  } else if (selector === 'dark-media') {
-    m = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
-  } else if (selector === 'high-contrast-media') {
-    m = css.match(/@media\s*\(prefers-contrast:\s*(?:more|forced)\)\s*\{[\s\S]*?:root\s*\{([\s\S]*?)\}\s*\}/);
-  } else if (selector.startsWith('media:')) {
-    // Generic @media mode, e.g. 'media:(min-width: 768px)'. Match the condition with optional
-    // whitespace between characters so it matches whether the CSS writes `@media (min-width:768px)`
-    // or `@media (min-width: 768px)`. Without this branch a media-selector mode fell through to
-    // `new RegExp(selector)` below, matched nothing, and every token in that mode was silently
-    // compared against the BASE values. Mirrors mode-resolver.mjs so both parsers agree.
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const condRe = selector.slice(6).trim().replace(/\s+/g, '').split('').map(esc).join('\\s*');
-    m = css.match(new RegExp('@media\\s*' + condRe + '\\s*\\{[\\s\\S]*?:root\\s*\\{([\\s\\S]*?)\\}', 'i'));
-  } else if (selector.startsWith('class:')) {
-    const cls = selector.slice(6).trim();
-    m = css.match(new RegExp(`\\.${cls}\\s+:root\\s*\\{([\\s\\S]*?)\\}|:root\\.${cls}\\s*\\{([\\s\\S]*?)\\}`));
-  } else if (selector.startsWith('data:')) {
-    const parts = selector.slice(5).split('=');
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const attr = esc(parts[0]);
-    const val  = esc(parts.slice(1).join('=').replace(/^['"]|['"]$/g, ''));
-    // Accept the attribute with or without a `data-` prefix, so `data:theme=dark` matches
-    // whether the CSS writes `[data-theme="dark"]` or `[theme="dark"]` - and stays consistent
-    // with mode-resolver.mjs, which the mode gates use.
-    const A = `(?:data-)?${attr}`;
-    m = css.match(new RegExp(`\\[${A}=['"]?${val}['"]?\\]\\s*:root\\s*\\{([\\s\\S]*?)\\}|:root\\[${A}=['"]?${val}['"]?\\]\\s*\\{([\\s\\S]*?)\\}`));
-  } else {
-    try { m = css.match(new RegExp(selector)); } catch { return {}; }
-  }
-  return m ? parseVarBlock(m[1] ?? m[2] ?? '') : {};
-}
+// ── Token values per mode ─────────────────────────────────────────────────────
+// css-source.mjs reads the theme the way the browser applies it: every :root block (not only the
+// first), @import, and each mode resolved by the real cascade (importance, specificity, source
+// order). It is the same reading the code capture uses, so this gate and code.snapshot.json agree.
+// modeVars[i] = the declared value of every token in mode i (a mode's value falls back to the base
+// where the mode does not override it, exactly as the browser does).
+const TOKEN_SOURCES = loadCssSources(ROOT, THEME_PATHS).files;
+const declaredByMode = MODES.map(m => rootTokens(TOKEN_SOURCES, m));
+const modeVars = declaredByMode.map(d => Object.fromEntries([...d].map(([k, v]) => [k, v.value])));
 
-// modeVars[0] = base (:root), modeVars[i] = override vars for mode i
-const modeVars = MODES.map(m => parseSelectorVars(css, m.cssSelector));
-
-// ── Line-number index (for fix hints) ─────────────────────────────────────────
-const rawLines = rawCss.split('\n');
-const varLineMap = {};
-for (let i = 0; i < rawLines.length; i++) {
-  const m = rawLines[i].match(/^\s*(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/);
-  if (m) varLineMap[m[1]] = i + 1; // 1-indexed; keeps last occurrence
-}
+// ── Where each token is declared (for fix hints) ──────────────────────────────
+// The winning declaration's file and line, base mode first, then any mode that declares it.
+const varLineMap = {}, varFileMap = {};
+for (const d of declaredByMode) for (const [k, v] of d) if (!(k in varLineMap)) { varLineMap[k] = v.line; varFileMap[k] = v.file; }
 
 // ── Declared-var index: locate a token's CSS var even under a different case or
 // scope, WITHOUT weakening detection. A token's kebab var may be declared with a
@@ -191,7 +159,7 @@ for (let i = 0; i < rawLines.length; i++) {
 // locateVar takes the mode index; sizing/typography/strings call it with the default 0.
 const modeByLower = modeVars.map(mv => new Map(Object.keys(mv).map(n => [n.toLowerCase(), n])));
 const allDeclaredLower = new Set();
-for (const mm of css.matchAll(/(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) allDeclaredLower.add(mm[1].toLowerCase());
+for (const src of [css, ...TOKEN_SOURCES.map(f => blankComments(f.text))]) for (const mm of src.matchAll(/(--[a-zA-Z][a-zA-Z0-9-]*)\s*:/g)) allDeclaredLower.add(mm[1].toLowerCase());
 function locateVar(expected, modeIdx = 0) {
   if (modeVars[0][expected]) return { name: expected, root: true };                            // exact base
   if (modeIdx > 0 && modeVars[modeIdx]?.[expected]) return { name: expected, root: true };     // exact override
@@ -322,7 +290,7 @@ function colorFixHint(cssVar, figmaHex, modeIdx) {
   const line    = varLineMap[cssVar];
   const suggest = hexToNeutralVar(figmaHex, modeIdx);
   const current = (modeIdx > 0 ? modeVars[modeIdx]?.[cssVar] : undefined) ?? modeVars[0][cssVar];
-  const loc     = line ? `${THEME_PATH}:${line}` : THEME_PATH;
+  const loc     = line ? `${varFileMap[cssVar] ?? THEME_PATH}:${line}` : THEME_PATH;
   if (suggest)
     return `${loc} - ${cssVar}: ${current ?? '?'} should resolve to ${suggest} (${figmaHex})`;
   return `${loc} - chain should resolve to ${figmaHex} (no matching neutral found)`;
@@ -332,7 +300,7 @@ function sizingFixHint(cssVar, figmaVal) {
   const line    = varLineMap[cssVar];
   const current = modeVars[0][cssVar];
   if (!line) return `Add ${cssVar}: ${figmaVal} to ${THEME_PATH}`;
-  return `${THEME_PATH}:${line} - change ${cssVar}: ${current ?? '?'} → ${figmaVal}`;
+  return `${varFileMap[cssVar] ?? THEME_PATH}:${line} - change ${cssVar}: ${current ?? '?'} → ${figmaVal}`;
 }
 
 // ── Token → CSS var (convention) ─────────────────────────────────────────────
@@ -553,7 +521,7 @@ for (const [token, figmaVal] of Object.entries(snap.sizing ?? {})) {
     FAIL.push({ dimension: 'sizing', token, cssVar: actualVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${actualVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
     if (FIX_MODE) {
       const line = varLineMap[actualVar];
-      if (line) autoFixes.push({ cssVar: actualVar, newVal: String(figmaVal).trim(), line });
+      if (line && varFileMap[actualVar] === THEME_PATH) autoFixes.push({ cssVar: actualVar, newVal: String(figmaVal).trim(), line });
     }
   } else {
     PASS.push(`sizing ${token}`);
@@ -592,7 +560,7 @@ if (snap.typography && Object.keys(TYPO).length) {
       FAIL.push({ dimension: 'typography', token: `${scale}/${prop}`, cssVar: actualVar, mode: '-', figma: figmaVal, css: cssVal, hint: `CSS resolves ${actualVar} → ${cssVal} but Figma says ${figmaVal}`, fixHint });
       if (FIX_MODE) {
         const line = varLineMap[actualVar];
-        if (line) autoFixes.push({ cssVar: actualVar, newVal: String(figmaVal).trim(), line });
+        if (line && varFileMap[actualVar] === THEME_PATH) autoFixes.push({ cssVar: actualVar, newVal: String(figmaVal).trim(), line });
       }
     } else {
       PASS.push(`typography ${scale}/${prop}`);
@@ -793,6 +761,28 @@ if (SCOPE_RULES.length) {
   }
 }
 
+// ── Tokens the code capture could not read reliably ──────────────────────────
+// When the browser and the CSS text disagree about a token (code.snapshot.json marks it
+// uncertain), a mismatch on it is a reading problem, not a design difference: it is listed as
+// not verified instead of failed. Only a snapshot that still matches the code is used.
+{
+  const cap = await readFreshSnapshot(ROOT, cfg).catch(() => null);
+  const unsure = new Map();
+  for (const [name, tk] of Object.entries(cap?.tokens ?? {})) {
+    const bad = Object.entries(tk.modes ?? {}).filter(([, f]) => f.confidence === 'uncertain');
+    if (bad.length) unsure.set(name, bad.map(([m, f]) => `${m}: browser ${f.readings?.browser} · CSS ${f.readings?.static}`).join('; '));
+  }
+  if (unsure.size) {
+    for (let i = FAIL.length - 1; i >= 0; i--) {
+      const f = FAIL[i];
+      if (!f.cssVar || !unsure.has(f.cssVar) || f.figma == null) continue;
+      FAIL.splice(i, 1);
+      NEW_SKIP.push({ dimension: f.dimension, token: f.token, cssVar: f.cssVar, mode: f.mode, reason: `could not read reliably - ${unsure.get(f.cssVar)}` });
+      for (let j = autoFixes.length - 1; j >= 0; j--) if (autoFixes[j].cssVar === f.cssVar) autoFixes.splice(j, 1);
+    }
+  }
+}
+
 // ── Auto-fix: apply sizing/typography fixes to theme.css ─────────────────────
 if (FIX_MODE && autoFixes.length > 0 && THEME_PATHS.length > 1) {
   // rawCss is every theme file concatenated; writing it back would merge them all into the
@@ -818,6 +808,11 @@ if (FIX_MODE && autoFixes.length > 0 && THEME_PATHS.length > 1) {
     console.log(`   ℹ️  ${colorFails} color divergence(s) need manual review - see Fix hints below`);
 }
 
+// ── Mode blocks a browser never applies ──────────────────────────────────────
+// ".dark :root { … }" and "[data-theme=dark] :root { … }" are still read as the mode's block (the
+// engine used to document them), but no browser applies them: :root has no ancestor. Advisory.
+const NEVER_APPLIED = neverAppliedRootSelectors(TOKEN_SOURCES);
+
 // ── Report ────────────────────────────────────────────────────────────────────
 const _extraDims = [
   Object.keys(strSnap).length  > 0 && 'font strings',
@@ -828,6 +823,10 @@ console.log(`\n✅ PASS  ${PASS.length}   (${_passLabel})`);
 console.log(`⏭  SKIP  ${SKIP.length}`);
 console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
+if (NEVER_APPLIED.length) {
+  console.log(`⚠️  NEVER APPLIED ${NEVER_APPLIED.length}  (token block under an ancestor of :root - a browser never uses it)`);
+  for (const n of NEVER_APPLIED.slice(0, 10)) console.log(`     ℹ️  ${n.file}:${n.line}  ${n.selector}${n.suggest ? `  → write ${n.suggest}` : ''}`);
+}
 if (snap.aliases) console.log(`🔗 ALIAS FAIL  ${ALIAS_FAIL.length}  (same hex, wrong primitive chain)`);
 if (sourceSnap)   console.log(`⏳ PENDING FIGMA SYNC  ${PENDING_FIGMA_SYNC.length}  (code matches DS source; consumer file has a pending library update)`);
 if (BOOL_INFO.length) console.log(`ℹ️  BOOLEAN TOKENS  ${BOOL_INFO.length}  (implement via display rules or class toggles - add to BOOLEAN_SKIP in parity-map.mjs to suppress)`);

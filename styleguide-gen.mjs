@@ -21,8 +21,9 @@
 //
 // Exit 0 on success. Never throws into the audit — callers wrap it.
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname, resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { resolveNamingSpec, tokenToVar, DEFAULT_NAMING } from './naming-convention.mjs';
 
 // ── DS-derived colour-mode CSS ────────────────────────────────────────────────
@@ -166,12 +167,28 @@ export function deriveSizeCSS(modeVariants, spec = DEFAULT_NAMING) {
   return out ? '\n\n  /* == Size axis - generated from the DS sizing-collection modes (no hand-copied values) == */\n' + out : '';
 }
 
+// Short usage labels for app names: the initials of a name with two or more words ("order-history"
+// → "OH"), the name itself for one word. If two apps would share a label, every app keeps its full name.
+export function appLabels(names) {
+  const words = (n) => String(n).replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[\s_\-./]+/).filter(Boolean);
+  const short = names.map((n) => { const w = words(n); return [n, w.length >= 2 ? w.map((x) => x[0].toUpperCase()).join('') : String(n)]; });
+  const clash = new Set(short.map(([, k]) => k)).size < short.length;
+  return clash ? names.map((n) => [n, String(n)]) : short;
+}
+
 export async function generateStyleguide(ROOT, cfg, opts = {}) {
   const sh = cfg.styleguide || {};
   const templatePath = resolve(ROOT, sh.template || 'apps/styleguide/styleguide.template.html');
-  const outPath = resolve(ROOT, sh.out || 'apps/styleguide/index.html');
+  const projectOut = resolve(ROOT, sh.out || 'apps/styleguide/index.html');
+  // opts.out writes the page somewhere else (the code capture keeps a private copy in .parity-out);
+  // a <base> then keeps the template's relative links pointing where the project's page would be.
+  const outPath = opts.out ? resolve(ROOT, opts.out) : projectOut;
   if (!existsSync(templatePath)) throw new Error('styleguide template not found: ' + templatePath);
   let html = readFileSync(templatePath, 'utf8');
+  if (opts.out && outPath !== projectOut) {
+    const base = `<base href="${pathToFileURL(dirname(projectOut)).href}/">`;
+    html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + base) : base + html;
+  }
 
   const themeFiles = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
   const pluginCSS = (cfg.paths?.pluginCSS ?? []).flat();
@@ -227,8 +244,8 @@ export async function generateStyleguide(ROOT, cfg, opts = {}) {
   // ── USAGE — which plugins use each component ────────────────────────────────────
   function usageMap(intent) {
     // Usage label per app: ds-config.json → styleguide.plugins [{ key, match }] (a short label and a
-    // path fragment), else each configured app (paths.plugins) labelled by its own name.
-    const PLUGS = (cfg.styleguide?.plugins) || (cfg.paths?.plugins ?? []).map((n) => ({ key: n, match: n }));
+    // path fragment), else each configured app (paths.plugins) with a short label made from its name.
+    const PLUGS = (cfg.styleguide?.plugins) || appLabels(cfg.paths?.plugins ?? []).map(([n, key]) => ({ key, match: n }));
     const sources = pluginHTML.concat(pluginCSS).map((p) => ({ p, m: PLUGS.find((g) => p.includes(g.match)), txt: (() => { const abs = resolve(ROOT, p); return existsSync(abs) ? readFileSync(abs, 'utf8') : ''; })() })).filter((s) => s.m);
     const usage = {};
     for (const name of Object.keys(intent.components || {})) {
@@ -262,6 +279,7 @@ export async function generateStyleguide(ROOT, cfg, opts = {}) {
     if (hit) filled.push(key);
   }
 
+  mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, html);
   return { out: outPath, filled, bytes: html.length, components: Object.keys(intent.components || {}).length };
 }

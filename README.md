@@ -6,6 +6,10 @@ Checks that your code actually matches your design system: the real colours, siz
 
 It is not a "does this look like Figma?" screenshot comparison. It reads what your design system really defines in Figma (the tokens, and each component's parts, states and options) and checks your code against that, precisely. It also writes those facts out in a simple form, so AI tools build with the real design system instead of guessing.
 
+It reads your code the same careful way it reads Figma. Once per run it opens your pages in a browser and records what the code really produces: every token in every mode, each component's sizes and states, its props, icons, markup and which components sit inside which. Each fact says where it came from and how sure the reading is. When the tool can't read something reliably, it says so instead of blaming the design.
+
+It also gives AI tools that generate interfaces a catalog of your real components (their options, and which components go inside which), and `--check-ui` checks what they generate against it, every time, without changing it.
+
 ## Install (once per computer)
 
 In your terminal (the Terminal app on Mac, or Windows Terminal), paste this and press Enter:
@@ -41,6 +45,7 @@ Or from the terminal:
 ```bash
 rms-figma-code-parity                       # the whole design system
 rms-figma-code-parity --component input     # one component (or a few: input,button)
+rms-figma-code-parity --check-ui ui.json     # check a UI an AI tool generated against your components
 ```
 
 ## What it checks

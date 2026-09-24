@@ -17,6 +17,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { buildResolver } from './mode-resolver.mjs';
+import { loadCssSources } from './css-source.mjs';
 import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';
 
 const ROOT = process.cwd();
@@ -36,8 +37,8 @@ if (!mcfg || Object.keys(motion).length === 0) {
   process.exit(0);
 }
 
-const rawCss = THEME_PATHS.filter(p => existsSync(join(ROOT, p)))
-  .map(p => readFileSync(join(ROOT, p), 'utf8')).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
+// The theme files as sources, local @import followed (css-source.mjs, shared with the code capture).
+const rawCss = loadCssSources(ROOT, THEME_PATHS).files;
 const { resolveRaw } = buildResolver(rawCss, [{ name: 'Base', snapshotKey: 'root', cssSelector: 'root' }]);
 
 const explicit = mcfg.explicit || {};

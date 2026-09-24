@@ -13,6 +13,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { loadModes } from './mode-resolver.mjs';
 import { createLocator } from './component-locator.mjs';
+import { existsSync } from 'fs';
+import { readFreshSnapshot, nestingLabel } from './code-capture.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -131,6 +133,33 @@ console.log(`ℹ️  NO RENDERED ${noRendered.length}  (geometry/color only chec
 console.log(`ℹ️  SINGLE-VARIANT ${noVariants.length}  (no per-variant capture - sibling states invisible to the audit)`);
 if (noRendered.length) console.log(`     → ${noRendered.map(r => r.comp).join(', ')}`);
 if (noVariants.length) console.log(`     → ${noVariants.map(r => r.comp).join(', ')}`);
+
+// ── Code capture coverage ─────────────────────────────────────────────────────
+// What the code capture (code.snapshot.json) could read this run, and how sure it is. Advisory.
+{
+  const cap = await readFreshSnapshot(ROOT, cfg).catch(() => null);
+  if (!cap) {
+    const saved = existsSync(join(ROOT, cfg.codeReading?.out ?? '.parity-out/code.snapshot.json'));
+    console.log(`ℹ️  CODE CAPTURE ${saved ? 'out of date (the code changed since it ran)' : 'not run'}  - gates use their own readings only`);
+  } else {
+    const c = cap._coverage ?? {}, b = c.byConfidence ?? {}, cc = c.components ?? {}, ap = c.api;
+    const parts = [
+      `tokens ${c.tokens ?? 0} (${b.verified ?? 0} verified · ${b.uncertain ?? 0} uncertain)`,
+      cc.known != null ? `components ${cc.captured}/${cc.known} measured` : null,
+      cc.states?.listed ? `states ${cc.states.produced}/${cc.states.listed}` : null,
+      ap && !ap.note ? `props ${ap.props.total} on ${ap.components} component(s) (${ap.props.uncertain} uncertain)` : null,
+      c.icons ? `icons ${c.icons.symbols}` : null,
+      c.nesting ? `nesting ${c.nesting.components} (${nestingLabel(c.nesting)})` : null,
+    ].filter(Boolean);
+    console.log(`ℹ️  CODE CAPTURE ${parts.join(' · ')}  - read by ${cap._sources?.browser ? 'browser + static CSS' : 'static CSS only'}`);
+    if (cc.missing?.length) console.log(`     → not measured: ${cc.missing.join(', ')}`);
+    const sgc = c.styleguide;
+    if (sgc?.built) console.log(`ℹ️  CODE CAPTURE styleguide built from ${sgc.template} and measured first`);
+    else if (sgc?.note) console.log(`⚠️  CODE CAPTURE ${sgc.note}`);
+    const unsure = Object.entries(cap.tokens ?? {}).filter(([, tk]) => Object.values(tk.modes ?? {}).some((f) => f.confidence === 'uncertain')).map(([n]) => n);
+    if (unsure.length) console.log(`     → couldn't read reliably (browser and CSS disagree): ${unsure.slice(0, 12).join(', ')}${unsure.length > 12 ? ` … +${unsure.length - 12}` : ''}`);
+  }
+}
 
 const modeStrict = cfg.renderedModeStrict === true;
 if (SNAP_MODES.length > 1) {

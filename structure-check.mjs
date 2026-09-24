@@ -16,7 +16,8 @@
 // Exit 2 = cannot verify: no compiled component CSS configured (setup gap, not a parity fail).
 
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, resolve as resolvePath } from 'path';
+import { loadCssSources } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 import { createLocator } from './component-locator.mjs';
@@ -109,8 +110,15 @@ async function loadCss(entry) {
 
 const themeSources  = await Promise.all(THEME_PATHS.map(loadCss));
 const pluginSources = await Promise.all(PLUGIN_CSS.map(loadCss));
+// Stylesheets the local theme files @import (css-source.mjs, the reader the code capture uses):
+// their rules count wherever a selector is looked up across all CSS.
+const importedSources = (() => {
+  const own = new Set(THEME_PATHS.filter(p => !isUrl(p)).map(p => resolvePath(ROOT, p)));
+  return loadCssSources(ROOT, THEME_PATHS.filter(p => !isUrl(p))).files
+    .filter(f => !own.has(f.abs)).map(f => ({ entry: f.file, text: f.text, ok: true, kind: 'import' }));
+})();
 let themeCSS = themeSources[0]?.ok ? themeSources[0].text : null;   // value gates read the first theme file
-const allCss = [...themeSources, ...pluginSources].filter(s => s.ok).map(s => s.text).join('\n');
+const allCss = [...themeSources, ...importedSources, ...pluginSources].filter(s => s.ok).map(s => s.text).join('\n');
 
 // Build block indexes once - findBlock() uses these for O(1) lookups
 // lightCSS strips @media blocks so dark-mode overrides can't shadow light-mode entries.
@@ -1752,6 +1760,26 @@ const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0
              || BCLASS_FAIL.length > 0 || STATE_GEOM_FAIL.length > 0
              || STROKE_WIDTH_FAIL.length > 0 || RESTING_FAIL.length > 0
              || SHRINK_FAIL.length > 0 || MIXED_FAIL.length > 0 || VHEIGHT_FAIL.length > 0;
+
+// ── Measured check (code capture) ─────────────────────────────────────────────
+// The checks above read CSS text. When the code capture measured the components in a browser (and
+// still matches the code), its field-by-field comparison with Figma is listed here too: a rendered
+// value that differs although the text check passed (an overriding rule, a token that resolves
+// elsewhere). Advisory: it never changes this gate's result.
+try {
+  const { readFreshSnapshot } = await import('./code-capture.mjs');
+  const cap = await readFreshSnapshot(ROOT, cfg);
+  if (cap?._sources?.browser) {
+    const { loadParityMaps, compareComponents } = await import('./capture-compare.mjs');
+    let vars = {};
+    try { vars = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8')); } catch { /* optional */ }
+    const r = compareComponents(cap, snap?.components ?? {}, vars, cfg, await loadParityMaps(ROOT, cfg));
+    if (r.differ.length) {
+      console.log(`\n⚠️  MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma - advisory)`);
+      for (const d of r.differ) console.log(`   ⚠️  ${d.component} ${d.field}: Figma ${d.figma}${d.figmaValue ? ` (${d.figmaValue})` : ''}, rendered ${d.code}${d.codeVar ? ` via ${d.codeVar}` : ''}${d.at ? `  (${d.rule} · ${d.at})` : ''}`);
+    } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
+  }
+} catch { /* the capture is optional */ }
 
 if (!anyFail) { console.log('\nAll structural checks pass. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
