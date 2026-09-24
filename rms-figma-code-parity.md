@@ -435,7 +435,7 @@ the default is the plain human summary; **`--a11y`** adds the exact elements (st
 the same findings as a machine-readable record (selector, contrast ratio, theme, role, and the fix) for an
 agent or CI. When it runs against anything other than the styleguide it ends with a one-line tip on how to
 get the deepest, per-state result. `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It
-runs inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y|--json] [--axe]`
+runs inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y|--json] [--axe] [--states]`
 (`--component` scopes the sweep and accepts a raw CSS selector too). **Skips cleanly** (exit 0) with no
 browser, never a false fail. Deps: Node >= 22 (built-in WebSocket), Chrome/Chromium (or `CHROME_PATH`), and
 a render target.
@@ -463,13 +463,11 @@ whatever surface the project serves, in this order:
 So a Storybook or router-based DS runs fully automatically the first time — no config, no questions; a
 bespoke app that exposes no page index is the only case that needs a `--url` / `a11y.urls` hint (set once).
 
-**Broader coverage via `--axe`:** opt in and it also runs **axe-core** (fetched from a CDN, no npm dependency) against the same rendered page, adding the rules the five native checks do not cover — **non-text / component contrast** (WCAG 1.4.11 for borders, icons, graphics), **target size**, **duplicate ids**, **ARIA validity**, **heading order**, **form labels** — reported as an extra plain-language advisory section (and under `axe` in `--json`). The **focus-ring** part of 1.4.11 is already covered natively (check 3 above).
+**Broader coverage via `--axe`:** opt in and it also runs **axe-core** (fetched from a CDN, no npm dependency) against the same rendered page, adding the rules the five native checks do not cover — **non-text / component contrast** (WCAG 1.4.11 for borders, icons, graphics), **target size**, **duplicate ids**, **ARIA validity**, **heading order**, **form labels**, and **reading order / skip-links / landmarks** (`region`, `landmark-*`, `bypass`, `tabindex`) — reported as an extra plain-language advisory section (and under `axe` in `--json`). The **focus-ring** part of 1.4.11 is already covered natively (check 3 above).
 
-**Not yet (v2, by design):**
-- **Live interaction-state a11y** — the state-exposure check reads the resting DOM; forcing each
-  hover/checked/expanded pseudo-state and re-checking is the next step (reusing the state walk).
-- **Reading order, skip links, landmark completeness** — and anything the render cannot reveal: only when
-  the project **declares** it in `ds-config.json`, never imposed (No-imposed-structure).
+**Live hover contrast via `--states`:** opt in (or `a11y.interactionStates:true`) and it forces `:hover` (CDP `CSS.forcePseudoState`) on the interactive elements and re-measures, flagging text that reads fine at rest but drops below AA while hovered — the one interaction-state case axe cannot see (it reads the resting DOM).
+
+**Not yet (v2, by design):** forcing `:active`; and **reflow / text-resize** (WCAG 1.4.10 / 1.4.4) — these need a real screen target (they false-positive on a component catalog), so run them against a `--url` screen. Reading order / skip-links / landmarks are covered by `--axe` above.
 
 #### Evals (I7, a separate entry point — measures agent OUTPUT, never gates the repo)
 

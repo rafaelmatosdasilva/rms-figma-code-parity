@@ -23,7 +23,7 @@ test('[axe] summarizeAxe collapses per-node rows into one per rule, busiest firs
 
 // ── Plain-language reporting + machine record ──
 test('[plain] every issue kind has a title/why/fix, and no raw jargon in the guidance', () => {
-  for (const kind of ['contrast', 'name', 'focus', 'focuscontrast', 'ariastate', 'keyboard']) {
+  for (const kind of ['contrast', 'hovercontrast', 'name', 'focus', 'focuscontrast', 'ariastate', 'keyboard']) {
     const g = A11Y_GUIDE[kind];
     assert.equal(typeof g.title(1), 'string');
     assert.ok(g.why.length > 10 && g.fix.length > 10);
@@ -45,6 +45,7 @@ test('[plain] a11yItemLine reads as a sentence, not a raw selector dump', () => 
   assert.equal(a11yItemLine('name', { role: 'button' }), 'A button with no label');
   assert.equal(a11yItemLine('name', { role: 'textbox' }), 'An input field with no label');
   assert.match(a11yItemLine('focuscontrast', { desc: 'button.x', ratio: 1.5, threshold: 3 }), /focus outline scores 1\.5 out of 21, needs at least 3/);
+  assert.match(a11yItemLine('hovercontrast', { text: 'Save', ratio: 2.2, threshold: 4.5 }), /the text "Save" on hover — its readability score is 2\.2 out of 21/);
 });
 test('[json] a11yFindingRecord carries the exact facts + the fix for a machine', () => {
   const c = a11yFindingRecord('contrast', { theme: 'Dark', desc: '.err', text: 'Oops', ratio: 2.1, threshold: 4.5 });

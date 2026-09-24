@@ -37,7 +37,9 @@
 // do. `--a11y` adds the exact elements; `--json` emits a machine-readable record for an agent/CI.
 // `--axe` (or ds-config a11y.axe:true) also runs axe-core (fetched from a CDN, no npm dep) for the
 // broader WCAG rules the five checks above do not cover — non-text contrast, target size, duplicate
-// ids, ARIA validity, heading order, labels — reported as an extra advisory section.
+// ids, ARIA validity, heading order, labels — reported as an extra advisory section. `--states`
+// (or a11y.interactionStates:true) forces :hover and re-measures, flagging text that reads fine at
+// rest but fails contrast while hovered.
 //
 // Advisory by default (never fails the audit); `ds-config.json → a11yStrict: true` promotes
 // findings to a hard fail (exit 1). Skips cleanly (exit 0) when no browser is available — never
@@ -160,6 +162,11 @@ export const A11Y_GUIDE = {
     why: 'The control does light up when focused, but the outline is so close in colour to its background that a keyboard user still cannot tell where they are.',
     fix: 'Make the focus outline stand out clearly — a stronger colour or a thicker ring, so it is at least three times the contrast of whatever is behind it.',
   },
+  hovercontrast: {
+    title: (n) => `${plural(n, 'control becomes', 'controls become')} hard to read on hover`,
+    why: 'When the mouse is over the control its colours change to something too faint — readable at rest, but not while it is being used.',
+    fix: 'Give the hover state the same care as the normal state: keep the text at least 4.5 times the contrast of its background.',
+  },
   ariastate: {
     title: (n) => `${plural(n, 'control shows', 'controls show')} their state only by looks`,
     why: 'Something is marked selected, checked or open only with colour or a CSS class, so a screen reader never announces that state.',
@@ -179,6 +186,7 @@ export function a11yItemLine(kind, f) {
     return `${what} — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold} (${f.theme} theme)`;
   }
   if (kind === 'focuscontrast') return `${f.desc} — its focus outline scores ${f.ratio} out of 21, needs at least ${f.threshold}`;
+  if (kind === 'hovercontrast') { const what = f.text ? `the text "${f.text}"` : (f.desc || 'text'); return `${what} on hover — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold}`; }
   if (kind === 'name') return `${A11Y_ROLE_WORD[f.role] || `A ${f.role || 'control'}`} with no label`;
   return f.desc;   // focus / ariastate / keyboard — the CSS selector locates the element
 }
@@ -186,7 +194,7 @@ export function a11yItemLine(kind, f) {
 // numbers + the fix. Same facts as the plain lines, but parseable.
 export function a11yFindingRecord(kind, f) {
   const rec = { issue: kind, selector: f.desc ?? null, fix: A11Y_GUIDE[kind]?.fix ?? null };
-  if (kind === 'contrast') { rec.theme = f.theme ?? null; rec.text = f.text ?? null; rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
+  if (kind === 'contrast' || kind === 'hovercontrast') { rec.theme = f.theme ?? null; rec.text = f.text ?? null; rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
   if (kind === 'focuscontrast') { rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
   if (kind === 'name') rec.role = f.role ?? null;
   return rec;
@@ -416,7 +424,6 @@ async function main() {
   const argv = process.argv.slice(2);
   const VERBOSE = argv.includes('--a11y');
   const JSON_MODE = argv.includes('--json');   // structured output for an agent/CI that fixes the code
-  const RUN_AXE = argv.includes('--axe') || cfg.a11y?.axe === true;   // broaden coverage with axe-core (opt-in)
   const components = argValues('--component', argv).concat(argValues('--components', argv));
   const cliUrls = argValues('--url', argv);   // check a live page directly (any project that serves it)
 
@@ -428,6 +435,8 @@ async function main() {
   }
 
   const STRICT = cfg.a11yStrict === true;
+  const RUN_AXE = argv.includes('--axe') || cfg.a11y?.axe === true;   // broaden coverage with axe-core (opt-in)
+  const RUN_STATES = argv.includes('--states') || cfg.a11y?.interactionStates === true;   // check :hover contrast (opt-in)
   const skip = (msg) => { console.log(`⏭  [a11y] ${msg}`); process.exit(0); };
 
   const plugins = cfg.paths?.plugins ?? [];
@@ -601,6 +610,26 @@ async function main() {
       }
       first = false;
     }
+    // Interaction-state contrast (:hover) — force the pseudo-state via CDP and re-measure. Reuses the
+    // contrast sweep; reports only text that reads fine at rest but fails while hovered (opt-in --states).
+    if (RUN_STATES) {
+      try {
+        await send('DOM.enable', {}, sessionId);
+        await send('CSS.enable', {}, sessionId);
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: modes[0].scheme }] }, sessionId);
+        const doc = await send('DOM.getDocument', { depth: -1 }, sessionId);
+        const q = await send('DOM.querySelectorAll', { nodeId: doc.root.nodeId, selector: 'a[href],button,[role=button],[role=link],input:not([type=hidden]),select,textarea,[tabindex]' }, sessionId);
+        const ids = (q.nodeIds || []).slice(0, 400);
+        for (const id of ids) { try { await send('CSS.forcePseudoState', { nodeId: id, forcedPseudoClasses: ['hover'] }, sessionId); } catch {} }
+        const r = await send('Runtime.evaluate', { expression: sweepExpression(roots, false, STATE_MAP), returnByValue: true }, sessionId);
+        const hoverText = (r.result?.value || {}).textEls || [];
+        const restKey = new Set(findings.filter((f) => f.kind === 'contrast' && f.theme === modes[0].name).map((f) => f.desc + '|' + f.text));
+        for (const f of contrastFindings(hoverText, modes[0].name)) {
+          if (!restKey.has(f.desc + '|' + f.text)) findings.push({ kind: 'hovercontrast', plugin: label, theme: f.theme, desc: f.desc, text: f.text, ratio: f.ratio, threshold: f.threshold });
+        }
+        for (const id of ids) { try { await send('CSS.forcePseudoState', { nodeId: id, forcedPseudoClasses: [] }, sessionId); } catch {} }
+      } catch { /* CSS/DOM domain unavailable — skip the hover pass, not a fail */ }
+    }
     if (axeSource) { const v = await runAxe(send, sessionId, axeSource); if (v) for (const row of v) axeViolations.push(row); }
     await send('Target.closeTarget', { targetId });
   }
@@ -615,11 +644,12 @@ async function main() {
   const names    = findings.filter((f) => f.kind === 'name');
   const focus    = findings.filter((f) => f.kind === 'focus');
   const focusCon = findings.filter((f) => f.kind === 'focuscontrast');
+  const hoverCon = findings.filter((f) => f.kind === 'hovercontrast');
   const state    = findings.filter((f) => f.kind === 'ariastate');
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  const buckets = [['contrast', contrast], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard]].filter(([, l]) => l.length);
+  const buckets = [['contrast', contrast], ['hovercontrast', hoverCon], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard]].filter(([, l]) => l.length);
   const total = buckets.reduce((n, [, l]) => n + l.length, 0);
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';
 
