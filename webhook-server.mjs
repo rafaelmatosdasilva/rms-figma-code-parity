@@ -43,7 +43,7 @@ const HANDLED_EVENTS = new Set(['FILE_UPDATE', 'LIBRARY_PUBLISH', 'FILE_VERSION_
 // ── Run a script and return pass/fail ────────────────────────────────────────
 function runScript(name) {
   const abs = resolvePath(SCRIPT_DIR, name);
-  const r   = spawnSync('node', [abs], { cwd: ROOT, encoding: 'utf8' });
+  const r   = spawnSync(process.execPath, [abs], { cwd: ROOT, encoding: 'utf8', timeout: 300000 });
   return { pass: r.status === 0, out: (r.stdout + r.stderr).trim() };
 }
 

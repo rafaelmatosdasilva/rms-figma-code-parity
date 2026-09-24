@@ -32,6 +32,7 @@
 // Absent or empty, the gate skips - it never invents a binding.
 import { readFileSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -42,7 +43,7 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 
 let BINDINGS = [];
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (Array.isArray(m.FORM_CONTROL_BINDINGS)) BINDINGS = m.FORM_CONTROL_BINDINGS;
 } catch { /* contract optional */ }
 

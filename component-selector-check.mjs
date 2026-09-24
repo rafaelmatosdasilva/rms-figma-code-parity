@@ -25,6 +25,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -44,13 +45,13 @@ const EXEMPTIONS = new Set(
 
 let CONTRACT = {};
 try {
-  const mod = await import(join(ROOT, 'structure-contract.mjs'));
+  const mod = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   CONTRACT = mod.CONTRACT ?? {};
 } catch { /* no contract - runs with empty map */ }
 
 let SYSTEM_VARS = new Set();
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  const map = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   if (map.SYSTEM_VARS) SYSTEM_VARS = map.SYSTEM_VARS;
 } catch { /* optional */ }
 

@@ -9,6 +9,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join }                     from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -19,7 +20,7 @@ try { cfg = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } ca
 
 let COMPONENT_USAGES = [];
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.COMPONENT_USAGES && Array.isArray(m.COMPONENT_USAGES)) COMPONENT_USAGES = m.COMPONENT_USAGES;
 } catch { /* optional - skip if not present */ }
 

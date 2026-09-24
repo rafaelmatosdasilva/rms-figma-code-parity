@@ -81,5 +81,10 @@
   "icons": { "page": "", "namePrefix": "", "nameFrom": "" },
   "_iconSpritePrefix_note": "Prefix your code sprite ids use, e.g. '#icon-arrow-left' -> 'icon-'.",
   "iconSpritePrefix": "icon-",
-  "knownUnimplementedIcons": []
+  "knownUnimplementedIcons": [],
+
+  "_more_settings_note": "Optional. codeReading: the code capture (browser 'auto'|'off', capture 'off', timeoutSec, hookBrowser, extra pages, docgen, customElements, storybookIndex). styleguide: the living styleguide template and output (the capture builds its own copy from the template). frameworkComponents:false for markup-and-CSS design systems. gateTimeoutSec: stop a gate that runs longer (default 180). See 'More settings' in the guide.",
+  "codeReading": { "browser": "auto" },
+  "styleguide": { "template": "apps/styleguide/styleguide.template.html", "out": "apps/styleguide/index.html" },
+  "gateTimeoutSec": 180
 }

@@ -29,6 +29,7 @@ import { makeFigmaFetch }                                       from './figma-fe
 import { collectRawValues, COLLECT_NODE_BUDGET }                from './collect-raw-values.mjs';
 import { extractDynamicClassPrefixes }                          from './dynamic-class-prefixes.mjs';
 import { frameworkGateSkipReason }                              from './component-framework-gate.mjs';
+import { parseGateOutput, GATE_SUMMARY as S }                   from './audit-parse.mjs';
 import { loadBaselineLabels, classifyBaseline, writeBaseline } from './baseline.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -325,14 +326,14 @@ if (process.argv.includes('--guidelines') || process.argv.some((a) => a.startsWi
 
 if (process.argv.includes('--capture-code')) {
   const passthrough = process.argv.slice(2).filter((a) => a !== '--capture-code');
-  const r = spawnSync('node', [join(SCRIPT_DIR, 'code-capture.mjs'), ...passthrough], { cwd: ROOT, stdio: 'inherit' });
+  const r = spawnSync(process.execPath, [join(SCRIPT_DIR, 'code-capture.mjs'), ...passthrough], { cwd: ROOT, stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
 // ── --check-ui <file>: check a generated UI against the component catalog (ui-check.mjs) ──
 if (process.argv.includes('--check-ui')) {
   const passthrough = process.argv.slice(2).filter((a) => a !== '--check-ui');
-  const r = spawnSync('node', [join(SCRIPT_DIR, 'ui-check.mjs'), ...passthrough], { cwd: ROOT, stdio: 'inherit' });
+  const r = spawnSync(process.execPath, [join(SCRIPT_DIR, 'ui-check.mjs'), ...passthrough], { cwd: ROOT, stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
 
@@ -1156,6 +1157,10 @@ function reportFull(label, items, shown) {
     .filter(n => n.includes('*'))
     .map(n => new RegExp('^' + n.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$'));
 
+  // Generated surfaces are not source: the styleguide template and its output show every component
+  // on purpose (their own layout classes and demo values are not the project's CSS).
+  const SCAN_EXCLUDE_PATHS = new Set([(cfg.styleguide ?? cfg.showroom)?.template, (cfg.styleguide ?? cfg.showroom)?.out]
+    .filter(Boolean).map(p => resolve(ROOT, p)));
   function collectSourceFiles(dir = ROOT, results = []) {
     let entries;
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return results; }
@@ -1165,6 +1170,7 @@ function reportFull(label, items, shown) {
         collectSourceFiles(join(dir, e.name), results);
       } else if (e.isFile()) {
         if (SCAN_EXCLUDE_FILENAMES.has(e.name) || SCAN_EXCLUDE_GLOBS.some(r => r.test(e.name))) continue;
+        if (SCAN_EXCLUDE_PATHS.has(join(dir, e.name))) continue;
         const dot = e.name.lastIndexOf('.');
         if (dot !== -1 && SCAN_EXTENSIONS.has(e.name.slice(dot))) {
           results.push(join(dir, e.name));
@@ -1200,15 +1206,37 @@ function reportFull(label, items, shown) {
     return { stdout };
   }
 
+  // Run one gate script. Never rejects and never hangs the audit:
+  //   • the gate runs under this same Node (process.execPath), so a hook with a different PATH
+  //     cannot pick an older Node or fail to find one;
+  //   • a gate that cannot start, is killed (out of memory, a signal) or runs past its time limit
+  //     (ds-config.json → gateTimeoutSec, default 180) is a FAIL with the reason, never a pass;
+  //   • status null is kept for one meaning only: the script file does not exist.
+  const GATE_TIMEOUT_MS = Math.max(10, Number(cfg.gateTimeoutSec) || 180) * 1000;
   function runScriptAsync(scriptPath, args = []) {
     return new Promise(res => {
       const abs = resolve(SCRIPT_DIR, scriptPath);
       if (!existsSync(abs)) return res({ status: null, stdout: '', stderr: '' });
-      const child = spawn('node', [abs, ...args], { cwd: ROOT, env: process.env });
-      let stdout = '', stderr = '';
+      let stdout = '', stderr = '', done = false, timedOut = false;
+      const finish = (status, why) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (why) stdout += `\n❌ ${scriptPath} ${why} - not verified\n`;
+        res({ status: why ? 1 : status, stdout, stderr, ...(why ? { stopped: why } : {}) });
+      };
+      let child;
+      try { child = spawn(process.execPath, [abs, ...args], { cwd: ROOT, env: process.env }); }
+      catch (e) { return finish(1, `could not start (${e.message})`); }
+      const timer = setTimeout(() => { timedOut = true; try { child.kill('SIGKILL'); } catch { /* already gone */ } }, GATE_TIMEOUT_MS);
       child.stdout.on('data', d => { stdout += d; });
       child.stderr.on('data', d => { stderr += d; });
-      child.on('close', status => res({ status, stdout, stderr }));
+      child.on('error', e => finish(1, `could not start (${e.message})`));
+      child.on('close', (status, signal) => {
+        if (timedOut) return finish(1, `timed out after ${GATE_TIMEOUT_MS / 1000}s (raise ds-config.json → gateTimeoutSec if it needs longer)`);
+        if (status === null) return finish(1, `was stopped (${signal ?? 'killed'})`);
+        finish(status);
+      });
     });
   }
 
@@ -1238,8 +1266,9 @@ function reportFull(label, items, shown) {
     const out  = r.stdout + r.stderr;
     const pass = r.status === 0;
     const summary    = out.split('\n').filter(l => /✅|❌|⚠️/.test(l) && l.trim()).map(l => l.trim());
+    const shown      = new Set(summary);
     const failDetails = pass ? [] : out.split('\n')
-      .filter(l => l.trim().startsWith('❌') || l.trim().startsWith('Fix:'))
+      .filter(l => (l.trim().startsWith('❌') || l.trim().startsWith('Fix:')) && !shown.has(l.trim()))
       .map(l => '  ' + l.trim()).slice(0, 30);
     return { pass, lines: [...summary, ...failDetails] };
   }
@@ -1355,15 +1384,9 @@ function reportFull(label, items, shown) {
   }
 
   // Generic parser for subprocess gates: pass/fail from exit code, summary from keyword lines
+  // (audit-parse.mjs: skip lines always shown, no silent green, each line once)
   function parseGeneric(r, summaryRe) {
-    if (r.status === null) return { pass: true, lines: ['⏭ script not found - skipped'] };
-    const out  = r.stdout + r.stderr;
-    const pass = r.status === 0;
-    const summary = out.split('\n')
-      .filter(l => summaryRe.test(l) && l.trim()).map(l => l.trim());
-    const failDetails = pass ? [] : out.split('\n')
-      .filter(l => /🚨|❌/.test(l) && l.trim()).map(l => '  ' + l.trim()).slice(0, 20);
-    return { pass, lines: [...summary, ...failDetails] };
+    return parseGateOutput(r, summaryRe);
   }
 
   // ── Inline gate computations (no subprocess) ─────────────────────────────────
@@ -2352,11 +2375,22 @@ function reportFull(label, items, shown) {
   // is static only, so a commit never waits for the browser; codeReading.hookBrowser: true opts in.
   if (cfg.codeReading?.capture !== 'off') {
     const inHook = !!process.env.GIT_INDEX_FILE || process.argv.includes('--hook');
+    // A time limit (codeReading.timeoutSec, default 120): past it the gates start with their own
+    // readings, and a snapshot that no longer matches the code is ignored by every gate anyway.
+    const budget = Math.max(10, Number(cfg.codeReading?.timeoutSec) || 120) * 1000;
     try {
       const { captureCode } = await import('./code-capture.mjs');
-      await captureCode(ROOT, cfg, { browser: !inHook || cfg.codeReading?.hookBrowser === true });
+      let timer;
+      await Promise.race([
+        captureCode(ROOT, cfg, { browser: !inHook || cfg.codeReading?.hookBrowser === true }),
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('capture time limit')), budget); timer.unref?.(); }),
+      ]).finally(() => clearTimeout(timer));
     } catch (e) { /* the gates keep their own readings; Gate [17] says the capture is missing */ }
   }
+
+  // Result files some gates write for the report tables. Removed first, so a gate that stops early
+  // leaves no table rather than the previous run's rows.
+  for (const f of ['component-prop-result.json', 'parity-check-result.json']) { try { unlinkSync(join(ROOT, f)); } catch { /* not there */ } }
 
   // Subprocess gates - all launch concurrently
   const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rFormControl, rHtmlStructure, rTransition, rIconFreshness, rRendered, rCoverage, rMotion, rEffect, rContainment, rCompProp, rCompose, rTemplateCompose, rStateOpacity, rIconInv, rScreenEl, rDocsTruth, rReimpl, rCase, rA11y] = await Promise.all([
@@ -2413,24 +2447,24 @@ function reportFull(label, items, shown) {
   addGate('Tokens used in screens exist in CSS  (every token bound in a DS screen has a CSS variable)',
     parseGate4(rBound));
   addGate('Every mode is covered  (tokens adapt across light/dark and all configured modes)',
-    parseGeneric(rMode, /ADAPTS|STATIC|SKIPPED/));
+    parseGeneric(rMode, S['mode-completeness-check.mjs']));
   addGate('Exception lists are valid  (no stale or overly broad entries)',
-    parseGeneric(rExemption, /VALID|STALE|BROKEN/));
+    parseGeneric(rExemption, S['exemption-check.mjs']));
   addGate('No invented CSS variables  (every CSS variable traces back to a Figma token)',
-    parseGeneric(rNaming, /TRACEABLE|UNINVENTED|UNDOCUMENTED/));
+    parseGeneric(rNaming, S['naming-check.mjs']));
   addGate('Docs tell the truth  (a style guide / DS doc references only tokens & vars that exist)',
-    parseGeneric(rDocsTruth, /\[docs-truth\]/));
+    parseGeneric(rDocsTruth, S['docs-truth-check.mjs']));
   addGate('No invented text casing  (no text-transform the DS/Figma does not define)',
-    parseGeneric(rCase, /\[text-case\]/));
+    parseGeneric(rCase, S['case-check.mjs']));
   // Local reimplementation: a screen that hand-builds a DS component (a locally-styled <button>)
   // instead of using it. Opt-in via ds-config.json → reimplementationSurfaces[]; advisory unless
   // reimplementationStrict. code → Figma direction, complements the naming/docs anti-invention gates.
   addGate('No hand-built DS components  (screens use the DS component, not a local look-alike)',
-    parseGeneric(rReimpl, /\[reimplementation\]/));
+    parseGeneric(rReimpl, S['reimplementation-check.mjs']));
 
   // ── CSS quality ───────────────────────────────────────────────────────────────
   addGate('Clean CSS  (no unused variables · no values that contradict Figma · safe containment)',
-    combineGates(_g5, _g6, parseGeneric(rContainment, /✅|❌/)));
+    combineGates(_g5, _g6, parseGeneric(rContainment, S['container-containment-check.mjs'])));
   addGate('Nested components keep their own styles  (no parent rule overrides a child component)',
     parseGate8(rIsolation));
 
@@ -2438,7 +2472,7 @@ function reportFull(label, items, shown) {
   addGate('Structure  (height · spacing · base-rule variable bindings)',
     parseGate3(rStructure));
   addGate('All states are built  (each state implemented · correct selector · variable in the right rule)',
-    combineGates(parseGeneric(rState, /COVERED|UNCOVERED|⚠️|⏭ HIDDEN/), parseGeneric(rStateBinding, /COVERED|MISSING/), parseGeneric(rStateVar, /CORRECT|MISMATCH/), parseGeneric(rStateOpacity, /CORRECT|MISMATCH/)));
+    combineGates(parseGeneric(rState, S['state-check.mjs']), parseGeneric(rStateBinding, S['state-binding-check.mjs']), parseGeneric(rStateVar, /CORRECT|MISMATCH/), parseGeneric(rStateOpacity, S['state-opacity-check.mjs'])));
   // The component-prop and composition gates only make sense for a component FRAMEWORK codebase
   // (Vue/React with declared props and instance nesting). A DS *consumer* that implements the
   // components as CSS classes + markup (a plain-HTML plugin, say) has no prop-components for them
@@ -2466,29 +2500,29 @@ function reportFull(label, items, shown) {
   // compose the components Figma composes? Opt-in via ds-config.json → templates[]; a no-op PASS
   // otherwise. MISSING is advisory unless templateCompositionStrict; NO FILE always fails.
   addGate('Templates compose the right components  (each template/page uses the components Figma composes)',
-    parseGeneric(rTemplateCompose, /USES|MISSING|NO FILE|ORDER|skipped/));
+    parseGeneric(rTemplateCompose, S['template-composition-check.mjs']));
 
   // ── Markup ────────────────────────────────────────────────────────────────────
   addGate('Markup  (ids · component classes · icon references · every DS screen control is built)',
-    combineGates(parseGeneric(rHtmlStructure, /✅|❌/), parseGeneric(rScreenEl, /IN CODE|MISSING|MISMATCH|SEP GAP|counterpart|built as|row-separator|ADVISORY/)));
+    combineGates(parseGeneric(rHtmlStructure, S['html-structure-check.mjs']), parseGeneric(rScreenEl, S['screen-element-check.mjs'])));
   addGate('Required pieces are in place  (icon slots · component slots · form controls)',
-    combineGates(parseGeneric(rIconSlot, /✅|❌/), parseGeneric(rComponentSlot, /✅|❌/), parseGeneric(rFormControl, /✅|❌/)));
+    combineGates(parseGeneric(rIconSlot, S['icon-slot-check.mjs']), parseGeneric(rComponentSlot, S['component-slot-check.mjs']), parseGeneric(rFormControl, S['form-control-check.mjs'])));
   addGate('Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)',
-    combineGates(parseGeneric(rPseudo, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIcon, /DOCUMENTED|UNDOCUMENTED/), parseGeneric(rIconFreshness, /MATCH|CHANGED/), parseGeneric(rIconInv, /IN CODE|MISSING/)));
+    combineGates(parseGeneric(rPseudo, S['pseudo-element-check.mjs']), parseGeneric(rIcon, S['icon-check.mjs']), parseGeneric(rIconFreshness, S['icon-freshness-check.mjs']), parseGeneric(rIconInv, S['icon-inventory-check.mjs'])));
 
   // ── Animation & motion (Motion / Shadows are opt-in - no-op unless configured) ──
   addGate('Transitions  (duration · easing · property per DS selector)',
-    parseGeneric(rTransition, /✅|❌/));
+    parseGeneric(rTransition, S['transition-check.mjs']));
   addGate('Motion  (easing & duration variables → CSS)',
-    parseGeneric(rMotion, /MATCH|MISMATCH|SKIPPED|⏭/));
+    parseGeneric(rMotion, S['motion-check.mjs']));
   addGate('Shadows  (Figma effect styles → CSS box-shadow)',
-    parseGeneric(rEffect, /MATCH|MISMATCH|SKIPPED|⏭/));
+    parseGeneric(rEffect, S['effect-check.mjs']));
 
   // ── Rendered output & self-check ────────────────────────────────────────────────
   addGate('Renders correctly in a browser  (real computed styles vs the DS spec)',
-    parseGeneric(rRendered, /✅|❌|⏭/));
+    parseGeneric(rRendered, S['rendered-check.mjs']));
   addGate('What this audit actually checked  (which DS components & states are covered)',
-    parseGeneric(rCoverage, /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT|CODE CAPTURE/));
+    parseGeneric(rCoverage, S['coverage-check.mjs']));
 
   // ── Adoption baseline / ratchet (feature #2) ────────────────────────────────────
   // Let a real (imperfect) codebase adopt the audit without either a wall of red or turning gates
@@ -2558,7 +2592,9 @@ function reportFull(label, items, shown) {
       return out;
     };
 
-    const props  = read('component-prop-result.json');
+    // A props gate the project opted out of (frameworkComponents:false) shows no props table.
+    const propsSkipped = cfg.frameworkComponents === false && !cfg.htmlRealization;
+    const props  = propsSkipped ? null : read('component-prop-result.json');
     const parity = read('parity-check-result.json');
     if (!props && !(parity?.fail?.length || parity?.aliasFail?.length || parity?.passList?.length)) return;
 
@@ -2792,7 +2828,7 @@ function reportFull(label, items, shown) {
   // with --code-drift to list every item.
   {
     let propRes = null;
-    try { propRes = JSON.parse(readFileSync(join(ROOT, 'component-prop-result.json'), 'utf8')); } catch { /* optional */ }
+    if (!(cfg.frameworkComponents === false && !cfg.htmlRealization)) { try { propRes = JSON.parse(readFileSync(join(ROOT, 'component-prop-result.json'), 'utf8')); } catch { /* optional */ } }
     const propRows = Array.isArray(propRes?.rows) ? propRes.rows : [];
     const extra = propRows.filter((r) => r.status === 'extra');
     const rename = propRows.filter((r) => r.status === 'rename');
@@ -2844,7 +2880,9 @@ function reportFull(label, items, shown) {
         catch { console.log(C.dim(`     (duplication) surface not found, skipped: ${p}`)); }
       }
       const minCluster = Number.isFinite(cfg.duplication?.minCluster) ? cfg.duplication.minCluster : 5;
-      const { findings, parallel } = duplicationFindings({ surfaces, componentNames, tokenNames, minCluster });
+      let findings = [], parallel = [];
+      try { ({ findings, parallel } = duplicationFindings({ surfaces, componentNames, tokenNames, minCluster })); }
+      catch (e) { console.log(C.dim(`     (duplication) check skipped: ${e.message}`)); }
       if (findings.length) {
         const detail = process.argv.includes('--duplication');
         console.log(C.yellow(`\nℹ️  List duplication: ${findings.length} hand-maintained surface list(s) restate the DS. A copied list drifts - keep one home (the generated llms.txt/contracts) and reference it. Advisory.`));
@@ -3343,4 +3381,10 @@ function reportFull(label, items, shown) {
   } catch { /* a version nudge must never break the audit */ }
 
   process.exit(anyFail ? 1 : 0);
-})();
+})().catch((e) => {
+  // Anything the per-gate guards did not catch ends the run with one clear line, never a stack
+  // trace alone, and never a pass.
+  console.error(`\n❌ The audit stopped: ${e?.message ?? e}`);
+  if (process.env.PARITY_DEBUG) console.error(e?.stack ?? '');
+  process.exit(1);
+});

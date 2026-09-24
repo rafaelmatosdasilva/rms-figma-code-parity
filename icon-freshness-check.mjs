@@ -17,6 +17,10 @@
 import { readFileSync, existsSync } from 'fs';
 import { join }                     from 'path';
 
+// Every network call gives up after 30 s (FIGMA_FETCH_TIMEOUT_MS), so a stalled Figma response
+// cannot hang the audit or a pre-commit hook.
+const fetchSignal = () => AbortSignal.timeout(Math.max(1000, parseInt(process.env.FIGMA_FETCH_TIMEOUT_MS, 10) || 30000));
+
 const ROOT  = process.cwd();
 const TOKEN = process.env.FIGMA_TOKEN;
 
@@ -136,7 +140,7 @@ const renamed = [];
     const slice = allIds.slice(i, i + 50);
     const url = `https://api.figma.com/v1/files/${FILE_KEY}/nodes?ids=${encodeURIComponent(slice.join(','))}&depth=1`;
     try {
-      const r = await fetch(url, { headers: { 'X-Figma-Token': TOKEN } });
+      const r = await fetch(url, { headers: { 'X-Figma-Token': TOKEN }, signal: fetchSignal() });
       if (!r.ok) { console.log(`   ⚠️  icon rename check skipped for a batch - /nodes ${r.status}`); continue; }
       const json = await r.json();
       for (const id of slice) { const doc = json.nodes?.[id]?.document; if (doc?.name) liveNames[id] = doc.name; }
@@ -166,7 +170,7 @@ for (const batch of batches) {
 
   let imageUrls;
   try {
-    const resp = await fetch(apiUrl, { headers: { 'X-Figma-Token': TOKEN } });
+    const resp = await fetch(apiUrl, { headers: { 'X-Figma-Token': TOKEN }, signal: fetchSignal() });
     if (resp.status === 403) {
       console.log('⏭  Gate [17] skipped - FIGMA_TOKEN lacks file_content:read scope (403)');
       process.exit(0);
@@ -195,7 +199,7 @@ for (const batch of batches) {
 
     let svgText;
     try {
-      const r = await fetch(svgUrl);
+      const r = await fetch(svgUrl, { signal: fetchSignal() });
       if (!r.ok) { console.log(`   ⚠️  Could not fetch SVG for ${iconId}: ${r.status}`); continue; }
       svgText = await r.text();
     } catch (e) {

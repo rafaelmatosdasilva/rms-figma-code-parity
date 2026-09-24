@@ -21,6 +21,7 @@ import { loadCssSources } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 import { createLocator } from './component-locator.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -40,7 +41,7 @@ let CONTRACT = {}, CSS_HEIGHT_RULES = {}, CSS_BASE_RULE_VARS = [], STATE_SELECTO
 let FIGMA_LAYOUT_TO_CSS = {}, FONT_SCALE_TO_CSS = {}, COMPONENT_CSS_SELECTORS = {};
 let CSS_PROPERTY_ASSERTIONS = [], SURFACE_CONTAINERS = [], BUTTON_CLASS_RULES = [];
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.CONTRACT)                  CONTRACT                  = m.CONTRACT;
   if (m.CSS_HEIGHT_RULES)          CSS_HEIGHT_RULES          = m.CSS_HEIGHT_RULES;
   if (m.CSS_BASE_RULE_VARS)        CSS_BASE_RULE_VARS        = m.CSS_BASE_RULE_VARS;
@@ -56,7 +57,7 @@ try {
 // ── Load parity-map.mjs (EXPLICIT + SKIP_TOKENS for auto-derivation) ─────────
 let EXPLICIT = {}, SKIP_TOKENS = new Set();
 try {
-  const pm = await import(join(ROOT, 'parity-map.mjs'));
+  const pm = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   if (pm.EXPLICIT)    EXPLICIT    = pm.EXPLICIT;
   if (pm.SKIP_TOKENS) SKIP_TOKENS = pm.SKIP_TOKENS;
 } catch { /* optional */ }

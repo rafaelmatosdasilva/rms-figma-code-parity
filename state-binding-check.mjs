@@ -11,6 +11,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -23,12 +24,17 @@ const THEME_PATHS = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
 const PLUGIN_CSS  = cfg.paths?.pluginCSS ?? [];
 
 let CONTRACT = {};
-try {
-  const mod = await import(join(ROOT, 'structure-contract.mjs'));
-  CONTRACT = mod.CONTRACT ?? {};
-} catch {
+if (!existsSync(join(ROOT, 'structure-contract.mjs'))) {
   console.log('⏭ structure-contract.mjs not found - skipped');
   process.exit(0);
+}
+try {
+  const mod = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
+  CONTRACT = mod.CONTRACT ?? {};
+} catch (e) {
+  // The file exists but does not load (a syntax error, a bad import): a real error, never a skip.
+  console.log(`❌ structure-contract.mjs could not be loaded: ${e.message.split('\n')[0]}`);
+  process.exit(1);
 }
 
 if (!Object.keys(CONTRACT).length) {

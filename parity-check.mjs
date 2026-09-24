@@ -27,6 +27,7 @@ import { readFreshSnapshot } from './code-capture.mjs';   // the cascade-aware t
 import { resolveNamingSpec, tokenToVar as toVar } from './naming-convention.mjs';   // shared Figma↔code naming convention
 
 const ROOT     = process.cwd();
+import { pathToFileURL } from 'url';
 const FIX_MODE  = process.argv.includes('--fix');
 const JSON_MODE = process.argv.includes('--json');
 
@@ -94,7 +95,7 @@ let NEUTRAL_VAR_RE = /^--neutral-(\d+)$/;
 let neutralMaps = MODES.map(() => ({}));
 
 try {
-  const map = await import(join(ROOT, 'parity-map.mjs'));
+  const map = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
   if (map.NULL_TOKENS)     NULL_TOKENS     = map.NULL_TOKENS;
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;

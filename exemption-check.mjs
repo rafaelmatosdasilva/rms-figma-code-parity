@@ -21,6 +21,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadModes, buildResolver } from './mode-resolver.mjs';
 import { loadCssSources } from './css-source.mjs';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -41,7 +42,7 @@ let EXPLICIT_SIZING = {}, SIZING_SKIP = new Map();
 let COVERED = new Set(), COVERED_STATE = new Set(), COVERED_PREFIX = [];
 let PMAP = null;   // the imported parity-map module, reused below (avoids a second dynamic import)
 try {
-  PMAP = await import(join(ROOT, 'parity-map.mjs'));
+  PMAP = await import(pathToFileURL(join(ROOT, 'parity-map.mjs')).href);
   const map = PMAP;
   if (map.EXPLICIT)        EXPLICIT        = map.EXPLICIT;
   if (map.SKIP_TOKENS)     SKIP_TOKENS     = map.SKIP_TOKENS;

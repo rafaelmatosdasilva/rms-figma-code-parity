@@ -58,7 +58,7 @@
 //     only when the project declares it in ds-config.json, never imposed (No-imposed-structure).
 
 import { readFileSync, existsSync } from 'fs';
-import { join, resolve } from 'path';
+import { join, resolve, dirname } from 'path';
 import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
@@ -281,7 +281,10 @@ export function styleguideTarget(cfg, ROOT, exists = existsSync) {
   if (cfg?.a11y?.styleguide === false) return null;
   const rel = cfg?.styleguide?.out ?? 'apps/styleguide/index.html';
   const abs = join(ROOT, rel);
-  return exists(abs) ? { label: rel, url: pathToFileURL(abs).href, styleguide: true } : null;
+  if (exists(abs)) return { label: rel, url: pathToFileURL(abs).href, styleguide: true };
+  // Not built by the project yet: the code capture keeps its own copy, built from the same template.
+  const cap = join(ROOT, dirname(cfg?.codeReading?.out ?? '.parity-out/code.snapshot.json'), 'styleguide.html');
+  return cfg?.styleguide?.template && exists(cap) ? { label: 'styleguide (built by the code capture)', url: pathToFileURL(cap).href, styleguide: true } : null;
 }
 
 // Chrome discovery + DevTools plumbing live in cdp.mjs (shared with Gate [16]).

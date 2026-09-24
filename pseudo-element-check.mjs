@@ -22,6 +22,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join }                     from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -39,7 +40,7 @@ const SOURCES = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT
 // ── Load PSEUDO_ELEMENTS from structure-contract.mjs ─────────────────────────
 let ALLOWED = {};
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.PSEUDO_ELEMENTS && typeof m.PSEUDO_ELEMENTS === 'object') {
     ALLOWED = m.PSEUDO_ELEMENTS;
   }

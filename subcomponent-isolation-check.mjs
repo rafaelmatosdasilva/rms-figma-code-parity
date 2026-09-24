@@ -30,6 +30,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { pathToFileURL } from 'url';
 
 const ROOT = process.cwd();
 
@@ -52,7 +53,7 @@ const SOURCES = [...THEME_PATHS, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT
 // (see the second check below). Key = normalized selector, value = reason.
 let ALLOWED = {}, PLUGIN_OVERRIDES_ALLOWED = {};
 try {
-  const m = await import(join(ROOT, 'structure-contract.mjs'));
+  const m = await import(pathToFileURL(join(ROOT, 'structure-contract.mjs')).href);
   if (m.ALLOWED_BROAD_RULES && typeof m.ALLOWED_BROAD_RULES === 'object') {
     ALLOWED = m.ALLOWED_BROAD_RULES;
   }
