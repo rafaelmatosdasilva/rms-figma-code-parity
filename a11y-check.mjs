@@ -62,6 +62,7 @@ import { join, resolve } from 'path';
 import { spawn } from 'child_process';
 import { pathToFileURL } from 'url';
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
+import { loadLocator } from './component-locator.mjs';
 
 // ── Pure, unit-testable core (exported; importing this module runs NOTHING) ─────
 // Parse a computed-style color. Returns {r,g,b,a} or null when it is not an rgb()/rgba()
@@ -435,11 +436,8 @@ async function main() {
 
   const modes = (cfg.figma?.modes?.length ? cfg.figma.modes : [{ name: 'Light', snapshotKey: 'light' }])
     .map((m) => ({ name: m.name || m.snapshotKey || 'light', scheme: (m.snapshotKey || m.name || 'light').toLowerCase().includes('dark') ? 'dark' : 'light' }));
-  const selOf = (name) => {
-    if (cfg.componentSelectors?.[name]) return cfg.componentSelectors[name];
-    if (/^[.#\[]/.test(name)) return name;                        // already a CSS selector — use as-is
-    return '.' + name.charAt(0).toLowerCase() + name.slice(1);    // DS convention: ComponentName -> .componentName
-  };
+  const locator = await loadLocator(ROOT, cfg);   // the one shared component finder
+  const selOf = (name) => locator.selectorFor(name);
   const roots = components.length ? components.map(selOf) : null;
 
   const builtUiPath = (plugin) => {

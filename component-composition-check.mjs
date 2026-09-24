@@ -19,6 +19,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, extname, basename, relative } from 'path';
+import { loadLocator } from './component-locator.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -44,7 +45,8 @@ const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 
 const norm    = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 const esc     = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');   // safe to interpolate into a RegExp
-const selNorm = (name) => norm(COMPONENT_SELECTORS[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1)));
+const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
+const selNorm = (name) => norm(LOCATOR.classFor(name));
 
 // ── Universe of DS component names ────────────────────────────────────────────
 const universe = new Set(Object.keys(SNAP).filter(n => !n.startsWith('_')));

@@ -17,11 +17,12 @@ import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { evalConformance } from './eval-check.mjs';
+import { createLocator, loadLocator } from './component-locator.mjs';
 
 const CANDIDATE_EXTS = ['html', 'htm', 'jsx', 'tsx', 'vue', 'svelte', 'js', 'ts', 'md', 'txt'];
 
 // Assemble the DS context the core needs: the declared CSS var universe + the DS component classes.
-export function loadContext(ROOT, cfg) {
+export function loadContext(ROOT, cfg, { locator = createLocator(cfg) } = {}) {
   const themePaths = [cfg.paths?.themeCSS ?? 'src/theme.css'].flat();
   const pluginPaths = [cfg.paths?.pluginCSS ?? []].flat();
   const cssVars = new Set();
@@ -37,7 +38,7 @@ export function loadContext(ROOT, cfg) {
     if (cls) dsClasses.add(cls);
   }
   const struct = (() => { try { return JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotStructure || 'figma-structure.snapshot.json'), 'utf8')); } catch { return null; } })();
-  for (const name of Object.keys(struct?.components || {})) dsClasses.add('.' + name.charAt(0).toLowerCase() + name.slice(1));
+  for (const name of Object.keys(struct?.components || {})) dsClasses.add(locator.classFor(name));   // the one shared component finder
   return { cssVars, dsClasses };
 }
 
@@ -146,7 +147,7 @@ async function main() {
   }
   const outDir = cfg.evals?.outDir || 'evals';
   const ext = cfg.evals?.ext || 'html';
-  const ctx = loadContext(ROOT, cfg);
+  const ctx = loadContext(ROOT, cfg, { locator: await loadLocator(ROOT, cfg) });
 
   // GENERATION (optional): when evals.generate.cmd is set, produce the candidate from the prompt.
   const genCmd = cfg.evals?.generate?.cmd;

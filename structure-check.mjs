@@ -19,6 +19,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
+import { createLocator } from './component-locator.mjs';
 
 const ROOT = process.cwd();
 
@@ -500,11 +501,10 @@ const STANDARD_STATE_MODIFIER = {
   'false':        '', // "Disabled=False", "Selected=False" → base selector
 };
 
-function componentToBaseSelector(name) {
-  const overrides = cfg.componentSelectors ?? {};
-  if (overrides[name]) return overrides[name];
-  return '.' + name.charAt(0).toLowerCase() + name.slice(1);
-}
+// The one shared component finder (component-locator.mjs): componentSelectors, then the
+// contract's COMPONENT_CSS_SELECTORS main, then the naming convention.
+const LOCATOR = createLocator(cfg, { contractSelectors: COMPONENT_CSS_SELECTORS });
+const componentToBaseSelector = (name) => LOCATOR.selectorFor(name);
 
 function variantToModifier(props) {
   const mods = [];

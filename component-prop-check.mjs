@@ -25,6 +25,7 @@
 
 import { readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
 import { join, extname, basename, relative, resolve } from 'path';
+import { loadLocator } from './component-locator.mjs';
 
 const ROOT = process.cwd();
 
@@ -93,7 +94,8 @@ function contractBindings(figmaName) {
 const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 // Figma property keys carry a node-id suffix: "Show Label#958:0" -> "Show Label".
 const cleanFigmaProp = (k) => k.replace(/#[\d:]+$/, '').trim();
-const baseSelectorNorm = (name) => norm(COMPONENT_SELECTORS[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1)));
+const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
+const baseSelectorNorm = (name) => norm(LOCATOR.classFor(name));
 
 // ── Discover candidate source files ───────────────────────────────────────────
 const SRC_DIRS = (cfg.componentSrcDirs ?? ['src', 'components', 'app', 'lib', 'packages']).map(d => join(ROOT, d));

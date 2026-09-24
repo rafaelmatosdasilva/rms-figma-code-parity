@@ -24,16 +24,12 @@ import { dirname, resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { resolveStatus } from './decision-status.mjs';
+import { loadLocator } from './component-locator.mjs';
 
 const LAYERS = ['system', 'foundations', 'components', 'patterns', 'templates', 'pages', 'flows'];
 
 function readJSON(p) { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } }
 
-function classOf(name, cfg) {
-  const sel = cfg?.componentSelectors?.[name];
-  if (sel) return sel.match(/[.#][\w-]+/)?.[0] || sel;
-  return '.' + name.charAt(0).toLowerCase() + name.slice(1);
-}
 
 function usageOf(cls, sources) {
   const tok = cls.replace(/^[.#]/, '');
@@ -107,6 +103,7 @@ function ingestGuidelines(ROOT, cfg) {
 }
 
 export async function generateIntent(ROOT, cfg, opts = {}) {
+  const locator = await loadLocator(ROOT, cfg);   // one answer to "which class is component X"
   const paths = cfg.paths || {};
   const themeCss = Array.isArray(paths.themeCSS) ? paths.themeCSS[0] : paths.themeCSS;
   const dsDir = themeCss ? dirname(resolve(ROOT, themeCss)) : ROOT;
@@ -152,7 +149,7 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
   intent.components = {};
   for (const name of Object.keys(structure)) {
     const s = structure[name] || {};
-    const cls = classOf(name, cfg);
+    const cls = locator.classFor(name);
     const pr = props[name] || {};
     const annotations = (pr.annotations || []).map(a => (a.label || a)).filter(Boolean);
     const variants = Object.keys(s.variantHeight || s.variantStroke || {});

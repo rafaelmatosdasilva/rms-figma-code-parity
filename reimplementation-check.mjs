@@ -35,6 +35,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, dirname, basename } from 'path';
+import { loadLocator } from './component-locator.mjs';
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -86,7 +87,8 @@ addSnap('component-composition.snapshot.json', (s) => {
 const SNAP_STRUCT = cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json';
 addSnap(SNAP_STRUCT, (s) => { for (const k of Object.keys(s.components ?? {})) universe.add(k); });
 
-const selOf = (name) => cfg.componentSelectors?.[name] ?? ('.' + name.charAt(0).toLowerCase() + name.slice(1));
+const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
+const selOf = (name) => LOCATOR.classFor(name);
 // A role -> set of normalized DS class tokens that realize it (buttonprimary, buttonsecondary, …),
 // plus a generic role token (button). ownedRoles = the roles the DS actually defines a component for.
 const roleClasses = {};   // role -> Set(normClassToken)

@@ -1986,7 +1986,7 @@ return {
 
 Gate [3c] auto-derives CSS var assertions using **naming convention** - no `CONTRACT.propertyMap` dependency:
 
-- **Component name → CSS selector:** lowercase the first letter of the Figma component set name (e.g. `"ButtonSecondary"` → `.buttonSecondary`). Override per-component via `ds-config.json → componentSelectors` for non-convention selectors (e.g. `"Input": ".inputGroup"`, `"Tooltip": "#tooltip"`).
+- **Component name → CSS selector:** every gate asks one shared finder (`component-locator.mjs`), so all of them agree. First answer wins: `ds-config.json → componentSelectors` (e.g. `"Input": ".inputGroup"`, `"Tooltip": "#tooltip"`), then the contract's `COMPONENT_CSS_SELECTORS[name].main`, then a name that already is a selector (`.x`, `#x`), then the convention (lowercase the first letter of the Figma component set name, `"ButtonSecondary"` → `.buttonSecondary`).
 - **Variant props → CSS modifier:** `state=hover` → `:hover`, `state=focus` → `:focus`, `state=active`/`pressed` → `:active`, `state=focus-within` → `:focus-within`, `state=default`/any `=false` → base selector. Unknown values (e.g. `"negative"`, `"selected"`, `"true"`) → variant skipped, no assertion generated.
 
 Only standard, universally-derivable states are mapped - no false positives for project-specific state semantics. Manual `CSS_BASE_RULE_VARS` entries handle non-standard states (badge severity levels, toast loading/success, etc.).
