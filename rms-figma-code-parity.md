@@ -546,8 +546,10 @@ only when it is told exactly what exists, and its output is checked every time. 
 and the code prop name when known), the components it may contain (from Figma's composition and the
 nesting the code capture saw), what it must never contain, and its status. `llms.txt` gets the same
 catalog as an aligned table (`Badge  Tone=info|warn  Text=text`), because small models read aligned
-tables far better than JSON Schema. Interaction states (hover, focus) are left out: the component owns
-them, not the generator.
+tables far better than JSON Schema. Interaction states (hover, focus) are not props a generator sets:
+the component owns them. When the code capture is fresh, each entry also has `rendered`: its size on a
+real page, `targetSize` for a control (with `atLeast24`, WCAG 2.5.8), and what each state changes, by
+token where the code uses one (`"State=Hover": { "backgroundColor": "var(--btn-bg-hover)" }`).
 
 `rms-figma-code-parity --check-ui <generated.json>` checks one generated UI against that catalog. It
 accepts a flat A2UI-style list (`{ root, components: [{ id, component, children: [ids], …props }] }`) or a
@@ -647,7 +649,8 @@ there, never a failure.
   not meant to reflow).
 - **State contrast, no browser needed** — from the code capture: each component's text against its own
   background in every mode and every state the capture produced (hover, selected, error…). Disabled states
-  are exempt. Printed with the token contrast in the audit.
+  are exempt. Each finding names the two colour tokens, the rule's file and line, and links the
+  component in Figma. Printed with the token contrast in the audit.
 - **Token contrast** — see-through text is blended over its background; a see-through background (no
   known surface under it) is skipped; disabled pairs are exempt; pairs come from every mode's token names.
   Border, outline and focus-ring tokens are paired at 3:1 with `a11y.nonTextPairs: true` (opt-in: a border is
@@ -879,6 +882,17 @@ sweep finishes with a representative sample, logging `walk capped at N nodes`. N
 are far under the cap and are collected in full.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
+
+**Since the last run.** The report ends with what changed since the previous run with the same scope:
+findings that are new, findings that are gone, and findings whose count or value moved. The findings are
+kept in `.parity-out/last-findings.json`. A long report still says at a glance what this change did.
+
+**Reading a finding.** A measured difference names the component and field, the Figma value, the
+rendered value and its token, the winning rule with its `file:line`, and what to write there
+(`→ set var(--gap-xl)`). A value read from one source only (the browser or the stylesheet, not both)
+says `[read from one source]`. Each component with a finding gets a `🔗` line that opens its node in
+Figma (from `figmaFileKey` and the node ids in the snapshots). Lines that report nothing, such as
+`❌ FAIL 0`, are left out.
 
 ---
 

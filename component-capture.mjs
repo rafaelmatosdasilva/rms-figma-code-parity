@@ -421,6 +421,10 @@ export async function captureComponents(ctx) {
     for (const prop of Object.keys(TRACE)) {
       const v = sb?.cs?.[prop];
       if (v != null && v !== props[prop]?.value && v !== props[prop]?.drawn) changed[prop] = { value: v, var: sTrace[prop]?.var ?? undefined, rule: sTrace[prop]?.rule ?? undefined, at: sTrace[prop]?.at ?? undefined };
+      // Point at the source rule, not the built page, as the base facts do.
+      const c = changed[prop];
+      const s = c?.rule ? staticDeclFor(ruleIndex, c.rule, prop, staticRootVars) : null;
+      if (s?.at && c.at && s.at !== c.at) { c.renderedAt = c.at; c.at = s.at; }
     }
     const matched = Object.values(changed).some((c) => c.rule && c.rule.replace(/\s+/g, ' ').includes(st.selector.replace(/\s+/g, ' ')));
     return { selector: st.selector, produced, changed, colors: colorsOf(sMode), ruleMatched: matched };

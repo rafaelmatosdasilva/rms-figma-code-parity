@@ -94,7 +94,7 @@ function norm(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
 // ── Resolve the code file(s) for a plugin/screen ──
 // Default: everything under apps/<plugin>/ (html/js/vue/jsx/tsx). Override the directory per
 // plugin via ds-config.json -> pluginDirs { "<plugin>": "path/from/root" }.
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs', 'test', '__tests__', '__mocks__', 'e2e']);
+const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs', '.parity-out', 'test', '__tests__', '__mocks__', 'e2e']);
 const EXT = new Set(['.html', '.htm', '.vue', '.jsx', '.tsx', '.js', '.ts', '.svelte']);
 function walk(dir, out) {
   let entries = [];

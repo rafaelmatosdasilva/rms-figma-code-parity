@@ -79,7 +79,7 @@ const uni = [...universe].map(n => ({ name: n, nameNorm: norm(n), selNorm: selNo
 // ── Discover source files ─────────────────────────────────────────────────────
 const SRC_DIRS = (cfg.templateSrcDirs ?? cfg.componentSrcDirs ?? ['src', 'components', 'app', 'lib', 'packages'])
   .map(d => join(ROOT, d));
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs']);
+const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs', '.parity-out']);
 const CODE_EXT = new Set(['.vue', '.tsx', '.jsx', '.ts', '.js', '.svelte']);
 function walk(dir, out) {
   let entries = [];

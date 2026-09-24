@@ -40,7 +40,7 @@ const EXEMPT = new Set((cfg.knownUnimplementedIcons ?? []).map(s => norm(s)));
 function norm(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
 
 // ── Collect the icon names the CODE defines (sprite symbols + #icon-... references) ──
-const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs']);
+const SKIP_DIR = new Set(['node_modules', 'dist', 'build', '.git', '.next', 'coverage', '.parity-refs', '.parity-out']);
 const EXT = new Set(['.vue', '.tsx', '.jsx', '.ts', '.js', '.html', '.svg', '.svelte', '.css']);
 function walk(dir, out) {
   let entries = [];

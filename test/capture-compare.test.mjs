@@ -4,7 +4,7 @@
 // not differences).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareTokens, compareComponents } from '../capture-compare.mjs';
+import { compareTokens, compareComponents, measuredLine } from '../capture-compare.mjs';
 
 const maps = (over = {}) => ({ EXPLICIT: {}, EXPLICIT_SIZING: {}, SKIP_TOKENS: new Set(), NULL_TOKENS: new Set(), KNOWN_NULL: new Set(), SIZING_SKIP: new Map(), TYPO: {}, ...over });
 const cfg = { figma: { namingConvention: { dropSegments: ['color', 'default'] } } };
@@ -39,7 +39,11 @@ test('components: heights only when the code fixes one; min-height by its value;
 test('components: a real difference names the token, the rule and the source line', () => {
   const code = { components: { bar: { confidence: 'high', instance: { hasText: true }, props: { columnGap: { value: '8px', var: '--gap-m', rule: '.bar', at: 'theme.css:12', confidence: 'verified' } } } } };
   const r = compareComponents(code, { bar: { gapVar: 'gap/xl' } }, { sizing: { 'gap/xl': '16px' } }, cfg, maps());
-  assert.deepEqual(r.differ[0], { component: 'bar', field: 'gap', figma: 'gap/xl', figmaValue: '16px', code: '8px', codeVar: '--gap-m', expectedVar: '--gap-xl', rule: '.bar', at: 'theme.css:12' });
+  assert.deepEqual(r.differ[0], { component: 'bar', field: 'gap', figma: 'gap/xl', figmaValue: '16px', code: '8px', codeVar: '--gap-m', expectedVar: '--gap-xl', rule: '.bar', at: 'theme.css:12', confidence: 'verified' });
+  // The line a person reads: what differs, where, and what to write.
+  assert.equal(measuredLine(r.differ[0]), 'bar gap: Figma gap/xl (16px), rendered 8px via --gap-m  (.bar · theme.css:12)  → set var(--gap-xl)');
+  assert.match(measuredLine({ ...r.differ[0], confidence: 'single-source' }), /\[read from one source\]/);
+  assert.doesNotMatch(measuredLine({ component: 'x', field: 'background', figma: 'paints a background', code: 'no background', rule: '.x', at: 'a.css:1' }), /→ set/);
 });
 
 test('components: padding of icon-only instances is not compared with a labelled design default', () => {

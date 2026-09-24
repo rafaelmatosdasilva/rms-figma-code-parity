@@ -30,6 +30,7 @@ import { collectRawValues, COLLECT_NODE_BUDGET }                from './collect-
 import { extractDynamicClassPrefixes }                          from './dynamic-class-prefixes.mjs';
 import { frameworkGateSkipReason }                              from './component-framework-gate.mjs';
 import { parseGateOutput, GATE_SUMMARY as S }                   from './audit-parse.mjs';
+import { ZERO_FAIL }                                             from './run-diff.mjs';
 import { loadBaselineLabels, classifyBaseline, writeBaseline } from './baseline.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -1133,6 +1134,7 @@ function reportFull(label, items, shown) {
   const SCAN_EXCLUDE_DIRS = new Set([
     'node_modules', '.git', 'dist', 'build', '.nuxt', '.next', '.output',
     'coverage', '.cache', 'public', 'static',
+    '.parity-out', '.parity-refs',   // the engine's own output and references, never the project's source
     ...(cfg.scanExcludeDirs ?? []),
   ]);
   // Only scan files that can realistically contain CSS var() references.
@@ -1286,7 +1288,7 @@ function reportFull(label, items, shown) {
       return { pass: false, lines: [C.yellow('🚧 STRUCTURE cannot verify - no compiled component CSS.'), ...guidance] };
     }
     const pass = r.status === 0;
-    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  .*: Figma .*, rendered /.test(l) && l.trim()).map(l => l.trim());
+    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  .*: Figma .*, rendered |🔗 .* in Figma: /.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n')
       .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
       .map(l => '  ' + l.trim()).slice(0, 20);
@@ -2556,6 +2558,11 @@ function reportFull(label, items, shown) {
     }
   }
 
+  // Everything the report prints from here is also kept, so the next run can say what changed.
+  const _reportLines = [];
+  const _log = console.log;
+  console.log = (...a) => { _reportLines.push(a.map(String).join(' ')); _log(...a); };
+
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
   console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
@@ -2574,7 +2581,8 @@ function reportFull(label, items, shown) {
     else icon = g.pass ? C.green('✅') : C.red('❌');
     console.log(`${icon}  [${i + 1}] ${C.bold(g.label)}`);
     if (g.baselined) console.log(C.yellow('       baselined - accepted adoption debt (not a regression). Fix it, then re-run --baseline to lock it in.'));
-    for (const line of g.lines || []) console.log(`       ${line}`);
+    // A zero count on a fail line ("❌ FAIL  0") says nothing failed: it is left out.
+    for (const line of g.lines || []) if (!ZERO_FAIL.test(String(line).replace(/\x1b\[[0-9;]*m/g, '').trim())) console.log(`       ${line}`);
     console.log();
   });
 
@@ -2904,6 +2912,7 @@ function reportFull(label, items, shown) {
   // just surface the detail (or a clean ⏭ when no browser). Run with --a11y to list every finding.
   if (rA11y && (rA11y.stdout || '').trim()) {
     process.stdout.write(rA11y.stdout.replace(/\s+$/, '') + '\n');
+    _reportLines.push(rA11y.stdout);
   }
 
   // ── Token layering (agnostic, descriptive — never a gate) ───────────────────
@@ -2993,8 +3002,13 @@ function reportFull(label, items, shown) {
         const { findings, checked } = stateContrastFindings(cap);
         if (findings.length) {
           console.log(C.yellow(`\n⚠️  State contrast: ${findings.length} component state(s) below WCAG AA, as rendered (${checked} checked; disabled states exempt).`));
-          for (const f of findings.slice(0, 20)) console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.fg} on ${f.bg}`));
+          const { colorHex } = await import('./css-values.mjs');
+          const hex = (v, name) => `${colorHex(v) ?? v}${name ? ` (${name})` : ''}`;
+          for (const f of findings.slice(0, 20)) console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${hex(f.fg, f.fgVar)} on ${hex(f.bg, f.bgVar)}${f.at ? `  (${f.at})` : ''}`));
           if (findings.length > 20) console.log(`     … ${findings.length - 20} more`);
+          const { figmaLinker } = await import('./figma-link.mjs');
+          const linkFor = figmaLinker(ROOT, cfg);
+          for (const comp of [...new Set(findings.slice(0, 20).map((f) => f.component))]) { const u = linkFor(comp); if (u) console.log(`     🔗 ${comp} in Figma: ${u}`); }
         } else if (checked) console.log(`\nℹ️  State contrast: every rendered component state meets WCAG AA (${checked} checked; disabled states exempt).`);
       }
     } catch { /* advisory: never fails */ }
@@ -3381,6 +3395,33 @@ function reportFull(label, items, shown) {
     console.log('\n' + C.bold('  AI-READINESS SCORECARD') + C.dim('  (advisory - a running measure, never blocks)'));
     for (const [st, label, detail] of rows) console.log(`  ${dot(st)} ${label.padEnd(16)} ${C.dim(detail)}`);
   }
+
+  // ── Since the last run ───────────────────────────────────────────────────────
+  // The findings this run printed, against the ones the last run with the same scope printed.
+  console.log = _log;
+  try {
+    const { collectFindings, diffFindings, diffReport } = await import('./run-diff.mjs');
+    const ledgerPath = join(ROOT, '.parity-out', 'last-findings.json');
+    let ledger = {};
+    try { ledger = JSON.parse(readFileSync(ledgerPath, 'utf8')); } catch { /* first run */ }
+    const scopeKey = _scopeNames.slice().sort().join(',') || '(all)';
+    const now = collectFindings(_reportLines);
+    const prev = ledger.scopes?.[scopeKey];
+    if (!prev) console.log(C.dim(`\nℹ️  Since the last run: this is the first recorded run${_scopeNames.length ? ' for this scope' : ''}; the next one lists what is new, gone or changed.`));
+    else {
+      const d = diffFindings(prev.findings ?? [], now);
+      const n = d.added.length + d.gone.length + d.changed.length;
+      const when = String(prev.at ?? '').replace('T', ' ').slice(0, 16);
+      if (!n) console.log(`\nℹ️  Since the last run (${when}): nothing new, nothing gone.`);
+      else {
+        console.log((d.added.length ? C.yellow : (s) => s)(`\n${d.added.length ? '⚠️ ' : 'ℹ️ '} Since the last run (${when}): ${d.added.length} new · ${d.gone.length} gone · ${d.changed.length} changed`));
+        for (const l of diffReport(d)) console.log(l);
+      }
+    }
+    ledger.scopes = { ...(ledger.scopes ?? {}), [scopeKey]: { at: new Date().toISOString(), findings: now } };
+    mkdirSync(dirname(ledgerPath), { recursive: true });
+    writeFileSync(ledgerPath, JSON.stringify(ledger, null, 1) + '\n');
+  } catch { /* the comparison is a convenience: it never breaks the run */ }
 
   // Passive, throttled "you're behind" nudge - at most once/day, best-effort, never
   // blocks or errors a run. Explicit checks: `node scripts/audit.mjs --version`.

@@ -1819,7 +1819,7 @@ try {
   const { readFreshSnapshot } = await import('./code-capture.mjs');
   const cap = await readFreshSnapshot(ROOT, cfg);
   if (cap?._sources?.browser) {
-    const { loadParityMaps, compareComponents } = await import('./capture-compare.mjs');
+    const { loadParityMaps, compareComponents, measuredLine } = await import('./capture-compare.mjs');
     let vars = {};
     try { vars = JSON.parse(readFileSync(join(ROOT, cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json'), 'utf8')); } catch { /* optional */ }
     const r = compareComponents(cap, snap?.components ?? {}, vars, cfg, await loadParityMaps(ROOT, cfg));
@@ -1828,7 +1828,10 @@ try {
     const mark = strictMeasured ? '❌' : '⚠️ ';
     if (r.differ.length) {
       console.log(`\n${mark} MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma${strictMeasured ? '' : ' - advisory'})`);
-      for (const d of r.differ) console.log(`   ${mark} ${d.component} ${d.field}: Figma ${d.figma}${d.figmaValue ? ` (${d.figmaValue})` : ''}, rendered ${d.code}${d.codeVar ? ` via ${d.codeVar}` : ''}${d.at ? `  (${d.rule} · ${d.at})` : ''}`);
+      for (const d of r.differ) console.log(`   ${mark} ${measuredLine(d)}`);
+      const { figmaLinker } = await import('./figma-link.mjs');
+      const linkFor = figmaLinker(ROOT, cfg);
+      for (const comp of [...new Set(r.differ.map((d) => d.component))]) { const u = linkFor(comp); if (u) console.log(`   🔗 ${comp} in Figma: ${u}`); }
       if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
   }

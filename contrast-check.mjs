@@ -61,22 +61,26 @@ export function stateContrastFindings(code) {
     const tp = c.parts?.text?.props ?? c.props ?? {};
     const size = num(tp.fontSize?.value), weight = num(tp.fontWeight?.value);
     const threshold = size >= 24 || (size >= 18.66 && weight >= 700) ? 3 : 4.5;
-    const check = (state, mode, fg, bg) => {
+    const check = (state, mode, fg, bg, src = {}) => {
       const f = parseColor(fg), b = parseColor(bg);
       if (!f || !b || b[3] < 1 || f[3] === 0) return;
       checked++;
       const a = f[3];
       const ratio = Math.round(contrastRatio({ r: f[0] * a + b[0] * (1 - a), g: f[1] * a + b[1] * (1 - a), b: f[2] * a + b[2] * (1 - a) }, { r: b[0], g: b[1], b: b[2] }) * 100) / 100;
-      if (ratio < threshold) findings.push({ component: name, state, mode, ratio, threshold, fg, bg });
+      if (ratio < threshold) findings.push({ component: name, state, mode, ratio, threshold, fg, bg, fgVar: src.fg?.var ?? null, bgVar: src.bg?.var ?? null, at: src.fg?.at ?? src.bg?.at ?? null });
     };
-    for (const m of modes) check('default', m, colors[m].color, colors[m].backgroundColor);
+    const baseSrc = { fg: tp.color ?? c.props?.color, bg: c.props?.backgroundColor };
+    for (const m of modes) check('default', m, colors[m].color, colors[m].backgroundColor, baseSrc);
     const base = colors[modes[0]];
     for (const [label, st] of Object.entries(c.states ?? {})) {
       if (/disabled|inactive/i.test(label)) continue;
       if (/^found/i.test(String(st.produced ?? ''))) continue;   // measured on another element: its text may differ
       const ch = st.changed ?? {};
       if (!ch.color && !ch.backgroundColor) continue;
-      check(label, modes[0], ch.color?.value ?? base.color, ch.backgroundColor?.value ?? base.backgroundColor);
+      const src = { fg: ch.color ?? baseSrc.fg, bg: ch.backgroundColor ?? baseSrc.bg };
+      // The capture records the state's colours in every mode; an older snapshot only has the change.
+      if (st.colors && Object.keys(st.colors).length) for (const [m, col] of Object.entries(st.colors)) check(label, m, col.color, col.backgroundColor, src);
+      else check(label, modes[0], ch.color?.value ?? base.color, ch.backgroundColor?.value ?? base.backgroundColor, src);
     }
   }
   return { findings, checked };

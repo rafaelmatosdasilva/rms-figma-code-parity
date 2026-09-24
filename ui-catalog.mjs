@@ -5,8 +5,8 @@
 // design-system UI if it is told exactly what exists, and its output is checked every time.
 //   • buildCatalog()  - one entry per component, from the contracts (Figma) and, when fresh, the
 //                       code snapshot: its props with their allowed values and defaults, the code
-//                       prop names, which components it may contain, what never goes with it, and
-//                       its status. Written as contracts/catalog.json, and as an aligned table in
+//                       prop names, which components it may contain, what never goes with it, its
+//                       status, and what the code renders (size, target size, per-state values). Written as contracts/catalog.json, and as an aligned table in
 //                       llms.txt (small models read aligned tables far better than JSON Schema).
 //   • checkUi()       - a deterministic, prompt-blind checker for a generated UI. It applies one
 //                       written definition of valid output, never repairs and never adds anything,
@@ -48,6 +48,8 @@ export function buildCatalog(built, { code = null, selectorFor = null } = {}) {
     if (c.status?.state && c.status.state !== 'current') entry.status = c.status.state;
     if (c.useInstead?.length) entry.useInstead = c.useInstead;
     if (c.whenNotToUse) entry.whenNotToUse = c.whenNotToUse;
+    const rendered = renderedFacts(code?.components?.[name], c.semantics);
+    if (rendered) entry.rendered = rendered;
     components[name] = entry;
   }
   return {
@@ -55,6 +57,29 @@ export function buildCatalog(built, { code = null, selectorFor = null } = {}) {
     rules: RULES,
     components,
   };
+}
+
+// What the code renders, for a generator that builds a screen around the component: its size as
+// found on a real page, whether a control reaches the 24×24 target size (WCAG 2.5.8), and what each
+// state changes, by token where the code uses one. Only real instances count: a bare or hidden copy
+// takes the size of its test host, not its own.
+const INTERACTIVE = /^(button|a|input|select|textarea|summary|link|checkbox|radio|switch|tab|menuitem|option|slider|combobox|textbox|spinbutton)$/i;
+function renderedFacts(c, semantics) {
+  if (!c) return null;
+  const out = {};
+  const real = ['found', 'isolated-copy'].includes(c.instance?.how);
+  if (real && c.size?.height) {
+    out.size = { width: Math.round(c.size.width), height: Math.round(c.size.height) };
+    const role = semantics?.aria?.role ?? semantics?.element;
+    if (role && INTERACTIVE.test(role)) out.targetSize = { ...out.size, atLeast24: out.size.width >= 24 && out.size.height >= 24 };
+  }
+  const states = {};
+  for (const [label, st] of Object.entries(c.states ?? {})) {
+    const changed = Object.fromEntries(Object.entries(st.changed ?? {}).map(([p, f]) => [p, f.var ? `var(${f.var})` : f.value]));
+    if (Object.keys(changed).length) states[label] = changed;
+  }
+  if (Object.keys(states).length) out.states = states;
+  return Object.keys(out).length ? out : null;
 }
 
 // The definition of valid output, written down once. Every finding refers to one of these.

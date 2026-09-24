@@ -22,7 +22,7 @@
 // Config (all optional): ds-config.json → codeReading: { browser: "auto" | "off", pages: [paths or URLs],
 //                                                       out: ".parity-out/code.snapshot.json" }
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -456,7 +456,7 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
         notRead.push(...nest.notRead);
       } finally { cdp.close(); }
     } catch (e) { notRead.push(`browser reading failed: ${e.message.split('\n')[0]}`); }
-    finally { chrome?.kill(); }
+    finally { chrome?.kill(); try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best effort */ } }
   } else if (browserNote) notRead.push(`browser reading skipped: ${browserNote}`);
 
   const { tokens, appTokens, counts } = mergeTokenReadings({ staticByMode, browser, modes, browserNote: browser ? null : browserNote });
