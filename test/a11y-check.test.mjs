@@ -6,8 +6,45 @@ import assert from 'node:assert/strict';
 import {
   parseColor, over, effectiveBg, relLuminance, contrastRatio,
   isLargeText, aaThreshold, contrastFindings, INTERACTIVE_ROLES,
-  styleguideTarget,
+  styleguideTarget, A11Y_GUIDE, a11yItemLine, a11yFindingRecord,
 } from '../a11y-check.mjs';
+
+// ── Plain-language reporting + machine record ──
+test('[plain] every issue kind has a title/why/fix, and no raw jargon in the guidance', () => {
+  for (const kind of ['contrast', 'name', 'focus', 'ariastate', 'keyboard']) {
+    const g = A11Y_GUIDE[kind];
+    assert.equal(typeof g.title(1), 'string');
+    assert.ok(g.why.length > 10 && g.fix.length > 10);
+    // human copy must not leak internal check names
+    assert.doesNotMatch(g.why + g.fix, /no-focus|state-not-exposed|not-keyboard|cannotCompute/);
+  }
+});
+test('[plain] titles are singular/plural aware', () => {
+  assert.match(A11Y_GUIDE.contrast.title(1), /piece of text is/);
+  assert.match(A11Y_GUIDE.contrast.title(3), /3 pieces of text are/);
+  assert.match(A11Y_GUIDE.focus.title(1), /control does not/);
+  assert.match(A11Y_GUIDE.focus.title(2), /2 controls do not/);
+});
+test('[plain] a11yItemLine reads as a sentence, not a raw selector dump', () => {
+  const c = a11yItemLine('contrast', { theme: 'Light', desc: '.lbl', text: 'Name', ratio: 1.6, threshold: 4.5 });
+  assert.match(c, /the text "Name"/);
+  assert.match(c, /1\.6 out of 21/);
+  assert.match(c, /Light theme/);
+  assert.equal(a11yItemLine('name', { role: 'button' }), 'A button with no label');
+  assert.equal(a11yItemLine('name', { role: 'textbox' }), 'An input field with no label');
+});
+test('[json] a11yFindingRecord carries the exact facts + the fix for a machine', () => {
+  const c = a11yFindingRecord('contrast', { theme: 'Dark', desc: '.err', text: 'Oops', ratio: 2.1, threshold: 4.5 });
+  assert.equal(c.issue, 'contrast');
+  assert.equal(c.selector, '.err');
+  assert.equal(c.contrast, 2.1);
+  assert.equal(c.needs, 4.5);
+  assert.equal(c.theme, 'Dark');
+  assert.ok(c.fix && c.fix.length > 10);
+  const n = a11yFindingRecord('name', { role: 'button', desc: '<button> with no accessible name' });
+  assert.equal(n.role, 'button');
+  assert.ok(n.fix.includes('aria-label'));
+});
 
 const approx = (a, b, eps = 0.02) => Math.abs(a - b) <= eps;
 

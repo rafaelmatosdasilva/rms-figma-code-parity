@@ -429,9 +429,13 @@ default, extend via `a11y.stateClasses`), and **keyboard reachability** (an inte
 be reached by keyboard — an interactive role on a non-focusable element, or a native control with
 `tabindex=-1`). Findings come from measured pixels and the a11y tree, no assumed DS shape (No-imposed-structure).
 
-**Advisory by default** (a totals line: `a11y: N contrast, M missing names, K no-focus, P state-not-exposed, Q not-keyboard across T themes`);
-`--a11y` lists every finding; `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It runs
-inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y]`
+**Advisory by default**, and the report is written in **plain language, no jargon** — each issue says what is
+wrong, why it matters to a real person, and what to do about it. Three audiences, one set of findings:
+the default is the plain human summary; **`--a11y`** adds the exact elements (still plain); **`--json`** emits
+the same findings as a machine-readable record (selector, contrast ratio, theme, role, and the fix) for an
+agent or CI. When it runs against anything other than the styleguide it ends with a one-line tip on how to
+get the deepest, per-state result. `ds-config.json → a11yStrict: true` promotes findings to a hard fail. It
+runs inside the audit and standalone: `node a11y-check.mjs [--component A,B|.selector] [--url <page>] [--a11y|--json]`
 (`--component` scopes the sweep and accepts a raw CSS selector too). **Skips cleanly** (exit 0) with no
 browser, never a false fail. Deps: Node >= 22 (built-in WebSocket), Chrome/Chromium (or `CHROME_PATH`), and
 a render target.

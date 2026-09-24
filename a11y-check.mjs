@@ -125,6 +125,56 @@ export function contrastFindings(textEls, theme) {
   return out;
 }
 
+// ── Plain-language reporting (pure; exported for tests) ─────────────────────────
+// No jargon: every issue says what is wrong, why it matters to a real person, and what to
+// do about it. `title` returns the count sentence, singular/plural aware.
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+export const A11Y_GUIDE = {
+  contrast: {
+    title: (n) => `${plural(n, 'piece of text is', 'pieces of text are')} hard to read`,
+    why: 'The text colour is too close to its background, so it is hard to read — and can be invisible when the page is shown in the other theme (light vs dark).',
+    fix: 'Use a darker or lighter text colour, or add the colour for the theme that is missing.',
+  },
+  name: {
+    title: (n) => `${plural(n, 'button or field has', 'buttons or fields have')} no label for screen readers`,
+    why: 'A button that is only an icon, or a field with no label, is silent to someone using a screen reader — they hear nothing when they reach it.',
+    fix: 'Give it a name: add aria-label to an icon button, or a <label> to an input.',
+  },
+  focus: {
+    title: (n) => `${plural(n, 'control does', 'controls do')} not show where the keyboard is`,
+    why: 'When someone moves through the page with the Tab key, nothing lights up, so they cannot tell which control they are on.',
+    fix: 'Add a visible outline (a focus ring) on the control itself when it is focused — not only on a box around it.',
+  },
+  ariastate: {
+    title: (n) => `${plural(n, 'control shows', 'controls show')} their state only by looks`,
+    why: 'Something is marked selected, checked or open only with colour or a CSS class, so a screen reader never announces that state.',
+    fix: 'Also set the matching accessibility attribute: aria-selected, aria-checked, aria-expanded, and so on.',
+  },
+  keyboard: {
+    title: (n) => `${plural(n, 'control cannot', 'controls cannot')} be used with the keyboard`,
+    why: 'The control works with a mouse, but the Tab key skips over it, so people who only use a keyboard cannot reach it.',
+    fix: 'Use a real <button> or link, or add tabindex="0" so it can be focused.',
+  },
+};
+const A11Y_ROLE_WORD = { button: 'A button', link: 'A link', textbox: 'An input field', searchbox: 'A search field', checkbox: 'A checkbox', radio: 'A radio button', switch: 'A switch', combobox: 'A dropdown', tab: 'A tab', slider: 'A slider' };
+// One readable line locating a single finding.
+export function a11yItemLine(kind, f) {
+  if (kind === 'contrast') {
+    const what = f.text ? `the text "${f.text}"` : (f.desc || 'text');
+    return `${what} — its readability score is ${f.ratio} out of 21, needs at least ${f.threshold} (${f.theme} theme)`;
+  }
+  if (kind === 'name') return `${A11Y_ROLE_WORD[f.role] || `A ${f.role || 'control'}`} with no label`;
+  return f.desc;   // focus / ariastate / keyboard — the CSS selector locates the element
+}
+// Structured record for --json (machines / an agent that fixes the code): exact locator +
+// numbers + the fix. Same facts as the plain lines, but parseable.
+export function a11yFindingRecord(kind, f) {
+  const rec = { issue: kind, selector: f.desc ?? null, fix: A11Y_GUIDE[kind]?.fix ?? null };
+  if (kind === 'contrast') { rec.theme = f.theme ?? null; rec.text = f.text ?? null; rec.contrast = f.ratio ?? null; rec.needs = f.threshold ?? null; }
+  if (kind === 'name') rec.role = f.role ?? null;
+  return rec;
+}
+
 // ── Auto-discovery: start the project's dev server and enumerate render pages ────
 // The most-automated path when nothing is configured and there is no static build. Reads
 // package.json for a dev/serve/storybook script, starts it, reads the URL it prints, then
@@ -294,6 +344,7 @@ async function main() {
   const ROOT = process.cwd();
   const argv = process.argv.slice(2);
   const VERBOSE = argv.includes('--a11y');
+  const JSON_MODE = argv.includes('--json');   // structured output for an agent/CI that fixes the code
   const components = argValues('--component', argv).concat(argValues('--components', argv));
   const cliUrls = argValues('--url', argv);   // check a live page directly (any project that serves it)
 
@@ -479,24 +530,57 @@ async function main() {
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  console.log(`\n─── [a11y] Accessibility (WCAG AA, from the render) ${STRICT ? '· STRICT' : '· advisory'} ───\n`);
-  console.log(`a11y: ${contrast.length} contrast, ${names.length} missing names, ${focus.length} no-focus, ${state.length} state-not-exposed, ${keyboard.length} not-keyboard across ${themes.length} theme(s)${cannot.length ? ` · ${cannot.length} cannot-compute` : ''}`);
+  const buckets = [['contrast', contrast], ['name', names], ['focus', focus], ['ariastate', state], ['keyboard', keyboard]].filter(([, l]) => l.length);
+  const total = buckets.reduce((n, [, l]) => n + l.length, 0);
+  const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';
 
-  if (VERBOSE) {
-    const show = (list, head, fmt) => { if (!list.length) return; console.log(`\n  ${head}`); for (const f of list.slice(0, 100)) console.log(`    · ${fmt(f)}`); };
-    show(contrast, 'Below AA contrast:', (f) => `[${f.theme}] ${f.desc} — ${f.ratio}:1 < ${f.threshold}:1${f.text ? `  ("${f.text}")` : ''}`);
-    show(names, 'Missing accessible name (component not exposing aria):', (f) => `${f.desc} (${f.plugin})`);
-    show(focus, 'No visible focus indicator:', (f) => `${f.desc} (${f.plugin})`);
-    show(state, 'State shown only by a CSS class (not exposed to assistive tech):', (f) => `${f.desc} (${f.plugin})`);
-    show(keyboard, 'Interactive but not keyboard-reachable:', (f) => `${f.desc} (${f.plugin})`);
-    show(cannot, 'Cannot compute (image/gradient background):', (f) => `[${f.theme}] ${f.desc}`);
-  } else if (contrast.length + names.length + focus.length + state.length + keyboard.length) {
-    console.log('   run with --a11y to list every finding');
+  // ── Machine lane (--json): precise, parseable — for an agent/CI that fixes the code ──
+  if (JSON_MODE) {
+    const issues = buckets.flatMap(([kind, list]) => list.map((f) => a11yFindingRecord(kind, f)));
+    console.log(JSON.stringify({
+      target: targets.map((t) => t.label),
+      usedStyleguide: !!sg,
+      themes, strict: STRICT, total, cannotMeasure: cannot.length, issues,
+    }, null, 2));
+    process.exit(STRICT && total ? 1 : 0);
   }
 
-  const total = contrast.length + names.length + focus.length + state.length + keyboard.length;
+  // ── Human lane (default): plain language, no jargon ──
+  console.log(`\n─── Accessibility check ${STRICT ? '(must pass)' : '(advisory — never blocks the build)'} ───\n`);
+  if (!total) {
+    console.log(`Good news: nothing to fix here${inThemes}.`);
+  } else {
+    console.log(`Found ${plural(total, 'thing', 'things')} that would make this hard to use for some people${inThemes}:\n`);
+    for (const [kind, list] of buckets) {
+      const g = A11Y_GUIDE[kind];
+      console.log(`• ${g.title(list.length)}`);
+      console.log(`     Why it matters: ${g.why}`);
+      console.log(`     What to do:     ${g.fix}`);
+      if (VERBOSE) {
+        console.log(`     Where:`);
+        for (const f of list.slice(0, 100)) console.log(`       - ${a11yItemLine(kind, f)}`);
+        if (list.length > 100) console.log(`       - ...and ${list.length - 100} more`);
+      }
+      console.log('');
+    }
+    if (!VERBOSE) console.log(`Want the exact list? Run the same command again with --a11y — it shows every element and where to find it. (Add --json instead for a machine-readable version an agent can act on.)`);
+  }
+  if (cannot.length) {
+    console.log(`\n${cannot.length === 1 ? 'One piece of text sits' : `${cannot.length} pieces of text sit`} on an image or gradient background, so its readability could not be measured automatically — please check ${cannot.length === 1 ? 'it' : 'them'} by eye.`);
+  }
+
+  // ── Smart nudge: how to get deeper results (only when a styleguide wasn't the target) ──
+  if (!sg && cfg.a11y?.styleguide !== false) {
+    const sgOut = cfg.styleguide?.out ?? 'apps/styleguide/index.html';
+    if (cfg.styleguide?.template && !existsSync(join(ROOT, sgOut))) {
+      console.log(`\nTip for a deeper check: you have a styleguide set up but it isn't built yet. Build it (run the parity with --docs) and this check will use it on its own — that is the most thorough result: every component in every state (normal, disabled, error, focused), all on one page.`);
+    } else if (!cfg.styleguide?.template) {
+      console.log(`\nTip for a deeper check: this looked at "${targets[0]?.label ?? 'the page it could reach'}", which only shows the components that happen to be on screen. For the most thorough check — every component in every state (normal, disabled, error, focused) — add a styleguide (one page that shows all your components). Once it exists, this check finds and uses it automatically, so nothing is missed.`);
+    }
+  }
+
   if (STRICT && total) {
-    console.log(`\n❌ [a11y] a11yStrict: ${total} accessibility issue(s)`);
+    console.log(`\nThis check is set to must-pass, so the run stops here until these are fixed.`);
     process.exit(1);
   }
   process.exit(0);
