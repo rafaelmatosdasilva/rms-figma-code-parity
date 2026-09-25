@@ -985,6 +985,11 @@ findings that are new, findings that are gone, and findings whose count or value
 findings are compared element by element (the check also writes `.parity-out/a11y.json`). The findings
 are kept in `.parity-out/last-findings.json`. A long report still says at a glance what this change did.
 
+**Burndown.** One `📉` line then counts the open findings per component, most first, each with what the last
+run with the same scope had (`chip 2 (was 3)`), plus the components cleared since then and a `next up` line.
+A finding belongs to the most specific component its text names. Work the library down one component at a
+time: `--component <name>`, fix, run again.
+
 **Reading a finding.** A measured difference names the component and field, the Figma value, the
 rendered value and its token, the winning rule with its `file:line`, and what to write there
 (`→ set var(--gap-xl)`). A value read from one source only (the browser or the stylesheet, not both)

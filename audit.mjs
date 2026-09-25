@@ -3533,7 +3533,7 @@ function reportFull(label, items, shown) {
   // The findings this run printed, against the ones the last run with the same scope printed.
   console.log = _log;
   try {
-    const { collectFindings, diffFindings, diffReport } = await import('./run-diff.mjs');
+    const { collectFindings, diffFindings, diffReport, burndown, burndownLines } = await import('./run-diff.mjs');
     const ledgerPath = join(ROOT, '.parity-out', 'last-findings.json');
     let ledger = {};
     try { ledger = JSON.parse(readFileSync(ledgerPath, 'utf8')); } catch { /* first run */ }
@@ -3556,6 +3556,13 @@ function reportFull(label, items, shown) {
         for (const l of diffReport(d)) console.log(l);
       }
     }
+    // Burndown (I45): the same findings per component, most first, with the next one to work on.
+    try {
+      const readJ = (p) => { try { return JSON.parse(readFileSync(join(ROOT, p), 'utf8')); } catch { return {}; } };
+      const names = [...new Set([...Object.keys(readJ(SNAP_STRUCT).components ?? {}), ...Object.keys(readJ(SNAP_COMP_PROPS))])].filter((n) => !n.startsWith('_') && n.length > 2);
+      const lines = burndownLines(burndown(now, names, prev?.findings ?? null), { scoped: _scopeNames.length > 0 });
+      if (lines.length) console.log(`\n📉 ${lines.join('\n')}`);
+    } catch { /* a convenience */ }
     ledger.scopes = { ...(ledger.scopes ?? {}), [scopeKey]: { at: new Date().toISOString(), findings: now } };
     mkdirSync(dirname(ledgerPath), { recursive: true });
     writeFileSync(ledgerPath, JSON.stringify(ledger, null, 1) + '\n');

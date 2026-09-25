@@ -240,3 +240,6 @@ Tip for a deeper check: this looked at "apps/gallery/ui.html", which only shows 
 ℹ️  Agreed values: 68 of 71 compared facts agree (recorded in parity-agreed.json, updated). Of the 3 that differ: 0 Figma moved · 0 code moved · 0 both moved · 3 with no earlier agreement.
 
 ℹ️  Since the last run: this is the first recorded run; the next one lists what is new, gone or changed.
+
+📉 Burndown, open findings per component: button 5 · chip 3 · 14 not tied to a component
+   next up: button. Run with --component button, fix, run again.

@@ -75,3 +75,46 @@ export function diffReport(d, { max = 15 } = {}) {
   list('changed ', d.changed, (x) => `${head(x.to)}: ${tail(x.from)}  →  ${tail(x.to)}`);
   return lines;
 }
+
+// Burndown (idea I45): the open findings per component, most first, so a library is worked down one
+// component at a time with --component. A finding belongs to the most specific component named in its
+// text (buttonPrimary before button; "button-primary" and "radii/chip" count). A gate's own "gate fails"
+// line is not a finding of any component. `prev` (the last run's findings for the same scope) gives the
+// count each component had then.
+const words = (name) => [name, name.replace(/([a-z0-9])([A-Z])/g, '$1-$2')].map((x) => x.toLowerCase());
+export function componentOf(finding, names) {
+  const text = String(finding).toLowerCase();
+  let best = null;
+  for (const n of names) {
+    const hit = words(n).some((w) => new RegExp(`(^|[^a-z0-9])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(text));
+    if (hit && (!best || n.length > best.length)) best = n;
+  }
+  return best;
+}
+
+export function burndown(findings, names, prev = null) {
+  const count = (list) => {
+    const by = new Map();
+    let loose = 0;
+    for (const f of list ?? []) {
+      if (/ :: gate fails$/.test(f) || / :: (🔗|↳)/.test(f)) continue;   // a gate's own verdict, a link or a note
+      const c = componentOf(f, names);
+      if (c) by.set(c, (by.get(c) ?? 0) + 1); else loose++;
+    }
+    return { by, loose };
+  };
+  const now = count(findings), was = prev ? count(prev) : null;
+  const rows = [...now.by].map(([name, open]) => ({ name, open, was: was ? (was.by.get(name) ?? 0) : null }))
+    .sort((a, b) => b.open - a.open || a.name.localeCompare(b.name));
+  const done = was ? [...was.by.keys()].filter((n) => !now.by.has(n)).sort() : [];
+  return { rows, loose: now.loose, done };
+}
+
+export function burndownLines(b, { top = 8, scoped = false } = {}) {
+  if (!b.rows.length && !b.done.length) return [];
+  const fmt = (r) => `${r.name} ${r.open}${r.was != null && r.was !== r.open ? ` (was ${r.was})` : ''}`;
+  const lines = [`Burndown, open findings per component: ${b.rows.slice(0, top).map(fmt).join(' · ') || 'none'}${b.rows.length > top ? ` · ${b.rows.length - top} more` : ''}${b.loose ? ` · ${b.loose} not tied to a component` : ''}`];
+  if (b.done.length) lines.push(`   cleared since the last run: ${b.done.join(', ')}`);
+  if (b.rows.length && !scoped) lines.push(`   next up: ${b.rows[0].name}. Run with --component ${b.rows[0].name}, fix, run again.`);
+  return lines;
+}

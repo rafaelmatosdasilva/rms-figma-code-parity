@@ -197,3 +197,6 @@
 ℹ️  Agreed values: 25 of 26 compared facts agree (recorded in parity-agreed.json, updated). Of the 1 that differ: 0 Figma moved · 0 code moved · 0 both moved · 1 with no earlier agreement.
 
 ℹ️  Since the last run: this is the first recorded run; the next one lists what is new, gone or changed.
+
+📉 Burndown, open findings per component: chip 2 · 8 not tied to a component
+   next up: chip. Run with --component chip, fix, run again.
