@@ -1321,8 +1321,11 @@ each one when present:
 - the gap, the stroke width on each side, and opacity
 - the text node's family, line height (px, % or auto), letter spacing and text case
 - the fill, text and stroke colour tokens with their paint opacity, compared in every mode
-- one entry per variant (padding, gap, radius, font size, colours); only what a variant changes from
-  the default is compared, against the state the code capture produced
+- one entry per variant (height, padding, gap, radius, font size, colours, visible layers); only what a
+  variant changes from the default is compared, against the state the code capture produced. A variant
+  that changes two or more axes (Size=L with Icon=True) is produced by putting each axis's propertyMap
+  selector on at once (up to `codeReading.maxCombinations`, default 12, per component). Visible layers are
+  compared by name with the contract's `children` that have a `name` and a `cssSelector`
 - which layers each boolean property shows or hides (`toggles`)
 - each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
 
@@ -1356,8 +1359,16 @@ async function deepFacts(node, set) {
       radiusPx: 'topLeftRadius' in x ? [x.topLeftRadius, x.topRightRadius, x.bottomRightRadius, x.bottomLeftRadius].map(n) : null,
       fontSize: t && t.fontSize !== figma.mixed ? n(t.fontSize) : null,
       colors: { fill: await paint(x.fills), text: t ? await paint(t.fills) : null, stroke: await paint(x.strokes) },
+      layers: visibleLayers(x),
     };
   };
+  // Names of the layers actually shown (a layer inside a hidden one is not), at most 80.
+  function visibleLayers(x) {
+    const names = new Set();
+    const walk = (n) => { for (const c of n.children ?? []) { if (c.visible === false || names.size >= 80) continue; names.add(c.name); walk(c); } };
+    walk(x);
+    return [...names];
+  }
   const out = {};
   if ('layoutMode' in node) out.box = { width: n(node.width), height: n(node.height), layout: node.layoutMode,
     sizing: { h: node.layoutSizingHorizontal, v: node.layoutSizingVertical },

@@ -304,9 +304,22 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       };
       const def = f.variants[f.defaultVariant] ?? { paddingPx: f.paddingPx, radiusPx: f.radiusPx, colors: f.colors };
       const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-      for (const [label, st] of Object.entries(c.states ?? {})) {
-        const v = vfor(label);
-        if (!v) continue;
+      const setsHeight = [c.props?.height, c.props?.minHeight].some((x) => x?.rule && x.confidence !== 'default');
+      const lower = (a) => new Set((a ?? []).map((x) => String(x).toLowerCase()));
+      const layerCheck = (label, figLayers, codeLayers, known) => {
+        if (!Array.isArray(figLayers) || !codeLayers) return;
+        const fig = lower(figLayers);
+        for (const [part, shown] of Object.entries(codeLayers)) {
+          if (!known.has(part.toLowerCase())) continue;       // Figma has no layer by that name
+          const want = fig.has(part.toLowerCase());
+          if (want === shown) { out.match++; continue; }
+          out.differ.push({ component: name, field: `layer "${part}"${label ? ` (${label})` : ''}`, figma: want ? 'shown' : 'hidden', code: shown ? 'shown' : 'hidden', confidence: 'single-source' });
+        }
+      };
+      const knownLayers = lower(Object.values(f.variants).flatMap((v) => v.layers ?? []));
+      layerCheck('', def.layers, c.layers, knownLayers);
+      const compareVariant = (label, st, v) => {
+        if (!v) return;
         const now = (prop) => st.changed?.[prop] ?? c.props?.[prop];
         const num = (fig, fact, field) => {
           if (typeof fig !== 'number' || !fact) return;
@@ -318,9 +331,16 @@ export function compareComponents(code, structure, vars, cfg, maps) {
         if (!same(v.radiusPx, def.radiusPx)) ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'].forEach((p, i) => num(v.radiusPx?.[i], now(p), 'radius'));
         if (!same(v.gapPx, def.gapPx)) num(v.gapPx, now('columnGap'), 'gap');
         if (!same(v.fontSize, def.fontSize)) num(v.fontSize, st.changed?.fontSize ?? fp?.fontSize, 'font size');
+        // Height, only where the code fixes one (otherwise it follows the content).
+        if (typeof v.h === 'number' && !same(v.h, def.h) && (setsHeight || st.changed?.height?.rule || st.changed?.minHeight?.rule) && st.size?.height != null)
+          num(v.h, { ...(st.changed?.height ?? st.changed?.minHeight ?? c.props?.height ?? {}), value: `${st.size.height}px` }, 'height');
         const changedPaints = Object.fromEntries(['fill', 'text', 'stroke'].filter((k) => v.colors?.[k] && !same(v.colors[k], def.colors?.[k])).map((k) => [k, v.colors[k]]));
         if (Object.keys(changedPaints).length && st.colors) colourChecks('', changedPaints, st.colors, ` (${label})`, st.changed ?? {});
-      }
+        if (!same(v.layers, def.layers)) layerCheck(label, v.layers, st.layers, knownLayers);
+      };
+      for (const [label, st] of Object.entries(c.states ?? {})) compareVariant(label, st, vfor(label));
+      // Combinations of two or more axes, measured by the capture as one (idea I41).
+      for (const [variant, st] of Object.entries(c.combos ?? {})) compareVariant(variant, st, f.variants[variant]);
     }
 
     // Background: does the component paint one? Figma often draws it on a child layer and code on the
