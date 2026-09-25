@@ -121,7 +121,10 @@ const resolveFile = (figmaName) => API.fileFor(figmaName);
 // Skips: a property named state/states, or a VARIANT whose options are all interaction states.
 const STATE_WORDS = new Set(['default', 'hover', 'focus', 'focused', 'active', 'pressed',
   'selected', 'checked', 'indeterminate', 'visited', 'disabled', 'loading', 'error', 'on', 'off']);
-const STATE_PROP_NAMES = new Set((cfg.knownStateProps ?? ['State', 'state', 'States']).map(norm));
+// ds-config states (I40): a declared enum axis (prop with a value, such as State=Hover) is a state axis
+// too. A boolean prop (isDisabled) stays a code prop.
+const DECLARED_STATE_AXES = Object.values(cfg.states ?? {}).filter((s) => s?.prop && s.value != null).map((s) => s.prop);
+const STATE_PROP_NAMES = new Set([...(cfg.knownStateProps ?? ['State', 'state', 'States']), ...DECLARED_STATE_AXES].map(norm));
 const isStateAxis = (name, def) => STATE_PROP_NAMES.has(norm(name)) ||
   (def?.type === 'VARIANT' && Array.isArray(def.variantOptions) && def.variantOptions.length >= 2 &&
    def.variantOptions.every(o => STATE_WORDS.has(norm(o))));

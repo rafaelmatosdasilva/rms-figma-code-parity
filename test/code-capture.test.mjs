@@ -318,3 +318,33 @@ browserTest('variant combinations: two axes put on at once, measured with their 
   assert.deepEqual([combo.size.height, combo.layers, combo.changed.paddingLeft?.value], [40, { Icon: true, Label: true }, '12px']);
   assert.equal(chip.states['Size=L'].size.height, 40);
 });
+
+browserTest('disabled wins: hover and press must not change a disabled component', async () => {
+  const dir = makeFixture({
+    'theme.css': '.btn { background: rgb(0, 0, 255); color: rgb(255, 255, 255); }\n.btn.btn--off { background: rgb(200, 200, 200); }\n.btn:hover { background: rgb(0, 0, 128); }\n.ok { background: rgb(0, 0, 255); }\n.ok:hover:not(.ok--off) { background: rgb(0, 0, 128); }\n.ok.ok--off { background: rgb(200, 200, 200); }\n',
+    'apps/app/ui.html': '<!doctype html><html><head><link rel="stylesheet" href="../../theme.css"></head><body><button class="btn">Go</button><button class="ok">Ok</button></body></html>',
+    'structure-contract.mjs': "export const CONTRACT = { btn: { propertyMap: { isDisabled: { True: '.btn.btn--off' } } }, ok: { propertyMap: { isDisabled: { True: '.ok.ok--off' } } } };",
+    'struct.json': { components: { btn: {}, ok: {} } },
+  });
+  const cfg = { paths: { themeCSS: 'theme.css', plugins: ['app'], pluginCSS: [], snapshotStructure: 'struct.json' }, figma: { modes: [LIGHT_DARK[0]] } };
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  const hover = (c) => snapshot.components[c].disabledGuard.find((g) => g.force === 'hover');
+  assert.deepEqual(Object.keys(hover('btn').changed), ['backgroundColor']);
+  assert.equal(hover('btn').changed.backgroundColor.to, 'rgb(0, 0, 128)');
+  assert.deepEqual(hover('ok').changed, {});
+  const { compareComponents } = await import('../capture-compare.mjs');
+  const r = compareComponents(snapshot, { btn: {}, ok: {} }, {}, {}, { EXPLICIT: {}, EXPLICIT_SIZING: {}, SKIP_TOKENS: new Set(), NULL_TOKENS: new Set(), KNOWN_NULL: new Set(), SIZING_SKIP: new Map(), TYPO: {} });
+  assert.deepEqual(r.differ.filter((d) => /while disabled/.test(d.field)).map((d) => `${d.component} ${d.field}: ${d.code}`), ['btn hover while disabled (isDisabled=True): changes background']);
+});
+
+browserTest('disabled wins: a state the user cannot reach is not a leak', async () => {
+  const dir = makeFixture({
+    'theme.css': '.btn { background: rgb(0, 0, 255); }\n.btn:disabled { background: rgb(200, 200, 200); pointer-events: none; }\n.btn:hover, .btn:active { background: rgb(0, 0, 128); }\n',
+    'apps/app/ui.html': '<!doctype html><html><head><link rel="stylesheet" href="../../theme.css"></head><body><button class="btn">Go</button></body></html>',
+    'structure-contract.mjs': "export const CONTRACT = { btn: { propertyMap: { State: { Disabled: '.btn:disabled' } } } };",
+    'struct.json': { components: { btn: {} } },
+  });
+  const cfg = { paths: { themeCSS: 'theme.css', plugins: ['app'], pluginCSS: [], snapshotStructure: 'struct.json' }, figma: { modes: [LIGHT_DARK[0]] } };
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  assert.deepEqual(snapshot.components.btn.disabledGuard.map((g) => [g.force, g.unreachable]), [['hover', 'pointer-events: none'], ['active', 'pointer-events: none']]);
+});

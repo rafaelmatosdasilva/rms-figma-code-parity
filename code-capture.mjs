@@ -32,6 +32,7 @@ import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './c
 import { captureComponents, staticComponentReading } from './component-capture.mjs';
 import { createLocator, loadLocator } from './component-locator.mjs';
 import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles } from './structure-capture.mjs';
+import { conceptOf } from './state-concepts.mjs';
 
 export const CAPTURE_VERSION = 2;
 const ENGINE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -90,7 +91,7 @@ function findTemplates(ROOT) {
 function hashInputs(ROOT, cfg, files, pages, opts) {
   const h = createHash('sha256');
   h.update(`v${CAPTURE_VERSION}|${JSON.stringify(cfg.figma?.modes ?? null)}|${JSON.stringify(cfg.figma?.collections ?? null)}|${JSON.stringify(cfg.codeReading ?? null)}`);
-  for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs', 'structure-capture.mjs', 'component-api.mjs', 'component-source.mjs', 'icon-source.mjs', 'markup-source.mjs', 'codeconnect-check.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
+  for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs', 'structure-capture.mjs', 'component-api.mjs', 'component-source.mjs', 'icon-source.mjs', 'markup-source.mjs', 'codeconnect-check.mjs', 'state-concepts.mjs', 'css-values.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
   for (const extra of opts.extraFiles ?? []) { try { h.update(extra); h.update(readFileSync(extra)); } catch { /* optional */ } }
   for (const abs of [...files.map((f) => f.abs), ...pages.filter((p) => !/^https?:/.test(p.path) && !p.generated).map((p) => resolve(ROOT, p.path))].sort()) {
     try { h.update(abs); h.update(readFileSync(abs)); } catch { /* vanished */ }
@@ -499,6 +500,7 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
           staticRootVars: rootTokens(componentSources, modes[0]),
           openPage: (url) => openLoaded(cdp.send, url),
           breakpoints: breakpointWidths(ROOT, cfg),
+          stateConcept: (label) => conceptOf(label, cfg),
         });
         const nest = await renderedNesting({ send: cdp.send, pages: compPages, specs, openLoaded });
         nestingRendered = nest.rendered;

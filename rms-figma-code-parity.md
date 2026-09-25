@@ -867,6 +867,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 - `exemptionCheck.alwaysNative` - extra element names treated as native controls by the exemption check.
 - `pluginDirs` - `{ "<app>": "path/from/root" }` when an app does not live in `apps/<app>`.
 - `scopeMaxNestPerFile` (default 8) - how many nested selectors per file the token-scope check reads.
+- `states` - which Figma prop and value is each interaction concept, when the names do not say it: `{ "hover": { "prop": "State", "value": "Hover" }, "active": { "prop": "State", "value": "Pressed" }, "disabled": { "prop": "isDisabled" } }` (a prop without a value is a boolean, true meaning the state). Used for the disabled exemption in contrast checks, to find the disabled state for the disabled-wins check, and by the props check (a declared axis with a value, such as `State`, is a state axis and not a missing code prop). An undeclared concept is read from the names (a boolean only when true).
 - `rtl: true` - lists the declarations that would not mirror in a right-to-left language (one-sided or asymmetric `padding-left`, `margin-right`, `border-left`, `left`/`right` offsets, `text-align` and `float` left or right), each with its file and line and the logical property to use. Symmetric values are not listed.
 - `renderedParityStrict: true` - the measured differences (Gate [13] `MEASURED`) fail the gate instead of being advisory.
 
@@ -1348,6 +1349,13 @@ each one when present:
 - each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
 
 Snapshots without them keep working; the comparison simply skips what Figma did not record.
+
+**Disabled wins.** For every component with a disabled state, the capture also puts `:hover` and `:active` on the
+disabled instance. Any visible change against disabled alone (text colour, background, border colour, opacity)
+is listed under MEASURED as `hover while disabled`: the hover or press style lacks a `:not(:disabled)` guard.
+A state the user cannot reach is not listed: no hover when the disabled state has `pointer-events: none`, and no
+press on a natively disabled control.
+Combinations such as selected with hover are compared whenever Figma has that variant (see below).
 
 With `variants` recorded, Gate [13] also lists each Figma variant value (an axis value such as
 `Size=L`) that has no counterpart in code (`⚠️ VARIANTS`): not the default, not a state the code

@@ -347,6 +347,16 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       for (const [variant, st] of Object.entries(c.combos ?? {})) compareVariant(variant, st, f.variants[variant]);
     }
 
+    // Disabled wins (I40): hover or press must not change a disabled component. The capture put the
+    // disabled state on with :hover (and :active) forced; any visible change is a missing guard.
+    const LABEL = { color: 'text colour', backgroundColor: 'background', borderTopColor: 'border colour', opacity: 'opacity' };
+    for (const g of c.disabledGuard ?? []) {
+      if (g.unreachable) continue;   // the user cannot hover or press it: nothing to guard
+      const props = Object.keys(g.changed ?? {});
+      const first = g.changed?.[props[0]];
+      settle(!props.length, { component: name, field: `${g.force} while disabled (${g.state})`, figma: 'no change', code: props.length ? `changes ${props.map((p) => LABEL[p] ?? p).join(', ')}` : 'no change', rule: first?.rule, at: first?.at, confidence: 'single-source' });
+    }
+
     // Background: does the component paint one? Figma often draws it on a child layer and code on the
     // element itself; both paint. Only "paints" vs "does not paint" is a difference.
     // A colour set in the element's own style attribute is page content (a swatch showing its colour),

@@ -3053,7 +3053,7 @@ function reportFull(label, items, shown) {
       const cap = await readFreshSnapshot(ROOT, cfg);
       if (cap) {
         const { stateContrastFindings } = await import('./contrast-check.mjs');
-        const { findings, checked } = stateContrastFindings(cap);
+        const { findings, checked } = stateContrastFindings(cap, cfg);
         if (findings.length) {
           console.log(C.yellow(`\n⚠️  State contrast: ${findings.length} component state(s) below WCAG AA, as rendered (${checked} checked; disabled states exempt).`));
           const { colorHex } = await import('./css-values.mjs');

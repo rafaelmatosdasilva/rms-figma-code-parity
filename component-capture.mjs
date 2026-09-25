@@ -52,6 +52,7 @@ export const TRACE = {
 };
 const MEASURED = [...Object.keys(TRACE), 'maxHeight', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
 const COLOR_PROPS = new Set(['color', 'backgroundColor', 'borderTopColor']);
+const GUARD_PROPS = ['color', 'backgroundColor', 'borderTopColor', 'opacity'];
 const BREAKPOINT_PROPS = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'columnGap', 'rowGap', 'borderTopLeftRadius', 'fontSize', 'lineHeight'];
 const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight', 'fontFamily', 'letterSpacing', 'textTransform']);
 
@@ -217,7 +218,12 @@ function measureExpression(selector) {
       behind.push(c);
       if (!c.startsWith('rgba') && !c.includes('/')) break;
     }
-    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before, behind };
+    // The capture host turns pointer events off for everything inside it; read the component's own.
+    const host = document.getElementById('__parity_cap_host__'), hostPe = host ? host.style.pointerEvents : null;
+    if (host) host.style.pointerEvents = 'auto';
+    const pointerEvents = getComputedStyle(el).pointerEvents;
+    if (host) host.style.pointerEvents = hostPe;
+    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before, behind, pointerEvents, nativeDisabled: el.matches(':disabled') };
   })()`;
 }
 
@@ -575,6 +581,18 @@ export async function captureComponents(ctx) {
       try {
         const { sMode, sTrace, sLayers } = await P.measureStates(stateJobs);
         stateJobs.forEach((j, ji) => {
+          if (j.guard) {
+            // A state the user cannot reach is not a leak: no hover when pointer-events is none, and no
+            // press on a natively disabled control.
+            const base = sMode[j.guard.baseJob]?.[firstMode] ?? {};
+            const unreachable = base.pointerEvents === 'none' ? 'pointer-events: none' : (j.guard.force === 'active' && base.nativeDisabled ? 'a disabled control cannot be pressed' : null);
+            if (unreachable) { (j.entry.disabledGuard ??= []).push({ state: j.guard.state, force: j.guard.force, changed: {}, unreachable }); return; }
+            const now = sMode[ji]?.[firstMode]?.cs ?? {}, was = base.cs ?? {};
+            const changed = Object.fromEntries(GUARD_PROPS.filter((p) => now[p] != null && was[p] != null && now[p] !== was[p])
+              .map((p) => [p, { from: was[p], to: now[p], rule: sTrace[ji]?.[p]?.rule, at: sTrace[ji]?.[p]?.at }]));
+            (j.entry.disabledGuard ??= []).push({ state: j.guard.state, force: j.guard.force, changed });
+            return;
+          }
           const e = stateEntry(j.st, j.how.describe, sMode[ji], sTrace[ji], j.props, sLayers[ji]);
           if (j.combo) (j.entry.combos ??= {})[j.combo] = e; else (j.entry.states ??= {})[j.st.label] = e;
         });
@@ -622,7 +640,17 @@ export async function captureComponents(ctx) {
       for (const st of comp.states ?? []) {
         const how = stateRecipe(comp.selector, st.selector);
         if (how.error || !nodeId) { deferred.push({ comp: comp.name, st, why: how.error ?? 'instance not addressable' }); continue; }
+        const baseJob = stateJobs.length;
         stateJobs.push({ i: loc.i, nodeId, how, st, props, entry, childParts: comp.childParts });   // measured for the whole page at once
+        // Disabled wins (I40): the disabled state with :hover and :active forced on as well. Anything
+        // that changes against disabled alone means a hover or press style lacks a :not(:disabled) guard.
+        if (ctx.stateConcept?.(st.label) === 'disabled') {
+          for (const f of ['hover', 'active']) {
+            if (how.force.includes(f)) continue;
+            const guardHow = mergeRecipes([how, { classes: [], attrs: [], force: [f], disabled: false, checked: false, describe: `forced :${f}` }]);
+            stateJobs.push({ i: loc.i, nodeId, how: guardHow, st: { label: `${st.label} + :${f}`, selector: st.selector }, props, entry, guard: { state: st.label, force: f, baseJob } });
+          }
+        }
       }
       // Variant combinations (two or more axes at once), each recipe put on together.
       for (const combo of comp.combos ?? []) {
