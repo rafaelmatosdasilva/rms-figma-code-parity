@@ -61,7 +61,7 @@ export const GATE_SUMMARY = {
   'motion-check.mjs': /MATCH|MISMATCH|SKIPPED|⏭/,
   'effect-check.mjs': /MATCH|MISMATCH|SKIPPED|⏭/,
   'rendered-check.mjs': /✅|❌|⏭/,
-  'coverage-check.mjs': /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT|MODE-BLIND|MODE COVERAGE|UNVERIFIED FILL|FILL COVERAGE|CODE CAPTURE/,
+  'coverage-check.mjs': /MODELLED|UNCHECKED|NO RENDERED|SINGLE-VARIANT|MODE-BLIND|MODE COVERAGE|UNVERIFIED FILL|FILL COVERAGE|CODE CAPTURE|IN PROGRESS|READY TO COMPARE/,
 };
 
 // A gate that exited 2: its reason (the lines it printed, without the exit note), as a neutral result.

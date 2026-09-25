@@ -27,6 +27,7 @@ import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { loadLocator } from './component-locator.mjs';
 import { createApiReader } from './component-api.mjs';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 
@@ -61,7 +62,7 @@ if (!Object.entries(SNAP).some(([k, v]) => k !== '_updated' && v?.properties && 
   process.exit(2);
 }
 
-const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_UNIMPLEMENTED = await inProgressNames(ROOT, cfg);
 const KNOWN_PROP_EXCEPTIONS = new Set(cfg.knownPropExceptions ?? []);   // "Component/prop"
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 // Documented intentional renames: Figma property name -> code prop name, per component.

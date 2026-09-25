@@ -139,6 +139,7 @@
        ℹ️  CODE CAPTURE tokens 17 (34 verified · 0 uncertain) · components 3/3 measured · states 5/5 · props 5 on 2 component(s) (0 uncertain) · icons 0 · nesting 3 (rendered page + source)  - read by browser + static CSS
        ⚠️  CODE CAPTURE no styleguide configured (ds-config.json → styleguide.template)
        ✅ MODE COVERAGE  every mode-pinned rendered assertion covers all 2 modes (light/dark)
+       ℹ️  IN PROGRESS 1  (not drift, never fails): tag (experimental, only in Figma)
 
 ────────────────────────────────────────────────────────────
   PARITY  ·  Figma ↔ code
@@ -226,14 +227,15 @@ Tip for a deeper check: this looked at "apps/gallery/ui.html", which only shows 
 
 ℹ️  State contrast: every rendered component state meets WCAG AA (8 checked; disabled states exempt).
 
-📐 Contracts → contracts  (3 components · 19 DTCG tokens)
-ℹ️  Contract completeness: 3/3 have a description · 3/3 have semantics · 0/3 carry whenNotToUse/useInstead guidance. Advisory only.
+📐 Contracts → contracts  (4 components · 19 DTCG tokens)
+ℹ️  Decision status: 1 experimental  (llms.txt tells agents which one won and why)
+ℹ️  Contract completeness: 4/4 have a description · 4/4 have semantics · 0/4 carry whenNotToUse/useInstead guidance. Advisory only.
 
   AI-READINESS SCORECARD  (advisory - a running measure, never blocks)
   ● Gate health      23/25 gates pass
   ● Coverage         3/3 components modelled (100%)  ·  exemption debt 0
-  ● Documentation    3/3 contracts have a description (100%)
-  ● AI guidance      0/3 carry whenNotToUse/useInstead (0%)
+  ● Documentation    4/4 contracts have a description (100%)
+  ● AI guidance      0/4 carry whenNotToUse/useInstead (0%)
 
 ℹ️  Agreed values: 68 of 71 compared facts agree (recorded in parity-agreed.json, updated). Of the 3 that differ: 0 Figma moved · 0 code moved · 0 both moved · 3 with no earlier agreement.
 

@@ -22,6 +22,7 @@ import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 import { createLocator } from './component-locator.mjs';
 import { pathToFileURL } from 'url';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 
@@ -349,7 +350,7 @@ const usesVar = (expr, v) => !!expr && new RegExp(`var\\(\\s*${v.replace(/[.*+?^
 
 // ── 1. Snapshot vs CONTRACT ───────────────────────────────────────────────────
 const components = snap.components ?? {};
-const UNIMPLEMENTED_SET = new Set(cfg.knownUnimplementedComponents ?? []);
+const UNIMPLEMENTED_SET = await inProgressNames(ROOT, cfg);
 const FAIL = [], PASS = [], MISSING = [];
 const UNCONTRACTED = []; // DS components absent from both contract and knownUnimplementedComponents
 
@@ -1233,7 +1234,7 @@ function normPropName(k) { return k.replace(/#[\d:]+$/, '').trim(); }
 
 // Components deliberately not implemented in code - exempt from Gate [3g] FAIL.
 // Add to ds-config.json → knownUnimplementedComponents with a reason comment.
-const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_UNIMPLEMENTED = await inProgressNames(ROOT, cfg);
 
 // Build lookup: figmaName → CONTRACT key (for components in CONTRACT)
 const figmaNameToContractKey = {};

@@ -95,3 +95,24 @@ test('demo design system, with Chrome: every deliberate difference is found, and
   assert.doesNotMatch(r.out, /chip height \(Icon=True\)/);   // a single axis is never compared with a combination
   golden('expected-report.txt', r.out);
 });
+
+test('in progress: an experimental component on one side is listed, never failed; on both sides it is compared', async () => {
+  const { inProgressList, inProgressNames } = await import('../in-progress.mjs');
+  const { makeFixture } = await import('./helpers.mjs');
+  const files = (css) => ({
+    'ds-config.json': { paths: { themeCSS: 'theme.css', compPropsSnapshot: 'props.json', snapshotStructure: 'struct.json' }, knownUnimplementedComponents: ['sheet'] },
+    'theme.css': css,
+    'props.json': { tag: { description: '@experimental', properties: {} }, badge: { properties: {} } },
+    'struct.json': { components: { sheet: {} } },
+    'contract.authored.json': { components: { drawer: { status: 'experimental' } } },
+  });
+  const cfgOf = (dir) => JSON.parse(readFileSync(join(dir, 'ds-config.json'), 'utf8'));
+  let dir = makeFixture(files('.badge { color: red; }'));
+  assert.deepEqual((await inProgressList(dir, cfgOf(dir))).map((x) => [x.name, x.why, x.figma, x.code]),
+    [['drawer', 'experimental', false, false], ['sheet', 'not built yet', true, false], ['tag', 'experimental', true, false]]);
+  assert.deepEqual([...(await inProgressNames(dir, cfgOf(dir)))].sort(), ['drawer', 'sheet', 'tag']);
+  dir = makeFixture(files('.tag { color: red; } .sheet { color: blue; }'));
+  const list = await inProgressList(dir, cfgOf(dir));
+  assert.deepEqual(list.filter((x) => x.ready).map((x) => x.name), ['sheet', 'tag']);
+  assert.deepEqual([...(await inProgressNames(dir, cfgOf(dir)))].sort(), ['drawer', 'sheet']);   // tag is compared now; sheet stays the owner's call
+});

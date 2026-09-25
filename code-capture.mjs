@@ -33,6 +33,7 @@ import { captureComponents, staticComponentReading } from './component-capture.m
 import { createLocator, loadLocator } from './component-locator.mjs';
 import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles, markupInputKey } from './structure-capture.mjs';
 import { conceptOf } from './state-concepts.mjs';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 export const CAPTURE_VERSION = 2;
 const ENGINE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -256,7 +257,7 @@ export async function componentSpecs(ROOT, cfg) {
   for (const a of [...(contract.RENDERED_ASSERTIONS ?? []), ...(contract.CROSS_PLUGIN_CONSISTENCY ?? [])]) {
     if (a?.probe && a.selector && !probes.has(a.selector)) probes.set(a.selector.replace(/\s+/g, ' ').trim(), a.probe);
   }
-  const unbuilt = new Set(cfg.knownUnimplementedComponents ?? []);
+  const unbuilt = await inProgressNames(ROOT, cfg);
   return names.map((name) => {
     const selector = locator.selectorFor(name).replace(/\s+/g, ' ').trim();
     const states = [];
@@ -422,7 +423,7 @@ async function prepareCapture(ROOT, cfg) {
   const nodeIds = Object.fromEntries(Object.entries(figmaStructure).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
   const apiReader = apiReaderFor(ROOT, cfg, { classFor: locator.classFor, nodeIds });
   const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
-  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles, extraKeys: [markupInputKey(ROOT, cfg)] });
+  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles, extraKeys: [markupInputKey(ROOT, cfg), [...(await inProgressNames(ROOT, cfg))].sort().join(',')] });
   return { outPath, modes, themeEntries, pages, styleguide, files, missing, remote, locator, apiReader, inputHash };
 }
 
