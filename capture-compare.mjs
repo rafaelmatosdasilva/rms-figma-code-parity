@@ -103,9 +103,42 @@ export function factOf(d) {
 function makeSettle(out) {
   out.facts ??= [];
   return (ok, d) => {
-    out.facts.push({ ...factOf(d), same: !!ok });
+    out.facts.push({ ...factOf(d), same: !!ok, ...(d.component ? { component: d.component } : {}) });
     if (ok) out.match++; else out.differ.push(d);
   };
+}
+
+// What the measured comparison actually reached (idea I53), so a clean result is honest about its reach:
+// per component, the facts compared, those that differ, and those not comparable with each reason; plus
+// the components not captured at all. Takes any number of comparison results.
+export function censusOf(...results) {
+  const components = {};
+  const row = (c) => (components[c] ??= { compared: 0, differ: 0, notComparable: 0, reasons: {} });
+  const notCaptured = new Set();
+  for (const r of results) {
+    for (const f of r?.facts ?? []) if (f.component) { const x = row(f.component); x.compared++; if (!f.same) x.differ++; }
+    for (const n of r?.notComparable ?? []) if (n.component) { const x = row(n.component); x.notComparable++; x.reasons[n.why] = (x.reasons[n.why] ?? 0) + 1; }
+    for (const n of r?.notCaptured ?? []) notCaptured.add(n);
+  }
+  const all = Object.values(components);
+  return {
+    compared: all.reduce((k, x) => k + x.compared, 0),
+    notComparable: all.reduce((k, x) => k + x.notComparable, 0),
+    notCaptured: [...notCaptured].sort(),
+    components: Object.fromEntries(Object.entries(components).sort(([a], [b]) => a.localeCompare(b))),
+  };
+}
+
+// The census as report lines: one total, then the components with the most facts not comparable.
+export function censusLines(c, top = 3) {
+  const n = Object.keys(c.components).length;
+  const lines = [`census: ${c.compared} facts compared on ${n} component${n === 1 ? '' : 's'} · ${c.notComparable} not comparable · ${c.notCaptured.length} component${c.notCaptured.length === 1 ? '' : 's'} not captured${c.notCaptured.length ? ` (${c.notCaptured.slice(0, 5).join(', ')}${c.notCaptured.length > 5 ? ', ...' : ''})` : ''}`];
+  const worst = Object.entries(c.components).filter(([, x]) => x.notComparable).sort(([a, x], [b, y]) => y.notComparable - x.notComparable || a.localeCompare(b)).slice(0, top);
+  for (const [name, x] of worst) {
+    const [why, k] = Object.entries(x.reasons).sort(([a, p], [b, q]) => q - p || a.localeCompare(b))[0];
+    lines.push(`least checked: ${name}, ${x.notComparable} not comparable of ${x.compared + x.notComparable} (mostly ${why}, ${k})`);
+  }
+  return lines;
 }
 
 // Components: each Figma structure field against the measured and traced code facts.
@@ -306,7 +339,10 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       const vfor = (label) => {
         const want = axesOf(label);
         const all = Object.entries(f.variants).filter(([v]) => { const a = axesOf(v); return Object.entries(want).every(([k, x]) => a[k] === x); });
-        return (all.find(([v]) => Object.entries(axesOf(v)).every(([k, x]) => k in want || defAxes[k] === x)) ?? all[0])?.[1];
+        // Only a variant whose other axes are the default's: one that also changes another axis (Size=L
+        // for an Icon=True state) is a combination, compared as one (I41), not against a single state.
+        const exact = all.find(([v]) => Object.entries(axesOf(v)).every(([k, x]) => k in want || defAxes[k] === x));
+        return (exact ?? (Object.keys(defAxes).length ? null : all[0]))?.[1];
       };
       const def = f.variants[f.defaultVariant] ?? { paddingPx: f.paddingPx, radiusPx: f.radiusPx, colors: f.colors };
       const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -345,6 +381,16 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       for (const [label, st] of Object.entries(c.states ?? {})) compareVariant(label, st, vfor(label));
       // Combinations of two or more axes, measured by the capture as one (idea I41).
       for (const [variant, st] of Object.entries(c.combos ?? {})) compareVariant(variant, st, f.variants[variant]);
+    }
+
+    // Disabled wins (I40): hover or press must not change a disabled component. The capture put the
+    // disabled state on with :hover (and :active) forced; any visible change is a missing guard.
+    const LABEL = { color: 'text colour', backgroundColor: 'background', borderTopColor: 'border colour', opacity: 'opacity' };
+    for (const g of c.disabledGuard ?? []) {
+      if (g.unreachable) continue;   // the user cannot hover or press it: nothing to guard
+      const props = Object.keys(g.changed ?? {});
+      const first = g.changed?.[props[0]];
+      settle(!props.length, { component: name, field: `${g.force} while disabled (${g.state})`, figma: 'no change', code: props.length ? `changes ${props.map((p) => LABEL[p] ?? p).join(', ')}` : 'no change', rule: first?.rule, at: first?.at, confidence: 'single-source' });
     }
 
     // Background: does the component paint one? Figma often draws it on a child layer and code on the

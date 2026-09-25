@@ -243,6 +243,7 @@ rms-figma-code-parity --no-docs                       # skip the design-intent l
 rms-figma-code-parity --docs                          # ALSO build the styleguide HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
 rms-figma-code-parity --baseline                      # capture today's failing gates as accepted adoption debt (commit parity-baseline.json)
+rms-figma-code-parity --baseline --findings           # the same, each failing ❌ line accepted on its own
 rms-figma-code-parity --no-baseline                   # ignore any parity-baseline.json this run (enforce every gate)
 node ~/.claude/skills/rms-figma-code-parity/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
 node ~/.claude/skills/rms-figma-code-parity/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
@@ -453,7 +454,15 @@ coverage** (flags a token defined in some brands but missing in others). Brands 
 captured **collections manifest** that marks a brand collection (the Enterprise / extended-collections
 enhancement, read as data the any-plan capture wrote — never a plan-gated API call); else it **suggests**
 candidate multi-mode collections but never assumes (modes may be theme/density/locale, not brands). Override paths with
-`ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
+`ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut,propTypesOut}`; the engine ships only the generator.
+
+**Figma prop types.** The same run writes `contracts/figma-props.d.ts`: per component, a `<Name>FigmaProps`
+interface (one union per variant property, `boolean` for a True/False variant or a boolean property,
+`string` for text, `unknown` for an instance slot) and a `<Name>FigmaDefaults` type. Names follow the props
+check (an authored binding, then `componentPropAliases`, then camelCase); interaction states are left out,
+as they are CSS. Type a component's props with it (`const check: ChipFigmaProps = {} as ChipProps`, or use
+it as the props type) and `tsc` shows prop drift in the editor and in CI. `contracts/` stays local, so set
+`contracts.propTypesOut` to a committed path when CI should check it.
 
 #### The code capture (every run, and `--capture-code` on its own)
 
@@ -574,6 +583,12 @@ entries (a renamed/removed gate) are flagged for pruning. It is gate-level on pu
 the pass/fail the audit already has for all 25 gates, so it is fully deterministic and imposes no
 structure. Off by default (no file = no baseline); ignore a file for one run with `--no-baseline`, or
 per-project with `ds-config.json → baseline.enabled: false` (path via `baseline.path`).
+
+**Per finding.** `--baseline --findings` records each failing gate's `❌` lines instead of the gate, so one
+known difference can be accepted while everything else in the same gate keeps blocking. A failing gate whose
+`❌` lines are all accepted is debt; any other `❌` line is a regression, including an accepted one whose value
+changed (it is new text). The run lists the new lines, and the accepted lines that no longer appear as fixed,
+to drop with the next `--baseline --findings`. A failing gate with no `❌` line to accept is recorded as a gate.
 
 #### Accessibility check (I18, advisory, from the render)
 
@@ -842,6 +857,7 @@ Once `ds-config.json` exists, extract:
 - `visualRefs` - directory for stored reference screenshots (default: `.parity-refs`)
 - `visualRefScale` *(optional)* - PNG export scale for Gate [2] screenshots (default: `2`). Set to `3` for higher-fidelity references. Changing this value invalidates all stored refs - accept the new `.new.png` files with `mv *.new.png *.png` after the first run at the new scale.
 - `knownUnimplementedComponents` - array of component names (matching keys in `structure-contract.mjs`) to exclude from Gate [10] and Gate [4] checks. Use this only as a temporary hold for DS components not yet built in code. Remove a component from this list as soon as its CSS and propertyMap are implemented. An empty array is the target state.
+- **Work in progress is not drift.** A component on one side only that is in `knownUnimplementedComponents`, or whose decision status is `experimental` (`contract.authored.json`, or `@experimental` in its Figma description), is listed by Gate [25] as `IN PROGRESS` and never fails a gate. An experimental component is compared as usual once it is in Figma and in code. A `knownUnimplementedComponents` entry that is in both is reported as `READY TO COMPARE`, so you can take it off the list; the list itself is never edited for you.
 - `knownStateExemptions` *(optional)* - array of `{ var, selector, _note }` objects exempting a specific `var`+`selector` pair from Gate [11]. Use when a state-suffix var is intentionally used outside its state selector - component mirrors (one component reusing another's token), semantic reuse (hover bg repurposed as neutral tint), or non-obvious class naming (`:checked` = selected for radio buttons). Always include a `_note` explaining the intent.
 - `frameworkComponents` *(optional, default `true`)* - set to `false` when the code implements DS components as **CSS classes + markup** rather than as prop-based framework components (a plain-HTML/CSS DS consumer - a Figma plugin UI, an email-template repo). Gates [12] (component props match Figma) and [13] (sub-components match Figma) only make sense for a Vue/React-style codebase with declared props and instance nesting; with no such code they would report "no code file" for every DS component and hard-fail a codebase they don't apply to. `frameworkComponents: false` makes both gates **SKIP** (neutral, like the opt-in motion/effect gates) instead of failing. The value/structure/state/markup/icon/rendered gates are unaffected - the components are still fully audited as CSS. (Leave it `true`, the default, for a real component library.)
   - **`htmlRealization`** *(optional, default off)* - opt in and Gate [12] stops skipping for a `frameworkComponents:false` project and instead runs in **HTML-realization mode**: each Figma component property must map to a concrete code artifact, so the property is *realized* in the plain-HTML/CSS build rather than silently unverified. Drive it with `ds-config.json → htmlRealizations[Component][property] = '.class' | '#id' | 'tag' | 'state:'` - a `.class`/`#id`/element that must be present in the plugin source, or the `state:` sentinel for an interaction state that Gate [11] already covers (interaction-state properties are auto-classified as `state:` even without a map entry). A mapped artifact **absent** from the source is a **fail**; a property with **no** map entry is an advisory TODO by default, or a fail under **`htmlRealizationStrict: true`**. This is how a plain-HTML consumer verifies "every Figma property has a home in the markup" without pretending to be a prop-based framework. **The same `htmlRealization` flag also switches Gate [13] (sub-components) into an HTML mode**: each sub-component Figma nests must be realized as a **class** in the plugin source. Only parents actually built here are checked (an unbuilt DS component's composition is moot); icons are excluded (Gate [15]/[16] cover them). A missing sub-component is advisory by default, or a fail under **`htmlCompositionStrict: true`**. Capture the data it needs - `component-composition.snapshot.json` - in **every** Phase 1 when the DS has nested components (the Plugin API snippet below works on any plan, no token); it is not optional bookkeeping.
@@ -857,6 +873,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 - `gateTimeoutSec` (default 180) - a gate that runs longer is stopped and reported as a failure ("timed out, not verified"), so one stuck gate never freezes the audit or a pre-commit hook.
 - `codeReading.timeoutSec` (default 120) - the time limit for the code capture inside the audit; past it the gates keep their own readings. `codeReading.hookBrowser: true` lets the capture use the browser inside git hooks too.
+- `codeReading.visual: true` - the visual diff under MEASURED (see *Each component against its Figma image*). `codeReading.visualTolerance` (default 10, per colour channel) and `codeReading.visualThreshold` (default 2, the percentage of pixels outside text that marks a component ⚠️).
 - `scanExcludeDirs`, `scanExcludeFilenames` - folders and file names (with `*` wildcards) the hardcoded-value and clean-CSS scans skip, such as demo pages. The styleguide template and output are always skipped (they are generated surfaces).
 - `gate6ExcludeDirs` - folders the hardcoded-value scan skips, to scope it to the design system package (the layout checks still cover every file).
 - `knownHardcodedExceptions` (older name `knownFontSizeExceptions`) - literal values or patterns the hardcoded-value scan accepts. An entry that no longer excuses anything is listed so it can be removed.
@@ -867,6 +884,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 - `exemptionCheck.alwaysNative` - extra element names treated as native controls by the exemption check.
 - `pluginDirs` - `{ "<app>": "path/from/root" }` when an app does not live in `apps/<app>`.
 - `scopeMaxNestPerFile` (default 8) - how many nested selectors per file the token-scope check reads.
+- `states` - which Figma prop and value is each interaction concept, when the names do not say it: `{ "hover": { "prop": "State", "value": "Hover" }, "active": { "prop": "State", "value": "Pressed" }, "disabled": { "prop": "isDisabled" } }` (a prop without a value is a boolean, true meaning the state). Used for the disabled exemption in contrast checks, to find the disabled state for the disabled-wins check, and by the props check (a declared axis with a value, such as `State`, is a state axis and not a missing code prop). An undeclared concept is read from the names (a boolean only when true).
 - `rtl: true` - lists the declarations that would not mirror in a right-to-left language (one-sided or asymmetric `padding-left`, `margin-right`, `border-left`, `left`/`right` offsets, `text-align` and `float` left or right), each with its file and line and the logical property to use. Symmetric values are not listed.
 - `renderedParityStrict: true` - the measured differences (Gate [13] `MEASURED`) fail the gate instead of being advisory.
 
@@ -951,6 +969,13 @@ overwrites the record; only a new agreement does. The report ends with a count (
 N that differ: … Figma moved · … code moved · … both moved · … with no earlier agreement`). Inside a git
 hook the file is read but never written, so a commit never changes a file it did not stage.
 
+**Changes that keep bouncing, and who leads.** The same file keeps, per fact, both values at the last run
+and its last 10 moves (which side changed, and whether that change broke an agreement, meaning that side
+moved first). A fact whose moving side switched 3 or more times in its last 10 moves is listed as
+`No clear owner`: the team has not decided which side owns it. When there were moves in the last 30 days,
+one line says per area (tokens, spacing, colour, typography, size and shape, layers, states and variants)
+which side moved first, as a share. It only describes; it never sets who wins.
+
 **Sending it back.** Each measured difference says which way it goes, and Gate [13] writes both hand-backs
 under `.parity-out/handback/`. Nothing is applied:
 - **Code is behind** (Figma moved, or no earlier agreement): `code-changes.diff`, a patch that changes the
@@ -968,6 +993,11 @@ says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PAS
 findings that are new, findings that are gone, and findings whose count or value moved. Accessibility
 findings are compared element by element (the check also writes `.parity-out/a11y.json`). The findings
 are kept in `.parity-out/last-findings.json`. A long report still says at a glance what this change did.
+
+**Burndown.** One `📉` line then counts the open findings per component, most first, each with what the last
+run with the same scope had (`chip 2 (was 3)`), plus the components cleared since then and a `next up` line.
+A finding belongs to the most specific component its text names. Work the library down one component at a
+time: `--component <name>`, fix, run again.
 
 **Reading a finding.** A measured difference names the component and field, the Figma value, the
 rendered value and its token, the winning rule with its `file:line`, and what to write there
@@ -1348,6 +1378,28 @@ each one when present:
 - each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
 
 Snapshots without them keep working; the comparison simply skips what Figma did not record.
+
+**Each component against its Figma image.** With `codeReading.visual: true` the capture also saves each
+component as the page draws it (first mode, default state, scale 2) under `.parity-out/visual/code/`, and
+Gate [13] compares it with the Figma image of the component's default variant. The Figma image comes from
+`.parity-refs/components/<name>.png` when you saved one (exported from Figma at 2x), else from the Figma REST
+API with `FIGMA_TOKEN` (cached under `.parity-out/visual/figma/` until the file version changes). A component
+with neither is listed as not compared. Two percentages per component, worst first: the pixels that differ,
+and the pixels that differ outside its text, since two renderers never draw glyphs the same way. The second
+decides the ⚠️. A diff image per component, differing pixels in red, goes to `.parity-out/visual/diff/`. It
+catches what no single field shows, such as a border, an icon on the other side or a wrong glyph. Advisory.
+
+**What was checked.** Under MEASURED, one `census` line says how many facts were compared, how many were not
+comparable, and which components were not captured, followed by the components with the most facts not
+comparable and their main reason. A clean result is only as good as its reach. The full table per component
+is written to `.parity-out/census.json`.
+
+**Disabled wins.** For every component with a disabled state, the capture also puts `:hover` and `:active` on the
+disabled instance. Any visible change against disabled alone (text colour, background, border colour, opacity)
+is listed under MEASURED as `hover while disabled`: the hover or press style lacks a `:not(:disabled)` guard.
+A state the user cannot reach is not listed: no hover when the disabled state has `pointer-events: none`, and no
+press on a natively disabled control.
+Combinations such as selected with hover are compared whenever Figma has that variant (see below).
 
 With `variants` recorded, Gate [13] also lists each Figma variant value (an axis value such as
 `Size=L`) that has no counterpart in code (`⚠️ VARIANTS`): not the default, not a state the code

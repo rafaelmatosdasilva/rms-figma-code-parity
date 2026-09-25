@@ -1,0 +1,52 @@
+{
+  "_updated": "2026-01-01T00:00:00.000Z",
+  "_note": "Fictional Figma component structure for the Tidepool demo.",
+  "components": {
+    "button": {
+      "h": 32,
+      "paddingVar": { "tb": "padding/xs", "lr": "padding/m" },
+      "gapVar": "gap/s",
+      "innerRadiusVar": "radii/button",
+      "fontSizeVar": "m",
+      "fontWeightVar": "m",
+      "strokeOnDefault": false,
+      "colors": { "fill": { "token": "button/background/color" }, "text": { "token": "button/text/color" } },
+      "defaultVariant": "State=Default, Disabled=False",
+      "variantOpacity": { "Disabled=True": 0.5 },
+      "variants": {
+        "State=Default, Disabled=False": { "h": 32 },
+        "State=Hover, Disabled=False": { "h": 32, "colors": { "fill": { "token": "button/background/hover/color" } } },
+        "State=Default, Disabled=True": { "h": 32 }
+      }
+    },
+    "chip": {
+      "h": 24,
+      "paddingVar": { "tb": "padding/xs", "lr": "padding/s" },
+      "gapVar": "gap/s",
+      "innerRadiusVar": "radii/chip",
+      "fontSizeVar": "s",
+      "fontWeightVar": "s",
+      "strokeOnDefault": false,
+      "colors": { "fill": { "token": "chip/background/color" }, "text": { "token": "chip/text/color" } },
+      "defaultVariant": "Size=M, Icon=False",
+      "variants": {
+        "Size=M, Icon=False": { "h": 24, "layers": ["Label"] },
+        "Size=L, Icon=False": { "h": 32, "layers": ["Label"] },
+        "Size=L, Icon=True": { "h": 32, "layers": ["Icon", "Label"] }
+      }
+    },
+    "field": {
+      "h": 36,
+      "paddingVar": { "tb": "padding/s", "lr": "padding/s" },
+      "innerRadiusVar": "radii/field",
+      "fontSizeVar": "m",
+      "strokeOnDefault": true,
+      "colors": { "stroke": { "token": "field/border/color" } },
+      "defaultVariant": "State=Default",
+      "variants": {
+        "State=Default": { "h": 36 },
+        "State=Error": { "h": 36, "colors": { "stroke": { "token": "field/border/error/color" } } }
+      }
+    }
+  }
+}

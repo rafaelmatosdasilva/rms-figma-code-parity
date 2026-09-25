@@ -1,0 +1,203 @@
+
+────────────────────────────────────────────────────────────
+  PARITY AUDIT  ·  <DATE>
+────────────────────────────────────────────────────────────
+
+✅  [1] Data is up to date  (Figma snapshots & build output are current)
+       src/figma-vars.snapshot.json ✓ (updated today)
+       src/figma-structure.snapshot.json ✓ (updated today)
+       src/figma-component-props.snapshot.json ✓ (updated today)
+       ⏭ Build freshness skipped on CI (mtime unreliable after fresh clone)
+
+✅  [2] Figma frame unchanged  (live frame vs saved reference screenshot)
+       ⏭ ⏭ No frames configured in ds-config.json - visual regression skipped
+
+❌  [3] Token values  (color · sizing · typography · breakpoints · text)
+       ✅ PASS  25   (color · radius · gap · padding · stroke · typography)
+       ⚠️  NEW SKIP  0
+       ❌ FAIL  1
+       ❌ [sizing/-] radii/chip → --radii-chip
+       ⚠️  parity-map.mjs not found - running with empty token maps.
+         Fix:  src/theme.css:17 - change --radii-chip: 12px → 16px
+
+✅  [4] Tokens used in screens exist in CSS  (every token bound in a DS screen has a CSS variable)
+       ⏭ SKIPPED - no frames[] configured in ds-config.json.
+          Bound-token coverage checks tokens bound in usage frames (screens with instances).
+          Add ds-config.json frames[] to enable it; auditing a COMPONENT_SET definition needs none.
+
+✅  [5] Every mode is covered  (tokens adapt across light/dark and all configured modes)
+       ✅ OK        9/9  (adapts across modes, and matches Figma per mode where value-checked)
+       ❌ FAIL      0/9  (missing per-mode override, or CSS ≠ Figma in a mode)
+       ⏭  SKIPPED   0  (no CSS var, documented)
+
+✅  [6] Exception lists are valid  (no stale or overly broad entries)
+       ⚠️  this gate printed no result line, so its outcome is not visible here
+
+✅  [7] No invented CSS variables  (every CSS variable traces back to a Figma token)
+       ✅ TRACEABLE    17  (maps back to a Figma token or SYSTEM_VARS)
+
+✅  [8] Docs tell the truth  (a style guide / DS doc references only tokens & vars that exist)
+       ✅ [docs-truth] no documentation surfaces configured — skipped
+
+✅  [9] No invented text casing  (no text-transform the DS/Figma does not define)
+       ✅ [text-case] no text-transform the DS doesn't define
+
+✅  [10] No hand-built DS components  (screens use the DS component, not a local look-alike)
+       ✅ [reimplementation] no reimplementationSurfaces configured — skipped
+
+✅  [11] Clean CSS  (no unused variables · no values that contradict Figma · safe containment)
+       ✅ 0 unused vars  (scanned 4 files; 0 known-unused exempted)
+       ✅ 0 undeclared vars  (every fallback-less var() resolves to a declaration)
+       ✅ 0 dead CSS classes  (every rule matches something in the markup)
+       ✅ Clean - no literal diverges from Figma
+       ✅ [css] 0 container-type declaration(s) safe (definite width or block-level); 0 exempt
+
+✅  [12] Nested components keep their own styles  (no parent rule overrides a child component)
+       ✅ No new undocumented broad element selectors with visual properties.
+
+✅  [13] Structure  (height · spacing · base-rule variable bindings)
+       ✅ PASS  3/3 components (structure)
+       ✅ PASS  0/0 CSS height rules
+       ✅ PASS  0/0 CSS base-rule var bindings  (0 manual)
+       ✅ PASS  0/0 CSS property bindings
+       ✅ PASS  1/1 CSS border-sides checks
+       ✅ PASS  3 component(s) - no phantom CSS borders
+       ✅ PASS  1/1 stroke-width token bindings
+       ✅ PASS  3/3 fixed-height no-shrink checks
+       ✅ PASS  10/10 component property implementations
+       ✅ PASS  2/2 Figma annotation acknowledgments
+
+✅  [14] All states are built  (each state implemented · correct selector · variable in the right rule)
+       ⏭ not verified - component-state-tokens.json not found at project root.
+          Run Phase 2 COMPONENT_SET state walk in Figma and save output here.
+       ✅ COVERED  10  propertyMap selectors present in CSS
+       ✅ CORRECT   1  state-var usages in matching state selectors
+       ✅ CORRECT   0
+       ⏭ SKIP      1   (no captured value or no rule found - advisory)
+
+✅  [15] Component props match Figma  (names, defaults, variant options & slots vs code)
+       ✅ OK        5
+       ℹ️ VALUE?    3   (could not read a code value to verify - advisory)
+       ─── Values not verified (advisory) ──
+
+⏭   [16] Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)
+       ⏭ SKIPPED - snapshot not captured (opt-in). Run the Plugin API capture and commit it to enable.
+
+✅  [17] Templates compose the right components  (each template/page uses the components Figma composes)
+       ✅ [template-composition] no templates[] configured — skipped
+
+✅  [18] Markup  (ids · component classes · icon references · every DS screen control is built)
+       ℹ️  [15] htmlStructureClasses not set in ds-config.json - DS component classes are not part of the fingerprint (ids and icon references still are).
+       ✅ [15] No snapshot found - baseline written (1 plugin(s))
+       ⏭  screen elements: no figma-screens.snapshot.json - skipped (capture it to enable)
+
+✅  [19] Required pieces are in place  (icon slots · component slots · form controls)
+       ⚠️  this gate printed no result line, so its outcome is not visible here
+       ⚠️  this gate printed no result line, so its outcome is not visible here
+       ⏭  [13c] no paths.pluginCSS configured - skipping form-control check
+
+✅  [20] Icons  (symbol markup · path data · live Figma check · every Figma icon is in the code)
+       ⚠️  this gate printed no result line, so its outcome is not visible here
+       ⚠️  this gate printed no result line, so its outcome is not visible here
+       ⏭  Gate [17] skipped - FIGMA_TOKEN not set (add to .env to enable icon freshness checks)
+       ⏭  icon inventory: no figma-icons.snapshot.json - skipped (capture it to enable)
+
+✅  [21] Transitions  (duration · easing · property per DS selector)
+       ⏭  TRANSITION_CONTRACT empty - skipped
+
+✅  [22] Motion  (easing & duration variables → CSS)
+       ⏭  Motion parity - not configured (no figma.motion in ds-config.json). Skipped.
+
+✅  [23] Shadows  (Figma effect styles → CSS box-shadow)
+       ⏭  Effect parity - not configured (no snapshot.effects or figma.effects). Skipped.
+
+✅  [24] Renders correctly in a browser  (real computed styles vs the DS spec)
+       ⏭  [16] rendered parity skipped - RENDERED_ASSERTIONS empty (set ds-config.json → rendered.auto to generate height checks automatically)
+
+✅  [25] What this audit actually checked  (which DS components & states are covered)
+       ✅ MODELLED   3/3 DS components have at least one check
+       ℹ️  NO RENDERED 3  (geometry/color only checked statically - no browser assertion)
+       ℹ️  SINGLE-VARIANT 3  (no per-variant capture - sibling states invisible to the audit)
+       ℹ️  CODE CAPTURE tokens 17 (0 verified · 0 uncertain) · components 3/3 measured · props 5 on 2 component(s) (0 uncertain) · icons 0 · nesting 1 (source only)  - read by static CSS only
+       ⚠️  CODE CAPTURE no styleguide configured (ds-config.json → styleguide.template)
+       ✅ MODE COVERAGE  every mode-pinned rendered assertion covers all 2 modes (light/dark)
+       ℹ️  IN PROGRESS 1  (not drift, never fails): tag (experimental, only in Figma)
+
+────────────────────────────────────────────────────────────
+  PARITY  ·  Figma ↔ code
+────────────────────────────────────────────────────────────
+
+  PROPS  (component properties)
+  FIGMA PROP       FIGMA VALUE   CODE PROP  CODE VALUE    
+  button/Disabled  False · True  disabled   (present)       ✓
+  button/Label     text          label      default Save    ✓
+  chip/Size        M · L         size       (present)       ✓
+  chip/Icon        False · True  icon       (present)       ✓
+  chip/Label       text          label      default Filter  ✓
+  ✓ 5 match   ✗ 0 diverge
+
+  VARIABLES  (design tokens)
+  VARIABLE    MODE  FIGMA  CODE
+  radii/chip  -     16px   12px  ✗
+  ✓ 25 match   ✗ 1 diverge
+
+────────────────────────────────────────────────────────────
+  GATE SUMMARY
+────────────────────────────────────────────────────────────
+  ✅  [1]   Data is up to date                                  Pass
+  ✅  [2]   Figma frame unchanged                               Pass
+  ❌  [3]   Token values match Figma                            Fail
+  ✅  [4]   Tokens used in screens exist in CSS                 Pass
+  ✅  [5]   Every mode is covered                               Pass
+  ✅  [6]   Exception lists are valid                           Pass
+  ✅  [7]   No invented CSS variables                           Pass
+  ✅  [8]   Docs tell the truth                                 Pass
+  ✅  [9]   No invented text casing                             Pass
+  ✅  [10]  No hand-built DS components                         Pass
+  ✅  [11]  Clean CSS                                           Pass
+  ✅  [12]  Nested components keep their own styles             Pass
+  ✅  [13]  Structure matches (height, spacing, corners)        Pass
+  ✅  [14]  All states are built                                Pass
+  ✅  [15]  Component props match Figma                         Pass
+  ⏭  [16]  Sub-components match Figma                          Skipped
+         snapshot not captured (opt-in). Run the Plugin API capture and commit it to enable.
+  ✅  [17]  Templates compose the right components              Pass
+  ✅  [18]  Markup matches                                      Pass
+  ✅  [19]  Required pieces are in place                        Pass
+  ✅  [20]  Icons match Figma                                   Pass
+  ✅  [21]  Transitions match                                   Pass
+  ✅  [22]  Motion matches (when defined)                       Pass
+  ✅  [23]  Shadows match (when defined)                        Pass
+  ✅  [24]  Renders correctly in a browser                      Pass
+  ✅  [25]  What this audit actually checked                    Pass
+
+  [verified] the 25 gates above are mechanically checked against Figma; checked 3 of 3 DS components (see gate 25).
+  [reported] the advisory notes below (exemption debt, code drift, accessibility, layering) are signals, not pass/fail.
+
+────────────────────────────────────────────────────────────
+
+  AUDIT FAILED - fix all ❌ above before declaring parity
+
+────────────────────────────────────────────────────────────
+
+⏭  [a11y] Chrome not found (set CHROME_PATH to enable)
+
+ℹ️  Token contrast: all pairs meet WCAG AA across 2 mode(s) (2 derived from token names).
+
+📐 Contracts → contracts  (4 components · 19 DTCG tokens)
+ℹ️  Figma prop types → contracts/figma-props.d.ts: type a component's props with its <Name>FigmaProps so tsc shows prop drift.
+ℹ️  Decision status: 1 experimental  (llms.txt tells agents which one won and why)
+ℹ️  Contract completeness: 4/4 have a description · 4/4 have semantics · 0/4 carry whenNotToUse/useInstead guidance. Advisory only.
+
+  AI-READINESS SCORECARD  (advisory - a running measure, never blocks)
+  ● Gate health      23/25 gates pass
+  ● Coverage         3/3 components modelled (100%)  ·  exemption debt 0
+  ● Documentation    4/4 contracts have a description (100%)
+  ● AI guidance      0/4 carry whenNotToUse/useInstead (0%)
+
+ℹ️  Agreed values: 25 of 26 compared facts agree (recorded in parity-agreed.json, updated). Of the 1 that differ: 0 Figma moved · 0 code moved · 0 both moved · 1 with no earlier agreement.
+
+ℹ️  Since the last run: this is the first recorded run; the next one lists what is new, gone or changed.
+
+📉 Burndown, open findings per component: chip 2 · 8 not tied to a component
+   next up: chip. Run with --component chip, fix, run again.

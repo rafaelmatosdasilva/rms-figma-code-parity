@@ -27,6 +27,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { pathToFileURL } from 'url';
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue, FILE_PAGE_LOADED } from './cdp.mjs';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 
@@ -167,7 +168,7 @@ if (cfg.rendered?.auto) {
     const comps    = JSON.parse(readFileSync(join(ROOT, snapPath), 'utf8')).components ?? {};
     const plugins  = cfg.paths?.plugins ?? [];
     const selectors = cfg.componentSelectors ?? {};
-    const skip     = new Set(cfg.knownUnimplementedComponents ?? []);
+    const skip     = await inProgressNames(ROOT, cfg);
     const manual   = new Set(ASSERTIONS.map(a => `${a.plugin}|${a.selector}|${a.prop}`));
     if (!plugins.length) {
       console.log('⚠️  [16] rendered.auto is on but ds-config.json → paths.plugins is empty (no built UI to render against) - auto assertions skipped');

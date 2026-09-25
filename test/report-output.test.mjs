@@ -79,3 +79,20 @@ test('right-to-left: one-sided and asymmetric physical properties, with the logi
   assert.deepEqual(r.map((f) => `${f.selector} ${f.use}`), ['.pad padding-inline-start', '.four padding-block and padding-inline (or -inline-start / -inline-end)', '.four text-align: start', '.pos inset-inline-start', '.pos float: inline-end']);
   assert.equal(r[0].at, 'a.css:2');
 });
+
+test('burndown: open findings per component, most specific name, with what the last run had', async () => {
+  const { burndown, burndownLines, componentOf } = await import('../run-diff.mjs');
+  const names = ['button', 'buttonPrimary', 'chip', 'field'];
+  assert.equal(componentOf('Structure :: ⚠️  button-primary radius', names), 'buttonPrimary');
+  assert.equal(componentOf('Token values :: ❌ [sizing/-] radii/chip → --radii-chip', names), 'chip');
+  assert.equal(componentOf('Token values :: ❌ FAIL  1', names), null);
+  const now = ['Token values :: ❌ [sizing/-] radii/chip → --radii-chip', 'Structure :: ⚠️  chip height (Size=L): x', 'Structure :: ⚠️  button-primary radius',
+    'Structure :: gate fails', 'Structure :: 🔗 chip in Figma: https://example.com', 'Accessibility :: focus .tp-field', 'Token values :: ❌ FAIL  1'];
+  const b = burndown(now, names, ['Structure :: ⚠️  chip a', 'Structure :: ⚠️  chip b', 'Structure :: ⚠️  chip c', 'Structure :: ⚠️  button x']);
+  assert.deepEqual(burndownLines(b), [
+    'Burndown, open findings per component: chip 2 (was 3) · buttonPrimary 1 (was 0) · field 1 (was 0) · 1 not tied to a component',
+    '   cleared since the last run: button',
+    '   next up: chip. Run with --component chip, fix, run again.',
+  ]);
+  assert.equal(burndownLines(b, { scoped: true }).length, 2);   // scoped to a component: no "next up"
+});

@@ -8,6 +8,7 @@
 
 import { contrastRatio } from './a11y-check.mjs';
 import { parseColor } from './css-values.mjs';
+import { conceptOf } from './state-concepts.mjs';
 
 // Hex (#rgb / #rgba / #rrggbb / #rrggbbaa) -> {r,g,b} in 0-255, or null (the alpha channel is read by
 // tokenContrastFindings through css-values.mjs).
@@ -52,7 +53,7 @@ export function tokenContrastFindings(pairs, resolve) {
 // text against its own background in every mode, and in every state the capture produced (colours
 // measured in every mode the capture recorded). Disabled states are exempt (WCAG 1.4.3). A see-through
 // background is blended over the backdrop the capture saw behind it, and skipped when there is none. Large text (24px, or 18.66px bold) needs 3:1.
-export function stateContrastFindings(code) {
+export function stateContrastFindings(code, cfg = {}) {
   const findings = [];
   let checked = 0;
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
@@ -81,7 +82,7 @@ export function stateContrastFindings(code) {
     for (const m of modes) check('default', m, colors[m].color, colors[m].backgroundColor, baseSrc, colors[m].backdrop);
     const base = colors[modes[0]];
     for (const [label, st] of Object.entries(c.states ?? {})) {
-      if (/disabled|inactive/i.test(label)) continue;
+      if (conceptOf(label, cfg) === 'disabled') continue;   // ds-config states, else the names
       if (/^found/i.test(String(st.produced ?? ''))) continue;   // measured on another element: its text may differ
       const ch = st.changed ?? {};
       if (!ch.color && !ch.backgroundColor) continue;

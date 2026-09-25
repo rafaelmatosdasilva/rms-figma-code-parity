@@ -32,6 +32,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, extname, basename, relative } from 'path';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -61,7 +62,7 @@ try { SNAP = JSON.parse(readFileSync(join(ROOT, SNAP_PATH), 'utf8')).templates ?
 }
 
 const STRICT              = cfg.templateCompositionStrict === true;
-const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_UNIMPLEMENTED = await inProgressNames(ROOT, cfg);
 const KNOWN_EXCEPTIONS    = new Set(cfg.knownTemplateExceptions ?? []);   // "Template/Component"
 const COMPONENT_FILES     = cfg.componentFiles ?? {};
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};

@@ -31,7 +31,9 @@ import { loadCssSources, rootTokens, resolveVars, canonValue } from './css-sourc
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
 import { captureComponents, staticComponentReading } from './component-capture.mjs';
 import { createLocator, loadLocator } from './component-locator.mjs';
-import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles } from './structure-capture.mjs';
+import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles, markupInputKey } from './structure-capture.mjs';
+import { conceptOf } from './state-concepts.mjs';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 export const CAPTURE_VERSION = 2;
 const ENGINE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -90,8 +92,9 @@ function findTemplates(ROOT) {
 function hashInputs(ROOT, cfg, files, pages, opts) {
   const h = createHash('sha256');
   h.update(`v${CAPTURE_VERSION}|${JSON.stringify(cfg.figma?.modes ?? null)}|${JSON.stringify(cfg.figma?.collections ?? null)}|${JSON.stringify(cfg.codeReading ?? null)}`);
-  for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs', 'structure-capture.mjs', 'component-api.mjs', 'component-source.mjs', 'icon-source.mjs', 'markup-source.mjs', 'codeconnect-check.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
+  for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs', 'structure-capture.mjs', 'component-api.mjs', 'component-source.mjs', 'icon-source.mjs', 'markup-source.mjs', 'codeconnect-check.mjs', 'state-concepts.mjs', 'css-values.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
   for (const extra of opts.extraFiles ?? []) { try { h.update(extra); h.update(readFileSync(extra)); } catch { /* optional */ } }
+  for (const key of opts.extraKeys ?? []) h.update(`|${key}`);
   for (const abs of [...files.map((f) => f.abs), ...pages.filter((p) => !/^https?:/.test(p.path) && !p.generated).map((p) => resolve(ROOT, p.path))].sort()) {
     try { h.update(abs); h.update(readFileSync(abs)); } catch { /* vanished */ }
   }
@@ -254,7 +257,7 @@ export async function componentSpecs(ROOT, cfg) {
   for (const a of [...(contract.RENDERED_ASSERTIONS ?? []), ...(contract.CROSS_PLUGIN_CONSISTENCY ?? [])]) {
     if (a?.probe && a.selector && !probes.has(a.selector)) probes.set(a.selector.replace(/\s+/g, ' ').trim(), a.probe);
   }
-  const unbuilt = new Set(cfg.knownUnimplementedComponents ?? []);
+  const unbuilt = await inProgressNames(ROOT, cfg);
   return names.map((name) => {
     const selector = locator.selectorFor(name).replace(/\s+/g, ' ').trim();
     const states = [];
@@ -420,7 +423,7 @@ async function prepareCapture(ROOT, cfg) {
   const nodeIds = Object.fromEntries(Object.entries(figmaStructure).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
   const apiReader = apiReaderFor(ROOT, cfg, { classFor: locator.classFor, nodeIds });
   const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
-  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles });
+  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles, extraKeys: [markupInputKey(ROOT, cfg), [...(await inProgressNames(ROOT, cfg))].sort().join(',')] });
   return { outPath, modes, themeEntries, pages, styleguide, files, missing, remote, locator, apiReader, inputHash };
 }
 
@@ -499,6 +502,8 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
           staticRootVars: rootTokens(componentSources, modes[0]),
           openPage: (url) => openLoaded(cdp.send, url),
           breakpoints: breakpointWidths(ROOT, cfg),
+          stateConcept: (label) => conceptOf(label, cfg),
+          visual: cfg.codeReading?.visual === true,
         });
         const nest = await renderedNesting({ send: cdp.send, pages: compPages, specs, openLoaded });
         nestingRendered = nest.rendered;
@@ -510,6 +515,16 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
 
   const { tokens, appTokens, counts } = mergeTokenReadings({ staticByMode, browser, modes, browserNote: browser ? null : browserNote });
   const components = comp?.components ?? staticComponents(specs, componentSources, modes, browserNote);
+  // The instance images (codeReading.visual, idea I43), written beside the snapshot for the visual diff.
+  const visualDir = join(dirname(outPath), 'visual', 'code');
+  rmSync(visualDir, { recursive: true, force: true });
+  for (const [name, c] of Object.entries(components)) {
+    if (!c.visual?.data) continue;
+    mkdirSync(visualDir, { recursive: true });
+    const file = join(visualDir, `${name.replace(/[^\w.-]+/g, '_')}.png`);
+    writeFileSync(file, Buffer.from(c.visual.data, 'base64'));
+    c.visual = { file: relative(ROOT, file), width: c.visual.width, height: c.visual.height, scale: 2, background: c.visual.background, text: c.visual.text ?? [] };
+  }
   const compCoverage = componentCoverage(specs, components, comp);
   const { api, note: apiNote, sources: apiSources } = captureApis(ROOT, specs, apiReader);
   const icons = captureIcons(ROOT, cfg);

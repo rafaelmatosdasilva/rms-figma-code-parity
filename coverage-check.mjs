@@ -16,6 +16,7 @@ import { createLocator } from './component-locator.mjs';
 import { existsSync } from 'fs';
 import { readFreshSnapshot, nestingLabel } from './code-capture.mjs';
 import { pathToFileURL } from 'url';
+import { inProgressNames, inProgressList, sideLabel } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -40,7 +41,7 @@ try {
   PROP_ASSERT = m.CSS_PROPERTY_ASSERTIONS ?? [];
 } catch { /* optional */ }
 
-const UNIMPL = new Set(cfg.knownUnimplementedComponents ?? []);
+const UNIMPL = await inProgressNames(ROOT, cfg);
 
 // A component's CSS class, from the one shared component finder (component-locator.mjs).
 const LOCATOR = createLocator(cfg, { contractSelectors: SELECTORS });
@@ -181,6 +182,15 @@ if (unverifiedFills.length) {
 } else {
   const filled = rows.filter(r => !r.unimpl && r.dims.fillPainted).length;
   if (filled) console.log(`✅ FILL COVERAGE  every background-painting component (${filled}) has a rendered backgroundColor assertion`);
+}
+
+// Work in progress is not drift (I52): components the project says are still being made, on one side
+// only, are listed and never fail. One now on both sides is ready to compare.
+{
+  const wip = await inProgressList(ROOT, cfg);
+  const open = wip.filter((x) => !x.ready), ready = wip.filter((x) => x.ready && x.why === 'not built yet');
+  if (open.length) console.log(`ℹ️  IN PROGRESS ${open.length}  (not drift, never fails): ${open.map((x) => `${x.name} (${x.why}, ${sideLabel(x)})`).join(', ')}`);
+  if (ready.length) console.log(`⚠️  READY TO COMPARE ${ready.length}  ${ready.map((x) => x.name).join(', ')} ${ready.length === 1 ? 'is' : 'are'} in Figma and in code now; take ${ready.length === 1 ? 'it' : 'them'} off knownUnimplementedComponents so ${ready.length === 1 ? 'it is' : 'they are'} compared`);
 }
 
 const anyFail = (cfg.coverageStrict === true && gaps.length)

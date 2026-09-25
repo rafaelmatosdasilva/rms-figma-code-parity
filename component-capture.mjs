@@ -52,6 +52,7 @@ export const TRACE = {
 };
 const MEASURED = [...Object.keys(TRACE), 'maxHeight', 'display', 'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'];
 const COLOR_PROPS = new Set(['color', 'backgroundColor', 'borderTopColor']);
+const GUARD_PROPS = ['color', 'backgroundColor', 'borderTopColor', 'opacity'];
 const BREAKPOINT_PROPS = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'columnGap', 'rowGap', 'borderTopLeftRadius', 'fontSize', 'lineHeight'];
 const INHERITED = new Set(['color', 'fontSize', 'fontWeight', 'lineHeight', 'fontFamily', 'letterSpacing', 'textTransform']);
 
@@ -217,7 +218,12 @@ function measureExpression(selector) {
       behind.push(c);
       if (!c.startsWith('rgba') && !c.includes('/')) break;
     }
-    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before, behind };
+    // The capture host turns pointer events off for everything inside it; read the component's own.
+    const host = document.getElementById('__parity_cap_host__'), hostPe = host ? host.style.pointerEvents : null;
+    if (host) host.style.pointerEvents = 'auto';
+    const pointerEvents = getComputedStyle(el).pointerEvents;
+    if (host) host.style.pointerEvents = hostPe;
+    return { rect: { height: r.height, width: r.width }, cs: pick(cs, ${JSON.stringify(MEASURED)}), before, behind, pointerEvents, nativeDisabled: el.matches(':disabled') };
   })()`;
 }
 
@@ -464,7 +470,26 @@ export async function captureComponents(ctx) {
     };
     const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true }, sessionId)).result?.value;
     const close = async () => { off(); await send('Target.closeTarget', { targetId }).catch(() => {}); };
-    return { sessionId, where, trace, nodeOf, measureAll, measureMany, measureStates, measureAt, evaluate, close };
+    // The instance as the page draws it, in the first mode and the default state (idea I43): a PNG of its
+    // box, at the page's device scale.
+    const screenshot = async (sel) => {
+      // With the boxes of its text, relative to the component, so the diff can also be read without text.
+      const box = (await send('Runtime.evaluate', { expression: `(() => {
+        const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null;
+        const b = el.getBoundingClientRect(), text = [];
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+          if (!t.textContent.trim()) continue;
+          const r = document.createRange(); r.selectNodeContents(t);
+          for (const q of r.getClientRects()) if (q.width && q.height) text.push([q.left - b.left, q.top - b.top, q.width, q.height]);
+        }
+        return { x: b.left + scrollX, y: b.top + scrollY, width: b.width, height: b.height, text };
+      })()`, returnByValue: true }, sessionId)).result?.value;
+      if (!box?.width || !box?.height) return null;
+      const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 }, captureBeyondViewport: true }, sessionId);
+      return shot?.data ? { data: shot.data, width: box.width, height: box.height, text: box.text } : null;
+    };
+    return { sessionId, where, trace, nodeOf, measureAll, measureMany, measureStates, measureAt, evaluate, screenshot, close };
   }
 
   // One measured + traced element → facts, checked against the static reading of the winning rule.
@@ -575,6 +600,18 @@ export async function captureComponents(ctx) {
       try {
         const { sMode, sTrace, sLayers } = await P.measureStates(stateJobs);
         stateJobs.forEach((j, ji) => {
+          if (j.guard) {
+            // A state the user cannot reach is not a leak: no hover when pointer-events is none, and no
+            // press on a natively disabled control.
+            const base = sMode[j.guard.baseJob]?.[firstMode] ?? {};
+            const unreachable = base.pointerEvents === 'none' ? 'pointer-events: none' : (j.guard.force === 'active' && base.nativeDisabled ? 'a disabled control cannot be pressed' : null);
+            if (unreachable) { (j.entry.disabledGuard ??= []).push({ state: j.guard.state, force: j.guard.force, changed: {}, unreachable }); return; }
+            const now = sMode[ji]?.[firstMode]?.cs ?? {}, was = base.cs ?? {};
+            const changed = Object.fromEntries(GUARD_PROPS.filter((p) => now[p] != null && was[p] != null && now[p] !== was[p])
+              .map((p) => [p, { from: was[p], to: now[p], rule: sTrace[ji]?.[p]?.rule, at: sTrace[ji]?.[p]?.at }]));
+            (j.entry.disabledGuard ??= []).push({ state: j.guard.state, force: j.guard.force, changed });
+            return;
+          }
           const e = stateEntry(j.st, j.how.describe, sMode[ji], sTrace[ji], j.props, sLayers[ji]);
           if (j.combo) (j.entry.combos ??= {})[j.combo] = e; else (j.entry.states ??= {})[j.st.label] = e;
         });
@@ -604,6 +641,12 @@ export async function captureComponents(ctx) {
         props, fill: bg && bg[3] > 0 ? 'direct' : beforeBg && beforeBg[3] > 0 ? 'before' : 'none', colors: colorsOf(perMode),
       };
       if (base?.before) entry.before = base.before;
+      if (ctx.visual) {
+        try {
+          const shot = await P.screenshot(capSel(loc.i));
+          if (shot) entry.visual = { ...shot, background: base?.behind?.[0] ?? 'rgb(255, 255, 255)' };
+        } catch { /* the visual diff says it has no image */ }
+      }
       if (comp.childParts?.length) { const l = await P.evaluate(layersExpression(capSel(loc.i), comp.childParts)); if (l) entry.layers = l; }
       if (atBreakpoints && Object.keys(atBreakpoints).length) entry.breakpoints = atBreakpoints;
       // Parts: each measured and traced like the instance, keeping only the properties the part is for.
@@ -622,7 +665,17 @@ export async function captureComponents(ctx) {
       for (const st of comp.states ?? []) {
         const how = stateRecipe(comp.selector, st.selector);
         if (how.error || !nodeId) { deferred.push({ comp: comp.name, st, why: how.error ?? 'instance not addressable' }); continue; }
+        const baseJob = stateJobs.length;
         stateJobs.push({ i: loc.i, nodeId, how, st, props, entry, childParts: comp.childParts });   // measured for the whole page at once
+        // Disabled wins (I40): the disabled state with :hover and :active forced on as well. Anything
+        // that changes against disabled alone means a hover or press style lacks a :not(:disabled) guard.
+        if (ctx.stateConcept?.(st.label) === 'disabled') {
+          for (const f of ['hover', 'active']) {
+            if (how.force.includes(f)) continue;
+            const guardHow = mergeRecipes([how, { classes: [], attrs: [], force: [f], disabled: false, checked: false, describe: `forced :${f}` }]);
+            stateJobs.push({ i: loc.i, nodeId, how: guardHow, st: { label: `${st.label} + :${f}`, selector: st.selector }, props, entry, guard: { state: st.label, force: f, baseJob } });
+          }
+        }
       }
       // Variant combinations (two or more axes at once), each recipe put on together.
       for (const combo of comp.combos ?? []) {

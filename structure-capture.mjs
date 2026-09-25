@@ -20,11 +20,13 @@ export function markupSnapshotPath(cfg = {}) {
   return themeCSS.replace(/[^/\\]+$/, 'html-structure.snapshot.json');
 }
 
-// Every input file the structural readings depend on (for the capture's content hash).
+// Every input file the structural readings depend on (for the capture's content hash). The markup
+// baseline is not one of them: the audit writes it on a project's first run, after the capture, and
+// only its class list is read (markupInputKey), so the capture is not thrown away for that.
 export function structureInputFiles(ROOT, cfg = {}, apiReader) {
   const list = [
     ...(cfg.paths?.pluginCSS ?? []), ...(cfg.paths?.sharedIconSources ?? []), ...(cfg.iconCheck?.usageSources ?? []),
-    markupSnapshotPath(cfg), 'component-composition.snapshot.json', 'custom-elements.json', 'package.json',
+    'component-composition.snapshot.json', 'custom-elements.json', 'package.json',
     ...[cfg.codeReading?.docgen ?? []].flat(), cfg.codeReading?.storybookIndex ?? 'storybook-static/index.json',
   ].map((p) => resolve(ROOT, p));
   if (apiReader) list.push(...apiReader.files);
@@ -76,6 +78,12 @@ export function captureIcons(ROOT, cfg) {
 }
 
 // ── Markup ────────────────────────────────────────────────────────────────────
+// What the markup reading takes from the stored baseline: its DS class list, for the capture's hash.
+export function markupInputKey(ROOT, cfg = {}) {
+  const { classes, from } = markupClassSet(cfg, readJson(join(ROOT, markupSnapshotPath(cfg))) ?? {});
+  return `${from}:${[...classes].sort().join(',')}`;
+}
+
 export function captureMarkup(ROOT, cfg) {
   const stored = readJson(join(ROOT, markupSnapshotPath(cfg))) ?? {};
   const { classes, from } = markupClassSet(cfg, stored);

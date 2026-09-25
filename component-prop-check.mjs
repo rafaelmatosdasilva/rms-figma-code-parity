@@ -27,6 +27,8 @@ import { readFileSync, existsSync, writeFileSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { loadLocator } from './component-locator.mjs';
 import { createApiReader } from './component-api.mjs';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
+import { stateAxisTest, cleanFigmaProp } from './figma-props.mjs';
 
 const ROOT = process.cwd();
 
@@ -61,7 +63,7 @@ if (!Object.entries(SNAP).some(([k, v]) => k !== '_updated' && v?.properties && 
   process.exit(2);
 }
 
-const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_UNIMPLEMENTED = await inProgressNames(ROOT, cfg);
 const KNOWN_PROP_EXCEPTIONS = new Set(cfg.knownPropExceptions ?? []);   // "Component/prop"
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 // Documented intentional renames: Figma property name -> code prop name, per component.
@@ -93,7 +95,6 @@ function contractBindings(figmaName) {
 
 const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 // Figma property keys carry a node-id suffix: "Show Label#958:0" -> "Show Label".
-const cleanFigmaProp = (k) => k.replace(/#[\d:]+$/, '').trim();
 const LOCATOR = await loadLocator(ROOT, cfg);   // the one shared component finder
 
 // ── Read the code: which file is each component, and its props ────────────────
@@ -119,12 +120,9 @@ const resolveFile = (figmaName) => API.fileFor(figmaName);
 // pseudo-classes, which Gate 11 (All states are built) verifies. Skip it here so a
 // component that implements states in CSS isn't wrongly flagged as missing a `state` prop.
 // Skips: a property named state/states, or a VARIANT whose options are all interaction states.
-const STATE_WORDS = new Set(['default', 'hover', 'focus', 'focused', 'active', 'pressed',
-  'selected', 'checked', 'indeterminate', 'visited', 'disabled', 'loading', 'error', 'on', 'off']);
-const STATE_PROP_NAMES = new Set((cfg.knownStateProps ?? ['State', 'state', 'States']).map(norm));
-const isStateAxis = (name, def) => STATE_PROP_NAMES.has(norm(name)) ||
-  (def?.type === 'VARIANT' && Array.isArray(def.variantOptions) && def.variantOptions.length >= 2 &&
-   def.variantOptions.every(o => STATE_WORDS.has(norm(o))));
+// ds-config states (I40): a declared enum axis (prop with a value, such as State=Hover) is a state axis
+// too. A boolean prop (isDisabled) stays a code prop. Shared with the Figma prop types (figma-props.mjs).
+const isStateAxis = stateAxisTest(cfg);
 
 const MISSING = [], NOFILE = [], EXTRA = [], SUGGEST = [], OK = [], VALUE_FAIL = [], VALUE_INFO = [], SLOT_FAIL = [];
 const rows = [];   // structured parity rows: { component, figmaProp, figmaValue, codeProp, codeValue, status }

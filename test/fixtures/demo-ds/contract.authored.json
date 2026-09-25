@@ -1,0 +1,8 @@
+{
+  "$note": "Tidepool, a fictional design system: the authored part of each component's contract.",
+  "components": {
+    "button": { "semantics": { "element": "button" } },
+    "chip": { "semantics": { "element": "button", "aria": { "role": "button" } } },
+    "field": { "semantics": { "element": "label" } }
+  }
+}

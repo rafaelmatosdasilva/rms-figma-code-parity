@@ -15,13 +15,14 @@
 // Exit 0 = all checks pass. Exit 1 = any failure.
 // Exit 2 = cannot verify: no compiled component CSS configured (setup gap, not a parity fail).
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname, resolve as resolvePath } from 'path';
 import { loadCssSources, walkCss, styleBlocksOf, blankComments } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
 import { createLocator } from './component-locator.mjs';
 import { pathToFileURL } from 'url';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 
@@ -349,7 +350,7 @@ const usesVar = (expr, v) => !!expr && new RegExp(`var\\(\\s*${v.replace(/[.*+?^
 
 // ── 1. Snapshot vs CONTRACT ───────────────────────────────────────────────────
 const components = snap.components ?? {};
-const UNIMPLEMENTED_SET = new Set(cfg.knownUnimplementedComponents ?? []);
+const UNIMPLEMENTED_SET = await inProgressNames(ROOT, cfg);
 const FAIL = [], PASS = [], MISSING = [];
 const UNCONTRACTED = []; // DS components absent from both contract and knownUnimplementedComponents
 
@@ -1233,7 +1234,7 @@ function normPropName(k) { return k.replace(/#[\d:]+$/, '').trim(); }
 
 // Components deliberately not implemented in code - exempt from Gate [3g] FAIL.
 // Add to ds-config.json → knownUnimplementedComponents with a reason comment.
-const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_UNIMPLEMENTED = await inProgressNames(ROOT, cfg);
 
 // Build lookup: figmaName → CONTRACT key (for components in CONTRACT)
 const figmaNameToContractKey = {};
@@ -1866,6 +1867,20 @@ try {
       if (hb.figma) console.log(`   ↳ Figma changes to make (${toFigma.length}): ${hb.figma}`);
       if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
+    // What was actually checked (I53): a clean result is only as good as its reach.
+    const { censusOf, censusLines } = await import('./capture-compare.mjs');
+    const census = censusOf(r, bpr);
+    const censusFile = join(dirname(cfg.codeReading?.out ?? '.parity-out/code.snapshot.json'), 'census.json');
+    try { mkdirSync(join(ROOT, dirname(censusFile)), { recursive: true }); writeFileSync(join(ROOT, censusFile), JSON.stringify(census, null, 1) + '\n'); } catch { /* the report line still shows it */ }
+    censusLines(census).forEach((l, i) => console.log(`   ${i ? '  ' : '📋 '}${l}${i ? '' : `  (${censusFile})`}`));
+    // Each component as drawn against its Figma image (I43), when codeReading.visual is on.
+    if (cfg.codeReading?.visual === true) {
+      try {
+        const { visualDiff, visualLines } = await import('./visual-diff.mjs');
+        const vr = await visualDiff(ROOT, cfg, cap, snap?.components ?? {}, { outDir: dirname(cfg.codeReading?.out ?? '.parity-out/code.snapshot.json'), version: snap?._figmaVersion ?? null });
+        for (const l of visualLines(vr, cfg.visualRefs ?? '.parity-refs')) console.log(`   ${l.trimStart().startsWith('🖼  VISUAL') ? l : l.trimStart()}`);
+      } catch (e) { console.log(`   🖼  ⏭ visual diff not run (${String(e.message || e).split('\n')[0]})`); }
+    }
     // Every variant built: each Figma axis value has a counterpart the capture found in code.
     const { compareVariants } = await import('./capture-compare.mjs');
     const v = compareVariants(cap, snap?.components ?? {});

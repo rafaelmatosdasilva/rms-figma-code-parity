@@ -1,0 +1,49 @@
+{
+  "_note": "Tidepool, a fictional design system for the end-to-end golden test (test/demo-ds.test.mjs). Every name is invented.",
+  "maxSnapshotAgeDays": 30,
+  "figma": {
+    "modes": [
+      {
+        "name": "Light",
+        "snapshotKey": "light",
+        "cssSelector": "root"
+      },
+      {
+        "name": "Dark",
+        "snapshotKey": "dark",
+        "cssSelector": "data:theme=dark"
+      }
+    ]
+  },
+  "paths": {
+    "themeCSS": "src/theme.css",
+    "snapshotVars": "src/figma-vars.snapshot.json",
+    "snapshotStructure": "src/figma-structure.snapshot.json",
+    "compPropsSnapshot": "src/figma-component-props.snapshot.json",
+    "plugins": [
+      "gallery"
+    ],
+    "pluginCSS": []
+  },
+  "states": {
+    "hover": {
+      "prop": "State",
+      "value": "Hover"
+    },
+    "error": {
+      "prop": "State",
+      "value": "Error"
+    },
+    "disabled": {
+      "prop": "Disabled"
+    }
+  },
+  "componentFiles": {
+    "button": "src/components/Button.jsx",
+    "chip": "src/components/Chip.jsx"
+  },
+  "codeReading": {
+    "visual": true
+  },
+  "_visualNote": "The .parity-refs/components images stand in for Figma exports of each default variant. The button one has a 2px border the structure facts do not record, so only the visual diff sees it."
+}

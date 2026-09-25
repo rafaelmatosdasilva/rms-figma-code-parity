@@ -10,3 +10,8 @@ node_modules/
 
 # private parity plans/roadmap (local-only, never published)
 plans/
+
+# The demo design system is a whole project, kept in full (test/demo-ds.test.mjs).
+!test/fixtures/demo-ds/ds-config.json
+!test/fixtures/demo-ds/structure-contract.mjs
+!test/fixtures/demo-ds/.parity-refs/

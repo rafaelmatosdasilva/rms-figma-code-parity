@@ -22,6 +22,7 @@ import { join, relative } from 'path';
 import { loadLocator } from './component-locator.mjs';
 import { componentSourceFiles, textReader, resolveComponentFile, usedComponents as usedIn } from './component-source.mjs';
 import { readFreshSnapshot } from './code-capture.mjs';
+import { inProgressNames } from './in-progress.mjs';   // I52: work in progress is not drift
 
 const ROOT = process.cwd();
 let cfg = {};
@@ -40,7 +41,7 @@ if (!existsSync(join(ROOT, SNAP_PATH))) {
 }
 const SNAP = JSON.parse(readFileSync(join(ROOT, SNAP_PATH), 'utf8'));
 
-const KNOWN_UNIMPLEMENTED = new Set(cfg.knownUnimplementedComponents ?? []);
+const KNOWN_UNIMPLEMENTED = await inProgressNames(ROOT, cfg);
 const KNOWN_EXCEPTIONS    = new Set(cfg.knownCompositionExceptions ?? []);   // "Parent/Child"
 const COMPONENT_SELECTORS = cfg.componentSelectors ?? {};
 

@@ -1,0 +1,56 @@
+{
+  "_updated": "2026-01-01T00:00:00.000Z",
+  "_note": "Fictional Figma variables for the Tidepool demo.",
+  "color": {
+    "light": {
+      "surface/page/color": "#ffffff",
+      "text/primary/color": "#1b2433",
+      "button/background/color": "#1f5fd6",
+      "button/background/hover/color": "#1849a8",
+      "button/text/color": "#ffffff",
+      "chip/background/color": "#e8eef9",
+      "chip/text/color": "#1b2433",
+      "field/border/color": "#7d8799",
+      "field/border/error/color": "#c4231b"
+    },
+    "dark": {
+      "surface/page/color": "#10151f",
+      "text/primary/color": "#eef2f8",
+      "button/background/color": "#5b8def",
+      "button/background/hover/color": "#7aa3f2",
+      "button/text/color": "#0b1020",
+      "chip/background/color": "#243049",
+      "chip/text/color": "#eef2f8",
+      "field/border/color": "#8f99ab",
+      "field/border/error/color": "#ff7a70"
+    }
+  },
+  "sizing": {
+    "gap/s": "4px",
+    "padding/xs": "4px",
+    "padding/s": "8px",
+    "padding/m": "12px",
+    "radii/button": "8px",
+    "radii/chip": "16px",
+    "radii/field": "6px",
+    "stroke/default": "1px"
+  },
+  "typography": {
+    "m": {
+      "size": "14px",
+      "weight": "500",
+      "lh": "20px"
+    },
+    "s": {
+      "size": "12px",
+      "weight": "500",
+      "lh": "16px"
+    }
+  },
+  "aliases": {},
+  "breakpoints": {},
+  "strings": {},
+  "booleans": {},
+  "animation": {},
+  "primitives": {}
+}

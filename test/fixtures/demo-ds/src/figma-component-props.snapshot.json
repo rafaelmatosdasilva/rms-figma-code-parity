@@ -1,0 +1,96 @@
+{
+  "_updated": "2026-01-01T00:00:00.000Z",
+  "button": {
+    "nodeId": "10:1",
+    "properties": {
+      "State": {
+        "type": "VARIANT",
+        "defaultValue": "Default",
+        "variantOptions": [
+          "Default",
+          "Hover"
+        ]
+      },
+      "Disabled": {
+        "type": "VARIANT",
+        "defaultValue": "False",
+        "variantOptions": [
+          "False",
+          "True"
+        ]
+      },
+      "Label#10:0": {
+        "type": "TEXT",
+        "defaultValue": "Save"
+      }
+    },
+    "annotations": [
+      {
+        "label": "Role: button"
+      }
+    ]
+  },
+  "chip": {
+    "nodeId": "20:1",
+    "properties": {
+      "Size": {
+        "type": "VARIANT",
+        "defaultValue": "M",
+        "variantOptions": [
+          "M",
+          "L"
+        ]
+      },
+      "Icon": {
+        "type": "VARIANT",
+        "defaultValue": "False",
+        "variantOptions": [
+          "False",
+          "True"
+        ]
+      },
+      "Label#20:0": {
+        "type": "TEXT",
+        "defaultValue": "Filter"
+      }
+    },
+    "annotations": [
+      {
+        "label": "Role: togglebutton"
+      }
+    ]
+  },
+  "field": {
+    "nodeId": "30:1",
+    "properties": {
+      "State": {
+        "type": "VARIANT",
+        "defaultValue": "Default",
+        "variantOptions": [
+          "Default",
+          "Error"
+        ]
+      }
+    },
+    "annotations": []
+  },
+  "tag": {
+    "nodeId": "40:1",
+    "description": "A small status label. @experimental Still being designed.",
+    "properties": {
+      "Tone": {
+        "type": "VARIANT",
+        "defaultValue": "Neutral",
+        "variantOptions": [
+          "Neutral",
+          "Positive"
+        ]
+      },
+      "Label#40:0": {
+        "type": "TEXT",
+        "defaultValue": "New"
+      }
+    },
+    "annotations": []
+  }
+}

@@ -1,0 +1,70 @@
+/* Tidepool, a fictional design system. Themes switch with a data attribute, not a media query. */
+:root {
+  --surface-page: #ffffff;
+  --text-primary: #1b2433;
+  --button-background: #1f5fd6;
+  --button-background-hover: #1849a8;
+  --button-text: #ffffff;
+  --chip-background: #e8eef9;
+  --chip-text: #1b2433;
+  --field-border: #7d8799;
+  --field-border-error: #c4231b;
+  --gap-s: 4px;
+  --padding-xs: 4px;
+  --padding-s: 8px;
+  --padding-m: 12px;
+  --radii-button: 8px;
+  --radii-chip: 12px;
+  --radii-field: 6px;
+  --stroke-default: 1px;
+}
+:root[data-theme="dark"] {
+  --surface-page: #10151f;
+  --text-primary: #eef2f8;
+  --button-background: #5b8def;
+  --button-background-hover: #7aa3f2;
+  --button-text: #0b1020;
+  --chip-background: #243049;
+  --chip-text: #eef2f8;
+  --field-border: #8f99ab;
+  --field-border-error: #ff7a70;
+}
+
+body { margin: 0; background: var(--surface-page); color: var(--text-primary); font-family: sans-serif; }
+
+.tp-button {
+  display: inline-flex; align-items: center; gap: var(--gap-s);
+  height: 32px; box-sizing: border-box; flex-shrink: 0;
+  padding: var(--padding-xs) var(--padding-m);
+  border: 0; border-radius: var(--radii-button);
+  background: var(--button-background); color: var(--button-text);
+  font-size: 14px; font-weight: 500; line-height: 20px;
+}
+/* The hover has no :not(:disabled) guard, so a disabled button still reacts. */
+.tp-button:hover { background: var(--button-background-hover); }
+.tp-button:disabled { opacity: 0.5; }
+
+.tp-chip {
+  display: inline-flex; align-items: center; gap: var(--gap-s);
+  height: 24px; box-sizing: border-box; flex-shrink: 0;
+  padding: var(--padding-xs) var(--padding-s);
+  border: 0; border-radius: var(--radii-chip);
+  background: var(--chip-background); color: var(--chip-text);
+  font-size: 12px; font-weight: 500; line-height: 16px;
+}
+.tp-chip .tp-chip__label { white-space: nowrap; }
+.tp-chip .tp-chip__icon { display: none; width: 12px; height: 12px; background: currentColor; }
+.tp-chip.tp-chip--l { height: 32px; }
+.tp-chip.tp-chip--icon .tp-chip__icon { display: inline-block; }
+/* Large with an icon grows to 36px; Figma keeps it at 32px. */
+.tp-chip.tp-chip--l.tp-chip--icon { height: 36px; }
+
+.tp-field {
+  display: flex; align-items: center;
+  height: 36px; box-sizing: border-box; flex-shrink: 0;
+  padding: var(--padding-s);
+  border: var(--stroke-default) solid var(--field-border); border-radius: var(--radii-field);
+  font-size: 14px; line-height: 20px;
+}
+.tp-field.tp-field--error { border-color: var(--field-border-error); }
+.tp-field__input { border: 0; outline: 0; font: inherit; background: transparent; color: inherit; flex: 1; }
