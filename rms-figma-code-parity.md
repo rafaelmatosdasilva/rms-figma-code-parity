@@ -243,6 +243,7 @@ rms-figma-code-parity --no-docs                       # skip the design-intent l
 rms-figma-code-parity --docs                          # ALSO build the styleguide HTML this run (design-intent itself is already automatic)
 rms-figma-code-parity --no-contracts                  # skip the standard contract + DTCG tokens this run (emitted by default; local, gitignored)
 rms-figma-code-parity --baseline                      # capture today's failing gates as accepted adoption debt (commit parity-baseline.json)
+rms-figma-code-parity --baseline --findings           # the same, each failing ❌ line accepted on its own
 rms-figma-code-parity --no-baseline                   # ignore any parity-baseline.json this run (enforce every gate)
 node ~/.claude/skills/rms-figma-code-parity/parity-check.mjs --fix                   # auto-fix sizing/typography divergences in theme.css
 node ~/.claude/skills/rms-figma-code-parity/setup-webhook.mjs --list                 # list registered Figma webhooks for this file
@@ -574,6 +575,12 @@ entries (a renamed/removed gate) are flagged for pruning. It is gate-level on pu
 the pass/fail the audit already has for all 25 gates, so it is fully deterministic and imposes no
 structure. Off by default (no file = no baseline); ignore a file for one run with `--no-baseline`, or
 per-project with `ds-config.json → baseline.enabled: false` (path via `baseline.path`).
+
+**Per finding.** `--baseline --findings` records each failing gate's `❌` lines instead of the gate, so one
+known difference can be accepted while everything else in the same gate keeps blocking. A failing gate whose
+`❌` lines are all accepted is debt; any other `❌` line is a regression, including an accepted one whose value
+changed (it is new text). The run lists the new lines, and the accepted lines that no longer appear as fixed,
+to drop with the next `--baseline --findings`. A failing gate with no `❌` line to accept is recorded as a gate.
 
 #### Accessibility check (I18, advisory, from the render)
 

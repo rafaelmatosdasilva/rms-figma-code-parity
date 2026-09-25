@@ -31,7 +31,7 @@ import { extractDynamicClassPrefixes }                          from './dynamic-
 import { frameworkGateSkipReason }                              from './component-framework-gate.mjs';
 import { parseGateOutput, GATE_SUMMARY as S }                   from './audit-parse.mjs';
 import { ZERO_FAIL }                                             from './run-diff.mjs';
-import { loadBaselineLabels, classifyBaseline, writeBaseline } from './baseline.mjs';
+import { loadBaselineLabels, loadBaselineFindings, classifyBaseline, writeBaseline } from './baseline.mjs';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT       = process.cwd();
@@ -2562,19 +2562,21 @@ function reportFull(label, items, shown) {
   // but any gate NOT in the baseline that fails is a real regression and still fails. Debt only
   // ratchets down. Gate-level, deterministic, opt-in. Off by default (no file, no baseline).
   //   node audit.mjs --baseline   → capture the current failing gates as the baseline (commit it)
+  //   node audit.mjs --baseline --findings → the same, per ❌ line (each finding accepted on its own)
   //   node audit.mjs              → enforce: debt is tolerated, regressions fail, ratchets surfaced
   //   --no-baseline / ds-config baseline.enabled:false → ignore any baseline file
   const BASELINE_OFF  = process.argv.includes('--no-baseline') || cfg.baseline?.enabled === false;
   const BASELINE_PATH = join(ROOT, cfg.baseline?.path ?? 'parity-baseline.json');
   let baselineInfo = null;
   if (!BASELINE_OFF && process.argv.includes('--baseline')) {
-    const written = writeBaseline(BASELINE_PATH, gates);
-    baselineInfo = { mode: 'write', written, path: BASELINE_PATH };
+    const perFinding = process.argv.includes('--findings');
+    const written = writeBaseline(BASELINE_PATH, gates, { findings: perFinding });
+    baselineInfo = { mode: 'write', written, path: BASELINE_PATH, perFinding };
     anyFail = false;   // capturing the baseline is not a failing run
   } else if (!BASELINE_OFF) {
     const baseLabels = loadBaselineLabels(BASELINE_PATH);
     if (baseLabels) {
-      const cls = classifyBaseline(gates, baseLabels);
+      const cls = classifyBaseline(gates, baseLabels, loadBaselineFindings(BASELINE_PATH));
       baselineInfo = { mode: 'enforce', ...cls };
       // Re-derive the verdict: accepted debt no longer fails; only regressions do. Preserve the
       // one non-gate contribution (a11yStrict, folded into anyFail above).
@@ -2746,9 +2748,12 @@ function reportFull(label, items, shown) {
   if (baselineInfo?.mode === 'write') {
     console.log('─'.repeat(WIDTH));
     const n = baselineInfo.written.length;
-    console.log(C.yellow(`\n  📌 BASELINE CAPTURED - ${n} failing gate${n === 1 ? '' : 's'} recorded as accepted debt in ${relative(ROOT, baselineInfo.path) || 'parity-baseline.json'}.`));
+    const what = baselineInfo.perFinding ? `failing finding${n === 1 ? '' : 's'}` : `failing gate${n === 1 ? '' : 's'}`;
+    console.log(C.yellow(`\n  📌 BASELINE CAPTURED - ${n} ${what} recorded as accepted debt in ${relative(ROOT, baselineInfo.path) || 'parity-baseline.json'}.`));
     if (n) for (const l of baselineInfo.written) console.log(C.yellow(`       • ${l}`));
-    console.log(C.dim('       Commit this file. From now on these gates are tolerated; any OTHER gate that fails is a regression.'));
+    console.log(C.dim(baselineInfo.perFinding
+      ? '       Commit this file. From now on these findings are tolerated; any OTHER ❌ line, or a listed one whose value changed, is a regression.'
+      : '       Commit this file. From now on these gates are tolerated; any OTHER gate that fails is a regression.'));
     console.log();
   } else if (baselineInfo?.mode === 'enforce') {
     console.log('─'.repeat(WIDTH));
@@ -2757,6 +2762,10 @@ function reportFull(label, items, shown) {
     if (regressions.length) { console.log(C.red('     Regressions (not baselined - these FAIL the run):')); for (const l of regressions) console.log(C.red(`       ❌ ${l}`)); }
     if (ratcheted.length)   { console.log(C.green('     Fixed since the baseline - re-run --baseline to lock in (they can no longer regress silently):')); for (const l of ratcheted) console.log(C.green(`       ✅ ${l}`)); }
     if (stale.length)       { console.log(C.dim('     Stale baseline entries (no matching gate - prune them):')); for (const l of stale) console.log(C.dim(`       · ${l}`)); }
+    const { newFindings = [], fixedFindings = [], acceptedFindings = 0 } = baselineInfo;
+    if (acceptedFindings) console.log(`     Accepted findings  ${acceptedFindings - fixedFindings.length} still present · ${fixedFindings.length} fixed · ${newFindings.length} new`);
+    if (newFindings.length)   { console.log(C.red('     New findings (not accepted - these FAIL the run):')); for (const l of newFindings) console.log(C.red(`       ❌ ${l}`)); }
+    if (fixedFindings.length) { console.log(C.green('     Accepted findings now fixed - re-run --baseline --findings to drop them:')); for (const l of fixedFindings) console.log(C.green(`       ✅ ${l}`)); }
     console.log();
   }
 
