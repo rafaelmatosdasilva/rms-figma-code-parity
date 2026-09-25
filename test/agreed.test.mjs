@@ -85,3 +85,24 @@ test('census: what the comparison actually reached, per component', async () => 
     'least checked: tag, 1 not comparable of 1 (mostly x, 1)',
   ]);
 });
+
+test('history: bouncing facts are churn; who moved first, per area', async () => {
+  const { churn, leaders, leadersLine, areaOf } = await import('../agreed.mjs');
+  const dir = makeFixture({});
+  const run = (at, gapF, gapC, tokF, tokC) => recordAgreed(dir, [f('chip · gap', gapF, gapC), f('token ink [light]', tokF, tokC)], { at, commit: null });
+  run('2026-09-01T00:00:00Z', '8px', '8px', '#000', '#000');
+  run('2026-09-02T00:00:00Z', '12px', '8px', '#111', '#000');   // Figma moves first on both
+  run('2026-09-03T00:00:00Z', '12px', '12px', '#111', '#111');  // code follows
+  run('2026-09-04T00:00:00Z', '12px', '8px', '#111', '#111');   // code moves first on gap
+  run('2026-09-05T00:00:00Z', '8px', '8px', '#111', '#111');    // Figma follows back
+  run('2026-09-06T00:00:00Z', '12px', '8px', '#111', '#111');   // Figma moves first again
+  const r = run('2026-09-07T00:00:00Z', '12px', '12px', '#111', '#111');   // code follows
+  const a = loadAgreed(dir);
+  assert.deepEqual(a.seen['chip · gap'].moves.map((m) => [m.side, !!m.lead]), [['figma', true], ['code', false], ['code', true], ['figma', false], ['figma', true], ['code', false]]);
+  assert.deepEqual(churn(a).map((c) => [c.key, c.switches]), [['chip · gap', 3]]);
+  const by = leaders(r.agreed, { now: Date.parse('2026-09-10T00:00:00Z') });
+  assert.deepEqual(by, { spacing: { figma: 2, code: 1, both: 0, total: 3 }, tokens: { figma: 1, code: 0, both: 0, total: 1 } });
+  assert.equal(leadersLine(by), 'spacing Figma 67% · code 33% of 3; tokens Figma 100% of 1');
+  assert.deepEqual(leaders(a, { now: Date.parse('2026-12-01T00:00:00Z') }), {});   // older than 30 days
+  assert.deepEqual(['token x [dark]', 'chip · background (State=Hover)', 'chip · font size', 'chip · layer "Icon"', 'chip · radius'].map(areaOf), ['tokens', 'states and variants', 'typography', 'layers', 'size and shape']);
+});

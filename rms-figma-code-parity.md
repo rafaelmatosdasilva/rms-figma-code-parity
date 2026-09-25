@@ -959,6 +959,13 @@ overwrites the record; only a new agreement does. The report ends with a count (
 N that differ: … Figma moved · … code moved · … both moved · … with no earlier agreement`). Inside a git
 hook the file is read but never written, so a commit never changes a file it did not stage.
 
+**Changes that keep bouncing, and who leads.** The same file keeps, per fact, both values at the last run
+and its last 10 moves (which side changed, and whether that change broke an agreement, meaning that side
+moved first). A fact whose moving side switched 3 or more times in its last 10 moves is listed as
+`No clear owner`: the team has not decided which side owns it. When there were moves in the last 30 days,
+one line says per area (tokens, spacing, colour, typography, size and shape, layers, states and variants)
+which side moved first, as a share. It only describes; it never sets who wins.
+
 **Sending it back.** Each measured difference says which way it goes, and Gate [13] writes both hand-backs
 under `.parity-out/handback/`. Nothing is applied:
 - **Code is behind** (Figma moved, or no earlier agreement): `code-changes.diff`, a patch that changes the

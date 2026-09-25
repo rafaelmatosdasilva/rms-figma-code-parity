@@ -3490,7 +3490,7 @@ function reportFull(label, items, shown) {
     const cap = await readFreshSnapshot(ROOT, cfg);
     if (cap) {
       const cc = await import('./capture-compare.mjs');
-      const { loadAgreed, classify, recordAgreed, AGREED_FILE } = await import('./agreed.mjs');
+      const { loadAgreed, classify, recordAgreed, AGREED_FILE, churn, leaders, leadersLine } = await import('./agreed.mjs');
       const readJ = (p) => { try { return JSON.parse(readFileSync(join(ROOT, p), 'utf8')); } catch { return {}; } };
       const vars = readJ(cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json');
       const structure = readJ(SNAP_STRUCT).components ?? {};
@@ -3510,6 +3510,15 @@ function reportFull(label, items, shown) {
         console.log(`\nℹ️  Agreed values: ${rec.recorded} of ${facts.length} compared facts agree${inHook ? '' : ` (recorded in ${AGREED_FILE}${rec.changed ? ', updated' : ''})`}.` +
           (diff ? ` Of the ${diff} that differ: ${moved['figma-moved']} Figma moved · ${moved['code-moved']} code moved · ${moved['both-moved']} both moved · ${moved.unknown} with no earlier agreement.` : ''));
       }
+      // Changes that keep bouncing (I50) and who moves first (I51), from the recorded moves.
+      const history = rec.agreed ?? loadAgreed(ROOT);
+      const bouncing = churn(history);
+      if (bouncing.length) {
+        console.log(`\n⚠️  No clear owner: ${bouncing.length} fact${bouncing.length === 1 ? '' : 's'} keep${bouncing.length === 1 ? 's' : ''} switching sides (3 or more times in the last 10 changes). Decide which side owns ${bouncing.length === 1 ? 'it' : 'them'}.`);
+        for (const b of bouncing.slice(0, 10)) console.log(`     ${b.key}  (${b.sides.join(', ')})`);
+      }
+      const lead = leaders(history);
+      if (Object.keys(lead).length) console.log(`\nℹ️  Who moved first (last 30 days, descriptive): ${leadersLine(lead)}.`);
     }
   } catch { /* the record is a convenience: it never breaks the run */ }
 
