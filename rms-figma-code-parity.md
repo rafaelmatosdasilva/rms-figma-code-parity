@@ -1350,6 +1350,11 @@ each one when present:
 
 Snapshots without them keep working; the comparison simply skips what Figma did not record.
 
+**What was checked.** Under MEASURED, one `census` line says how many facts were compared, how many were not
+comparable, and which components were not captured, followed by the components with the most facts not
+comparable and their main reason. A clean result is only as good as its reach. The full table per component
+is written to `.parity-out/census.json`.
+
 **Disabled wins.** For every component with a disabled state, the capture also puts `:hover` and `:active` on the
 disabled instance. Any visible change against disabled alone (text colour, background, border colour, opacity)
 is listed under MEASURED as `hover while disabled`: the hover or press style lacks a `:not(:disabled)` guard.

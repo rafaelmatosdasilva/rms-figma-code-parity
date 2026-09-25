@@ -103,9 +103,42 @@ export function factOf(d) {
 function makeSettle(out) {
   out.facts ??= [];
   return (ok, d) => {
-    out.facts.push({ ...factOf(d), same: !!ok });
+    out.facts.push({ ...factOf(d), same: !!ok, ...(d.component ? { component: d.component } : {}) });
     if (ok) out.match++; else out.differ.push(d);
   };
+}
+
+// What the measured comparison actually reached (idea I53), so a clean result is honest about its reach:
+// per component, the facts compared, those that differ, and those not comparable with each reason; plus
+// the components not captured at all. Takes any number of comparison results.
+export function censusOf(...results) {
+  const components = {};
+  const row = (c) => (components[c] ??= { compared: 0, differ: 0, notComparable: 0, reasons: {} });
+  const notCaptured = new Set();
+  for (const r of results) {
+    for (const f of r?.facts ?? []) if (f.component) { const x = row(f.component); x.compared++; if (!f.same) x.differ++; }
+    for (const n of r?.notComparable ?? []) if (n.component) { const x = row(n.component); x.notComparable++; x.reasons[n.why] = (x.reasons[n.why] ?? 0) + 1; }
+    for (const n of r?.notCaptured ?? []) notCaptured.add(n);
+  }
+  const all = Object.values(components);
+  return {
+    compared: all.reduce((k, x) => k + x.compared, 0),
+    notComparable: all.reduce((k, x) => k + x.notComparable, 0),
+    notCaptured: [...notCaptured].sort(),
+    components: Object.fromEntries(Object.entries(components).sort(([a], [b]) => a.localeCompare(b))),
+  };
+}
+
+// The census as report lines: one total, then the components with the most facts not comparable.
+export function censusLines(c, top = 3) {
+  const n = Object.keys(c.components).length;
+  const lines = [`census: ${c.compared} facts compared on ${n} component${n === 1 ? '' : 's'} · ${c.notComparable} not comparable · ${c.notCaptured.length} component${c.notCaptured.length === 1 ? '' : 's'} not captured${c.notCaptured.length ? ` (${c.notCaptured.slice(0, 5).join(', ')}${c.notCaptured.length > 5 ? ', ...' : ''})` : ''}`];
+  const worst = Object.entries(c.components).filter(([, x]) => x.notComparable).sort(([a, x], [b, y]) => y.notComparable - x.notComparable || a.localeCompare(b)).slice(0, top);
+  for (const [name, x] of worst) {
+    const [why, k] = Object.entries(x.reasons).sort(([a, p], [b, q]) => q - p || a.localeCompare(b))[0];
+    lines.push(`least checked: ${name}, ${x.notComparable} not comparable of ${x.compared + x.notComparable} (mostly ${why}, ${k})`);
+  }
+  return lines;
 }
 
 // Components: each Figma structure field against the measured and traced code facts.

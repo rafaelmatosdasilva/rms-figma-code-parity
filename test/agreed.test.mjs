@@ -68,3 +68,20 @@ test('hand-back: changed lines next to each other share one hunk, and the patch 
   execFileSync('git', ['apply', 'x.diff'], { cwd: dir });
   assert.equal(readFileSync(join(dir, 'a.css'), 'utf8'), '.bar {\n  padding: var(--p-m) var(--p-l);\n  gap: var(--gap-xl);\n}\n');
 });
+
+test('census: what the comparison actually reached, per component', async () => {
+  const { censusOf, censusLines } = await import('../capture-compare.mjs');
+  const r = {
+    facts: [{ key: 'chip · gap', component: 'chip', same: true }, { key: 'chip · radius', component: 'chip', same: false }, { key: 'token a [light]', same: true }],
+    notComparable: [{ component: 'chip', field: 'height', why: 'the code height follows its content' }, { component: 'tag', field: 'width', why: 'x' }, { component: 'chip', field: 'width', why: 'the code height follows its content' }],
+    notCaptured: ['toast'],
+  };
+  const c = censusOf(r, { facts: [{ key: 'chip · padding at Phone', component: 'chip', same: true }] });
+  assert.deepEqual([c.compared, c.notComparable, c.notCaptured], [3, 3, ['toast']]);
+  assert.deepEqual(c.components.chip, { compared: 3, differ: 1, notComparable: 2, reasons: { 'the code height follows its content': 2 } });
+  assert.deepEqual(censusLines(c), [
+    'census: 3 facts compared on 2 components · 3 not comparable · 1 component not captured (toast)',
+    'least checked: chip, 2 not comparable of 5 (mostly the code height follows its content, 2)',
+    'least checked: tag, 1 not comparable of 1 (mostly x, 1)',
+  ]);
+});

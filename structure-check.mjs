@@ -15,7 +15,7 @@
 // Exit 0 = all checks pass. Exit 1 = any failure.
 // Exit 2 = cannot verify: no compiled component CSS configured (setup gap, not a parity fail).
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname, resolve as resolvePath } from 'path';
 import { loadCssSources, walkCss, styleBlocksOf, blankComments } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
@@ -1866,6 +1866,12 @@ try {
       if (hb.figma) console.log(`   ↳ Figma changes to make (${toFigma.length}): ${hb.figma}`);
       if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
+    // What was actually checked (I53): a clean result is only as good as its reach.
+    const { censusOf, censusLines } = await import('./capture-compare.mjs');
+    const census = censusOf(r, bpr);
+    const censusFile = join(dirname(cfg.codeReading?.out ?? '.parity-out/code.snapshot.json'), 'census.json');
+    try { mkdirSync(join(ROOT, dirname(censusFile)), { recursive: true }); writeFileSync(join(ROOT, censusFile), JSON.stringify(census, null, 1) + '\n'); } catch { /* the report line still shows it */ }
+    censusLines(census).forEach((l, i) => console.log(`   ${i ? '  ' : '📋 '}${l}${i ? '' : `  (${censusFile})`}`));
     // Every variant built: each Figma axis value has a counterpart the capture found in code.
     const { compareVariants } = await import('./capture-compare.mjs');
     const v = compareVariants(cap, snap?.components ?? {});
