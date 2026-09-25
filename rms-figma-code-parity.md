@@ -652,18 +652,18 @@ there, never a failure.
 
 **Writing accessibility notes in Figma.** Use Figma's annotation tool on the component (the component set or
 a standalone component). A category such as "Accessibility" helps people find them; the skill reads the text.
-One fact per line, or per sentence ending in `. ` or `;`. Keywords in English or Portuguese; the value in any
+One fact per line, or per sentence ending in `. ` or `;`. The keywords are English; the value can be in any
 language.
 
 | Note | Checked against the rendered component |
 |---|---|
-| `Role: button` · `Papel: botão` | The role a screen reader announces. ARIA roles, or common words: botão, link, caixa de seleção, botão de opção, interruptor, aba, título, imagem, diálogo, campo de texto, campo de busca, menu, item de menu, lista, opção, controle deslizante, lista suspensa |
-| `Role: togglebutton` · `Papel: botão de alternância` | A button that also exposes `aria-pressed` |
-| `aria-label: Close dialog` · `Rótulo: Fechar diálogo` | The accessible name, ignoring case (also `Accessible name:`, `Screen reader label:`, `Nome acessível:`) |
-| `Heading level 2` · `H2` · `Título nível 2` | A heading, at that level |
-| `Alt: Sales chart` · `Texto alternativo: Gráfico de vendas` | An image whose text alternative is that text |
+| `Role: button` | The role a screen reader announces (an ARIA role) |
+| `Role: togglebutton` | A button that also exposes `aria-pressed`. Also `textinput` (a text box), `searchinput` (a search box), `iconbutton` (a button) |
+| `aria-label: Close dialog` | The accessible name, ignoring case (also `Accessible name:`, `Screen reader label:`) |
+| `Heading level 2` · `H2` | A heading, at that level |
+| `Alt: Sales chart` | An image whose text alternative is that text |
 
-Example of one note: `Papel: botão. Rótulo: Fechar diálogo`.
+Example of one note: `Role: button. aria-label: Close dialog`.
 
 - **On an inner layer.** A note on a layer inside the component's default variant (the first one) is checked on
   the part the contract names the same way: `CONTRACT[component].children` with that `name` and a

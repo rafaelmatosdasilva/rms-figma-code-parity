@@ -516,28 +516,17 @@ export function contractSemantics(ROOT, cfg = {}) {
   return out;
 }
 // Figma accessibility annotations as checkable facts. An annotation is free text; the facts it states
-// in a recognisable form are kept, in English or Portuguese, one per clause (a line, or a sentence
-// ending in ". " or ";"):
-//   role: button · papel: botão              the role a screen reader announces
-//   aria-label: Close · rótulo: Fechar        the accessible name (also "accessible name", "nome acessível")
-//   heading level 2 · H2 · título nível 2     a heading and its level
-//   alt: A red chart · texto alternativo: …   an image's text alternative
+// in a recognisable form are kept, one per clause (a line, or a sentence ending in ". " or ";"):
+//   role: button              the role a screen reader announces
+//   aria-label: Close         the accessible name (also "accessible name", "screen reader label")
+//   heading level 2 · H2      a heading and its level
+//   alt: A red chart          an image's text alternative
 // Composite roles from spec tooling are read as what they mean: togglebutton is a button with
 // aria-pressed, textinput a text box. Anything else stays a note for people.
-const ROLE_WORDS = {
-  'botão': 'button', 'botao': 'button', 'link': 'link', 'caixa de seleção': 'checkbox', 'caixa de selecao': 'checkbox', 'checkbox': 'checkbox',
-  'botão de opção': 'radio', 'botao de opcao': 'radio', 'rádio': 'radio', 'radio': 'radio', 'interruptor': 'switch', 'switch': 'switch', 'toggle': 'switch',
-  'aba': 'tab', 'guia': 'tab', 'lista de abas': 'tablist', 'título': 'heading', 'titulo': 'heading', 'imagem': 'img', 'image': 'img',
-  'diálogo': 'dialog', 'dialogo': 'dialog', 'caixa de diálogo': 'dialog', 'campo de texto': 'textbox', 'text field': 'textbox', 'textfield': 'textbox',
-  'textinput': 'textbox', 'text input': 'textbox', 'campo de busca': 'searchbox', 'searchinput': 'searchbox', 'search input': 'searchbox',
-  'menu': 'menu', 'item de menu': 'menuitem', 'lista': 'list', 'item de lista': 'listitem', 'opção': 'option', 'opcao': 'option',
-  'controle deslizante': 'slider', 'slider': 'slider', 'iconbutton': 'button', 'icon button': 'button', 'botão de ícone': 'button', 'botao de icone': 'button',
-  'lista suspensa': 'combobox', 'dropdown': 'combobox', 'select': 'combobox', 'alerta': 'alert', 'navegação': 'navigation', 'navegacao': 'navigation',
-};
-const PRESSED_ROLES = new Set(['togglebutton', 'toggle button', 'botão de alternância', 'botao de alternancia', 'botão alternável', 'botao alternavel']);
+const ROLE_WORDS = { textinput: 'textbox', searchinput: 'searchbox', iconbutton: 'button' };
 export function roleOf(word) {
   const w = String(word ?? '').trim().toLowerCase().replace(/["'“”]/g, '');
-  if (PRESSED_ROLES.has(w)) return { role: 'button', pressed: true };
+  if (w === 'togglebutton') return { role: 'button', pressed: true };
   return { role: ROLE_WORDS[w] ?? w };
 }
 export function annotationFacts(annotations = []) {
@@ -547,10 +536,10 @@ export function annotationFacts(annotations = []) {
   for (const c of clauses) {
     const kv = c.match(/^\s*([^:=]+?)\s*[:=]\s*(.+)$/);
     const key = kv ? kv[1].trim().toLowerCase() : '';
-    if (/^(role|papel|função|funcao)$/.test(key)) { const r = roleOf(value(kv[2])); if (r.role) f.role = r.role; if (r.pressed) f.pressed = true; continue; }
-    if (/^(aria-label|accessible name|screen reader label|nome acessível|nome acessivel|rótulo|rotulo|rótulo do leitor de tela)$/.test(key)) { f.name = value(kv[2]); continue; }
-    if (/^(alt|alt text|texto alternativo)$/.test(key)) { f.name ??= value(kv[2]); f.role ??= 'img'; continue; }
-    const heading = c.match(/\b(?:heading|título|titulo|nível de título|nivel de titulo)(?:\s+(?:level|nível|nivel))?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? c.match(/(?:^|\s)[Hh]([1-6])\b/);
+    if (key === 'role') { const r = roleOf(value(kv[2])); if (r.role) f.role = r.role; if (r.pressed) f.pressed = true; continue; }
+    if (/^(aria-label|accessible name|screen reader label)$/.test(key)) { f.name = value(kv[2]); continue; }
+    if (/^(alt|alt text)$/.test(key)) { f.name ??= value(kv[2]); f.role ??= 'img'; continue; }
+    const heading = c.match(/\bheading(?:\s+level)?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? c.match(/(?:^|\s)[Hh]([1-6])\b/);
     if (heading) { f.level = Number(heading[1]); f.role ??= 'heading'; }
   }
   return f;

@@ -149,16 +149,15 @@ test('annotations: role, name, heading level and alt text are read from the note
   assert.equal(fileFromTgz(tgz, 'package/axe.min.js'), 'hello');
 });
 
-test('annotations in Portuguese, composite roles, notes on inner layers; verifiable notes need no Gate 10g entry', async () => {
+test('annotations: composite roles, notes on inner layers; values in any language', async () => {
   const { annotationFacts, annotationMismatches, annotationFactsFor } = await import('../a11y-check.mjs');
-  assert.deepEqual(annotationFacts([{ label: 'Papel: botão. Rótulo: Fechar diálogo' }]), { role: 'button', name: 'Fechar diálogo' });
-  assert.deepEqual(annotationFacts([{ label: 'Título nível 2' }]), { level: 2, role: 'heading' });
-  assert.deepEqual(annotationFacts([{ label: 'Texto alternativo: Gráfico de vendas' }]), { name: 'Gráfico de vendas', role: 'img' });
+  assert.deepEqual(annotationFacts([{ label: 'Role: button. aria-label: Fechar diálogo' }]), { role: 'button', name: 'Fechar diálogo' });
   assert.deepEqual(annotationFacts([{ label: 'role:togglebutton' }]), { role: 'button', pressed: true });
-  assert.deepEqual(annotationFacts([{ label: 'Papel: caixa de seleção' }]), { role: 'checkbox' });
+  assert.deepEqual(annotationFacts([{ label: 'role: textinput' }]), { role: 'textbox' });
+  assert.deepEqual(annotationFacts([{ label: 'Papel: botão' }]), {});                  // keywords are English only
   assert.deepEqual(annotationMismatches({ role: 'button', pressed: true }, { role: 'button' }), ['Figma says it is a toggle button, it has no aria-pressed']);
   assert.deepEqual(annotationMismatches({ role: 'button', pressed: true }, { role: 'button', pressed: 'false' }), []);
-  const dir = makeFixture({ 'figma-component-props.snapshot.json': { chip: { nodeId: '1:2', annotations: [{ label: 'O ícone muda conforme a funcionalidade' }], layerAnnotations: [{ layer: 'Label', annotations: [{ label: 'Rótulo: Remover filtro' }] }] } } });
+  const dir = makeFixture({ 'figma-component-props.snapshot.json': { chip: { nodeId: '1:2', annotations: [{ label: 'O ícone muda conforme a funcionalidade' }], layerAnnotations: [{ layer: 'Label', annotations: [{ label: 'aria-label: Remover filtro' }] }] } } });
   assert.deepEqual(annotationFactsFor(dir), { chip: { facts: {}, layers: [{ layer: 'Label', facts: { name: 'Remover filtro' } }] } });
 });
 
@@ -169,9 +168,9 @@ test('Gate 10g: a note the accessibility check verifies passes without a contrac
     'app.css': '.chip {}',
     'theme.css': ':root {}',
     'structure-contract.mjs': "export const CONTRACT = { chip: {} };\nexport const COMPONENT_CSS_SELECTORS = { chip: { main: '.chip' } };\nexport const FIGMA_LAYOUT_TO_CSS = {};",
-    'props.json': { chip: { nodeId: '1:2', properties: {}, annotations: [{ label: 'Papel: botão' }, { label: 'Only on wide screens' }] } },
+    'props.json': { chip: { nodeId: '1:2', properties: {}, annotations: [{ label: 'Role: button' }, { label: 'Only on wide screens' }] } },
   });
-  assert.match(r.out, /"Papel: botão" is checked by the accessibility check|1\/2 Figma annotation/, r.out);
+  assert.match(r.out, /"Role: button" is checked by the accessibility check|1\/2 Figma annotation/, r.out);
   assert.match(r.out, /annotation "Only on wide screens" not acknowledged/, r.out);
 });
 
@@ -181,7 +180,7 @@ test('annotations in the browser: a toggle button without aria-pressed, and a no
   </body></html>`;
   const dir = makeFixture({
     'page.html': page,
-    'figma-component-props.snapshot.json': { fav: { nodeId: '1:2', annotations: [{ label: 'role:togglebutton' }], layerAnnotations: [{ layer: 'Icon', annotations: [{ label: 'Rótulo: Favoritar' }] }, { layer: 'Badge', annotations: [{ label: 'Role: status' }] }] } },
+    'figma-component-props.snapshot.json': { fav: { nodeId: '1:2', annotations: [{ label: 'role:togglebutton' }], layerAnnotations: [{ layer: 'Icon', annotations: [{ label: 'aria-label: Favoritar' }] }, { layer: 'Badge', annotations: [{ label: 'Role: status' }] }] } },
     'structure-contract.mjs': "export const CONTRACT = { fav: { children: [{ name: 'Icon', cssSelector: '.fav .lbl' }] } };",
     'ds-config.json': { componentSelectors: { fav: '.fav' } },
   });
