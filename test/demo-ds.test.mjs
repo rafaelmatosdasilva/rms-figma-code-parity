@@ -6,6 +6,7 @@
 //   • disabled wins (the button's :hover has no :not(:disabled) guard)
 //   • a variant combination (chip Size=L with Icon=True is 36px high in code, 32px in Figma)
 //   • a role contract (the chip is a toggle button in Figma, with no aria-pressed in code)
+//   • a visual difference (the Figma image of the button has a border no structure fact records)
 // Themes switch with a data attribute (data-theme="dark"), unlike a media query, and the components
 // have React sources for the props check.
 //
@@ -93,6 +94,8 @@ test('demo design system, with Chrome: every deliberate difference is found, and
   assert.match(r.out, /chip height \(Size=L, Icon=True\): Figma 32, rendered 36px/);
   assert.match(r.out, /chip \(toggle button\)|component does not expose what its role requires/);
   assert.doesNotMatch(r.out, /chip height \(Icon=True\)/);   // a single axis is never compared with a combination
+  assert.match(r.out, /🖼  ⚠️  button: [\d.]+% of pixels differ outside text/);   // a border only the Figma image has
+  assert.match(r.out, /🖼  ✓  chip: 0% of pixels differ outside text/);
   golden('expected-report.txt', r.out);
 });
 
@@ -115,4 +118,27 @@ test('in progress: an experimental component on one side is listed, never failed
   const list = await inProgressList(dir, cfgOf(dir));
   assert.deepEqual(list.filter((x) => x.ready).map((x) => x.name), ['sheet', 'tag']);
   assert.deepEqual([...(await inProgressNames(dir, cfgOf(dir)))].sort(), ['drawer', 'sheet']);   // tag is compared now; sheet stays the owner's call
+});
+
+test('visual diff: a Figma image from a reference, else the REST API (a component set gives its default variant), cached', async () => {
+  const { figmaImage } = await import('../visual-diff.mjs');
+  const { makeFixture } = await import('./helpers.mjs');
+  const dir = makeFixture({ '.parity-refs/components/chip.png': 'png' });
+  const cfg = { figmaFileKey: 'KEY' };
+  assert.equal((await figmaImage(dir, cfg, 'chip', {})).from, 'reference');
+  assert.match((await figmaImage(dir, cfg, 'tag', { nodeId: '1:2', token: null })).why, /no FIGMA_TOKEN/);
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const json = (x) => ({ ok: true, json: async () => x });
+    if (url.includes('/nodes?')) return json({ nodes: { '1:2': { document: { type: 'COMPONENT_SET', children: [{ id: '1:3', name: 'Size=S' }, { id: '1:4', name: 'Size=M' }] } } } });
+    if (url.includes('/images/')) return json({ images: { '1:4': 'https://img.example/x.png' } });
+    return { ok: true, arrayBuffer: async () => new TextEncoder().encode('bytes').buffer };
+  };
+  const first = await figmaImage(dir, cfg, 'tag', { nodeId: '1:2', defaultVariant: 'Size=M', version: 'v1', token: 't', fetchImpl });
+  assert.equal(first.from, 'figma');
+  assert.match(calls[1], /ids=1%3A4/);   // the default variant, not the whole set
+  assert.equal(readFileSync(first.file, 'utf8'), 'bytes');
+  assert.equal((await figmaImage(dir, cfg, 'tag', { nodeId: '1:2', defaultVariant: 'Size=M', version: 'v1', token: 't', fetchImpl })).from, 'figma (cached)');
+  assert.equal(calls.length, 3);
 });

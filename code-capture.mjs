@@ -503,6 +503,7 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
           openPage: (url) => openLoaded(cdp.send, url),
           breakpoints: breakpointWidths(ROOT, cfg),
           stateConcept: (label) => conceptOf(label, cfg),
+          visual: cfg.codeReading?.visual === true,
         });
         const nest = await renderedNesting({ send: cdp.send, pages: compPages, specs, openLoaded });
         nestingRendered = nest.rendered;
@@ -514,6 +515,16 @@ export async function captureCode(ROOT, cfg, { force = false, browser: wantBrows
 
   const { tokens, appTokens, counts } = mergeTokenReadings({ staticByMode, browser, modes, browserNote: browser ? null : browserNote });
   const components = comp?.components ?? staticComponents(specs, componentSources, modes, browserNote);
+  // The instance images (codeReading.visual, idea I43), written beside the snapshot for the visual diff.
+  const visualDir = join(dirname(outPath), 'visual', 'code');
+  rmSync(visualDir, { recursive: true, force: true });
+  for (const [name, c] of Object.entries(components)) {
+    if (!c.visual?.data) continue;
+    mkdirSync(visualDir, { recursive: true });
+    const file = join(visualDir, `${name.replace(/[^\w.-]+/g, '_')}.png`);
+    writeFileSync(file, Buffer.from(c.visual.data, 'base64'));
+    c.visual = { file: relative(ROOT, file), width: c.visual.width, height: c.visual.height, scale: 2, background: c.visual.background, text: c.visual.text ?? [] };
+  }
   const compCoverage = componentCoverage(specs, components, comp);
   const { api, note: apiNote, sources: apiSources } = captureApis(ROOT, specs, apiReader);
   const icons = captureIcons(ROOT, cfg);

@@ -41,5 +41,9 @@
   "componentFiles": {
     "button": "src/components/Button.jsx",
     "chip": "src/components/Chip.jsx"
-  }
+  },
+  "codeReading": {
+    "visual": true
+  },
+  "_visualNote": "The .parity-refs/components images stand in for Figma exports of each default variant. The button one has a 2px border the structure facts do not record, so only the visual diff sees it."
 }

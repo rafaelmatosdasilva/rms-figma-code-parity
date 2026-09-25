@@ -865,6 +865,7 @@ Use these throughout all Figma queries. Never hardcode collection or mode names.
 
 - `gateTimeoutSec` (default 180) - a gate that runs longer is stopped and reported as a failure ("timed out, not verified"), so one stuck gate never freezes the audit or a pre-commit hook.
 - `codeReading.timeoutSec` (default 120) - the time limit for the code capture inside the audit; past it the gates keep their own readings. `codeReading.hookBrowser: true` lets the capture use the browser inside git hooks too.
+- `codeReading.visual: true` - the visual diff under MEASURED (see *Each component against its Figma image*). `codeReading.visualTolerance` (default 10, per colour channel) and `codeReading.visualThreshold` (default 2, the percentage of pixels outside text that marks a component ⚠️).
 - `scanExcludeDirs`, `scanExcludeFilenames` - folders and file names (with `*` wildcards) the hardcoded-value and clean-CSS scans skip, such as demo pages. The styleguide template and output are always skipped (they are generated surfaces).
 - `gate6ExcludeDirs` - folders the hardcoded-value scan skips, to scope it to the design system package (the layout checks still cover every file).
 - `knownHardcodedExceptions` (older name `knownFontSizeExceptions`) - literal values or patterns the hardcoded-value scan accepts. An entry that no longer excuses anything is listed so it can be removed.
@@ -1369,6 +1370,16 @@ each one when present:
 - each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
 
 Snapshots without them keep working; the comparison simply skips what Figma did not record.
+
+**Each component against its Figma image.** With `codeReading.visual: true` the capture also saves each
+component as the page draws it (first mode, default state, scale 2) under `.parity-out/visual/code/`, and
+Gate [13] compares it with the Figma image of the component's default variant. The Figma image comes from
+`.parity-refs/components/<name>.png` when you saved one (exported from Figma at 2x), else from the Figma REST
+API with `FIGMA_TOKEN` (cached under `.parity-out/visual/figma/` until the file version changes). A component
+with neither is listed as not compared. Two percentages per component, worst first: the pixels that differ,
+and the pixels that differ outside its text, since two renderers never draw glyphs the same way. The second
+decides the ⚠️. A diff image per component, differing pixels in red, goes to `.parity-out/visual/diff/`. It
+catches what no single field shows, such as a border, an icon on the other side or a wrong glyph. Advisory.
 
 **What was checked.** Under MEASURED, one `census` line says how many facts were compared, how many were not
 comparable, and which components were not captured, followed by the components with the most facts not

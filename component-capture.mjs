@@ -470,7 +470,26 @@ export async function captureComponents(ctx) {
     };
     const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true }, sessionId)).result?.value;
     const close = async () => { off(); await send('Target.closeTarget', { targetId }).catch(() => {}); };
-    return { sessionId, where, trace, nodeOf, measureAll, measureMany, measureStates, measureAt, evaluate, close };
+    // The instance as the page draws it, in the first mode and the default state (idea I43): a PNG of its
+    // box, at the page's device scale.
+    const screenshot = async (sel) => {
+      // With the boxes of its text, relative to the component, so the diff can also be read without text.
+      const box = (await send('Runtime.evaluate', { expression: `(() => {
+        const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null;
+        const b = el.getBoundingClientRect(), text = [];
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+          if (!t.textContent.trim()) continue;
+          const r = document.createRange(); r.selectNodeContents(t);
+          for (const q of r.getClientRects()) if (q.width && q.height) text.push([q.left - b.left, q.top - b.top, q.width, q.height]);
+        }
+        return { x: b.left + scrollX, y: b.top + scrollY, width: b.width, height: b.height, text };
+      })()`, returnByValue: true }, sessionId)).result?.value;
+      if (!box?.width || !box?.height) return null;
+      const shot = await send('Page.captureScreenshot', { format: 'png', clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 }, captureBeyondViewport: true }, sessionId);
+      return shot?.data ? { data: shot.data, width: box.width, height: box.height, text: box.text } : null;
+    };
+    return { sessionId, where, trace, nodeOf, measureAll, measureMany, measureStates, measureAt, evaluate, screenshot, close };
   }
 
   // One measured + traced element → facts, checked against the static reading of the winning rule.
@@ -622,6 +641,12 @@ export async function captureComponents(ctx) {
         props, fill: bg && bg[3] > 0 ? 'direct' : beforeBg && beforeBg[3] > 0 ? 'before' : 'none', colors: colorsOf(perMode),
       };
       if (base?.before) entry.before = base.before;
+      if (ctx.visual) {
+        try {
+          const shot = await P.screenshot(capSel(loc.i));
+          if (shot) entry.visual = { ...shot, background: base?.behind?.[0] ?? 'rgb(255, 255, 255)' };
+        } catch { /* the visual diff says it has no image */ }
+      }
       if (comp.childParts?.length) { const l = await P.evaluate(layersExpression(capSel(loc.i), comp.childParts)); if (l) entry.layers = l; }
       if (atBreakpoints && Object.keys(atBreakpoints).length) entry.breakpoints = atBreakpoints;
       // Parts: each measured and traced like the instance, keeping only the properties the part is for.

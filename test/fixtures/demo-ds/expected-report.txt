@@ -83,6 +83,11 @@
        ↳ last changed 2026-01-01 by demo: "init" (<HASH>)
        ↳ code changes proposed (1): .parity-out/handback/code-changes.diff  (review, then git apply it; 1 more by hand)
        📋 census: 45 facts compared on 3 components · 0 not comparable · 0 components not captured  (.parity-out/census.json)
+       🖼  VISUAL 2 compared with their Figma image (advisory, worst first): 1 differ by more than 2% of pixels outside text
+       🖼  ⚠️  button: 26.5% of pixels differ outside text, 22.3% with it  → .parity-out/visual/diff/button.png
+       🖼  ✓  chip: 0% of pixels differ outside text, 10.1% with it  → .parity-out/visual/diff/chip.png
+       🖼  ⏭ not compared (1), no reference image and no FIGMA_TOKEN: field
+       🖼  ⏭ to compare them: set FIGMA_TOKEN, or save each default variant at scale 2 as .parity-refs/components/<name>.png
        ✅ VARIANTS  every Figma variant value has a counterpart in code (10)
 
 ✅  [14] All states are built  (each state implemented · correct selector · variable in the right rule)
