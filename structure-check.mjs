@@ -1841,8 +1841,13 @@ try {
       console.log(`\n${mark} MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma${strictMeasured ? '' : ' - advisory'})`);
       // Who last changed the rule's line, and why (git), so the reason travels with the finding.
       const { codeReason, reasonLine } = await import('./change-reason.mjs');
+      // Which side moved since they last agreed (parity-agreed.json), when there is a record.
+      const { loadAgreed, classify, MOVED_LABEL } = await import('./agreed.mjs');
+      const { factOf } = await import('./capture-compare.mjs');
+      const agreed = loadAgreed(ROOT);
       for (const d of r.differ) {
-        console.log(`   ${mark} ${measuredLine(d)}`);
+        const moved = MOVED_LABEL[classify({ ...factOf(d), same: false }, agreed)];
+        console.log(`   ${mark} ${measuredLine(d)}${moved ? `  [${moved}]` : ''}`);
         const why = d.at ? reasonLine(codeReason(ROOT, d.at)) : null;
         if (why) console.log(`      ↳ ${why}`);
       }

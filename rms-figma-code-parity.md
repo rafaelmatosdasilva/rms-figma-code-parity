@@ -942,6 +942,15 @@ are far under the cap and are collected in full.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
 
+**Which side moved.** Every run records, for each compared fact that matches (a token in each mode, a
+padding, gap, radius, colour, height, visible layer…), the value on each side in `parity-agreed.json` at
+the project root. Commit it. When a fact later differs, the measured difference says which side changed
+since they last agreed: `[Figma moved, code is behind]`, `[code moved, Figma is behind]` or `[both moved
+since they agreed]`. A fact that never agreed is just a difference, as before. A difference never
+overwrites the record; only a new agreement does. The report ends with a count (`Agreed values: … Of the
+N that differ: … Figma moved · … code moved · … both moved · … with no earlier agreement`). Inside a git
+hook the file is read but never written, so a commit never changes a file it did not stage.
+
 **A gate that could not run** (its snapshot or input is missing, exit 2) shows `⏭ not verified` with the
 gate's own reason, and `Not run` in the summary. It never fails the run and is never a pass: the verdict
 says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PASS`.

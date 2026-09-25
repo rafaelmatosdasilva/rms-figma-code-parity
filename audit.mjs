@@ -3472,6 +3472,38 @@ function reportFull(label, items, shown) {
     for (const [st, label, detail] of rows) console.log(`  ${dot(st)} ${label.padEnd(16)} ${C.dim(detail)}`);
   }
 
+  // ── What both sides last agreed on (I47) ────────────────────────────────────────
+  // Every fact that matches this run is recorded in parity-agreed.json (committed), so a later
+  // difference can say which side moved. Never written inside a git hook: a commit must not change a
+  // file it did not stage.
+  try {
+    const { readFreshSnapshot } = await import('./code-capture.mjs');
+    const cap = await readFreshSnapshot(ROOT, cfg);
+    if (cap) {
+      const cc = await import('./capture-compare.mjs');
+      const { loadAgreed, classify, recordAgreed, AGREED_FILE } = await import('./agreed.mjs');
+      const readJ = (p) => { try { return JSON.parse(readFileSync(join(ROOT, p), 'utf8')); } catch { return {}; } };
+      const vars = readJ(cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json');
+      const structure = readJ(SNAP_STRUCT).components ?? {};
+      const maps = await cc.loadParityMaps(ROOT, cfg);
+      const facts = [
+        ...(cc.compareTokens(cap, vars, cfg, maps).facts ?? []),
+        ...(cap._sources?.browser ? (cc.compareComponents(cap, structure, vars, cfg, maps).facts ?? []) : []),
+        ...(cc.compareBreakpoints(cap, structure, vars).facts ?? []),
+      ];
+      const agreed = loadAgreed(ROOT);
+      const moved = { 'figma-moved': 0, 'code-moved': 0, 'both-moved': 0, unknown: 0 };
+      for (const f of facts) if (!f.same) moved[classify(f, agreed)]++;
+      const inHook = !!process.env.GIT_INDEX_FILE || process.argv.includes('--hook');
+      const rec = inHook ? { recorded: facts.filter((f) => f.same).length, changed: false } : recordAgreed(ROOT, facts);
+      const diff = facts.length - rec.recorded;
+      if (facts.length) {
+        console.log(`\nℹ️  Agreed values: ${rec.recorded} of ${facts.length} compared facts agree${inHook ? '' : ` (recorded in ${AGREED_FILE}${rec.changed ? ', updated' : ''})`}.` +
+          (diff ? ` Of the ${diff} that differ: ${moved['figma-moved']} Figma moved · ${moved['code-moved']} code moved · ${moved['both-moved']} both moved · ${moved.unknown} with no earlier agreement.` : ''));
+      }
+    }
+  } catch { /* the record is a convenience: it never breaks the run */ }
+
   // ── Why the design changed (Figma side of I49) ─────────────────────────────────
   // Figma keeps versions per file, not per node: one line with the latest named version.
   if (_figmaReason) {
