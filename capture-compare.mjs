@@ -121,7 +121,7 @@ export function compareComponents(code, structure, vars, cfg, maps) {
     }
     const byVar = extra.expectedVar && fact.var === extra.expectedVar;
     const byValue = extra.figmaValue != null ? valueMatch(extra.figmaValue, fact.value) : null;
-    settle(byVar || byValue === true, { component: comp, field, figma, figmaValue: extra.figmaValue ?? undefined, code: fact.value, codeVar: fact.var ?? null, expectedVar: extra.expectedVar ?? undefined, rule: fact.rule, at: fact.at, confidence: fact.confidence });
+    settle(byVar || byValue === true, { component: comp, field, figma, figmaValue: extra.figmaValue ?? undefined, code: fact.value, codeVar: fact.var ?? null, expectedVar: extra.expectedVar ?? undefined, ...(extra.suggestVar ? { suggestVar: extra.suggestVar } : {}), rule: fact.rule, at: fact.at, confidence: fact.confidence });
   };
   for (const [name, f] of Object.entries(structure ?? {})) {
     const c = code.components?.[name];
@@ -178,7 +178,9 @@ export function compareComponents(code, structure, vars, cfg, maps) {
     // Font: Figma's font fields describe the component's first TEXT node, so the code side is the
     // contract's fontSel part, else the first element holding text, else the root.
     const fp = c.parts?.font?.props ?? c.parts?.text?.props ?? c.props;
-    if (f.fontSizeVar && ty(f.fontSizeVar)) push(name, 'font size', f.fontSizeVar, fp?.fontSize, { figmaValue: ty(f.fontSizeVar).size });
+    // The project's own variable for a text-style field (parity-map TYPO), proposed in a hand-back patch.
+    const typoVar = (scale, prop) => Object.entries(maps.TYPO ?? {}).find(([, [sc, pr]]) => sc === scale && pr === prop)?.[0];
+    if (f.fontSizeVar && ty(f.fontSizeVar)) push(name, 'font size', f.fontSizeVar, fp?.fontSize, { figmaValue: ty(f.fontSizeVar).size, suggestVar: typoVar(f.fontSizeVar, 'size') });
     if (f.fontWeightVar && ty(f.fontWeightVar)) push(name, 'font weight', f.fontWeightVar, fp?.fontWeight, { figmaValue: ty(f.fontWeightVar).weight });
     // Line height from the same text style (a unitless line height is a multiple of the font size).
     const lhText = f.text?.lineHeight;   // { unit: 'PIXELS' | 'PERCENT' | 'AUTO', value } from the extended capture
@@ -191,7 +193,7 @@ export function compareComponents(code, structure, vars, cfg, maps) {
     if (lhFig && fp?.lineHeight && fp.lineHeight.confidence !== 'default' && !(fp.lineHeight.inherited && pageLevel(fp.lineHeight.rule))) {
       const lh = fp.lineHeight, fs = toNum(fp.fontSize?.value);
       const px = /^[\d.]+$/.test(String(lh.value).trim()) && fs ? `${toNum(lh.value) * fs}px` : lh.value;
-      push(name, 'line height', f.fontSizeVar, { ...lh, value: px }, { figmaValue: lhFig });
+      push(name, 'line height', f.fontSizeVar, { ...lh, value: px }, { figmaValue: lhFig, suggestVar: lhText && lhText.unit !== 'AUTO' ? undefined : typoVar(f.fontSizeVar, 'lh') });
     }
     // Stroke. Figma's root stroke can be drawn on an inner layer in code, and a border can be
     // reserved for a hover state, so only the clear cases are compared: Figma strokes the default
@@ -462,15 +464,17 @@ export async function compareCapture(ROOT, cfg, code, { readJSON }) {
 
 // One line a person can act on: which value to write, and where. A reading from one source only
 // (the browser or the stylesheet, not both) says so, since it has not been confirmed.
-export function measuredLine(d) {
+export function measuredLine(d, moved = null) {
   const plain = typeof d.figma === 'number' ? `${d.figma}px` : /^-?[\d.]+(px|%)?$/.test(String(d.figma)) ? String(d.figma) : null;
-  const want = d.expectedVar ? `var(${d.expectedVar})` : (d.figmaValue ?? plain);
+  const want = d.expectedVar ? `var(${d.expectedVar})` : d.suggestVar ? `var(${d.suggestVar})` : (d.figmaValue ?? plain);
   const where = d.at ? `${d.rule ? `${d.rule} · ` : ''}${d.at}` : null;
   const figma = `${d.figma}${d.figmaValue ? ` (${d.figmaValue})` : ''}`;
   return `${d.component} ${d.field}: Figma ${figma}, rendered ${d.code}${d.codeVar ? ` via ${d.codeVar}` : ''}`
     + (where ? `  (${where})` : '')
     + (d.confidence === 'single-source' ? '  [read from one source]' : '')
-    + (where && want ? `  → set ${want}` : '');
+    + (moved === 'code-moved' ? `  → in Figma, set it to ${d.codeVar ? `the token behind ${d.codeVar}` : d.code}`
+      : moved === 'both-moved' ? '  → decide which value wins'
+      : where && want ? `  → set ${want}` : '');
 }
 
 export function compareReport(r) {

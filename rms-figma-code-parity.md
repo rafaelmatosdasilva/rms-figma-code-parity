@@ -951,6 +951,15 @@ overwrites the record; only a new agreement does. The report ends with a count (
 N that differ: … Figma moved · … code moved · … both moved · … with no earlier agreement`). Inside a git
 hook the file is read but never written, so a commit never changes a file it did not stage.
 
+**Sending it back.** Each measured difference says which way it goes, and Gate [13] writes both hand-backs
+under `.parity-out/handback/`. Nothing is applied:
+- **Code is behind** (Figma moved, or no earlier agreement): `code-changes.diff`, a patch that changes the
+  declaration at the rule's `file:line` to the Figma token (or the project's text-style variable from
+  `parity-map.mjs` TYPO, or the value). Review it, then `git apply .parity-out/handback/code-changes.diff`.
+  Only single-value declarations and two-value `padding` are patched; the report counts the rest as by hand.
+- **Figma is behind** (code moved): `figma-changes.md`, per component with a link to it in Figma, the
+  property and the value to set there. When both sides moved, it lists the decision to make.
+
 **A gate that could not run** (its snapshot or input is missing, exit 2) shows `⏭ not verified` with the
 gate's own reason, and `Not run` in the summary. It never fails the run and is never a pass: the verdict
 says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PASS`.

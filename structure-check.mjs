@@ -16,7 +16,7 @@
 // Exit 2 = cannot verify: no compiled component CSS configured (setup gap, not a parity fail).
 
 import { readFileSync, existsSync } from 'fs';
-import { join, resolve as resolvePath } from 'path';
+import { join, dirname, resolve as resolvePath } from 'path';
 import { loadCssSources, walkCss, styleBlocksOf, blankComments } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
@@ -1845,15 +1845,25 @@ try {
       const { loadAgreed, classify, MOVED_LABEL } = await import('./agreed.mjs');
       const { factOf } = await import('./capture-compare.mjs');
       const agreed = loadAgreed(ROOT);
+      const toCode = [], toFigma = [];
       for (const d of r.differ) {
-        const moved = MOVED_LABEL[classify({ ...factOf(d), same: false }, agreed)];
-        console.log(`   ${mark} ${measuredLine(d)}${moved ? `  [${moved}]` : ''}`);
+        const kind = classify({ ...factOf(d), same: false }, agreed);
+        const moved = MOVED_LABEL[kind];
+        console.log(`   ${mark} ${measuredLine(d, kind)}${moved ? `  [${moved}]` : ''}`);
+        if (kind === 'code-moved' || kind === 'both-moved') toFigma.push({ d, moved: kind }); else toCode.push(d);
         const why = d.at ? reasonLine(codeReason(ROOT, d.at)) : null;
         if (why) console.log(`      ↳ ${why}`);
       }
       const { figmaLinker } = await import('./figma-link.mjs');
       const linkFor = figmaLinker(ROOT, cfg);
       for (const comp of [...new Set(r.differ.map((d) => d.component))]) { const u = linkFor(comp); if (u) console.log(`   🔗 ${comp} in Figma: ${u}`); }
+      // Which way each difference goes back (I48): a patch for the code, a list for Figma. Never applied.
+      const { writeHandback } = await import('./handback.mjs');
+      const outDir = dirname(cfg.codeReading?.out ?? '.parity-out/code.snapshot.json');
+      const hb = writeHandback(ROOT, outDir, { codeDiffs: toCode, figmaItems: toFigma, linkFor });
+      if (hb.code) console.log(`   ↳ code changes proposed (${hb.patched}): ${hb.code}  (review, then git apply it; ${hb.manual.length} more by hand)`);
+      else if (toCode.length) console.log(`   ↳ ${toCode.length} code change(s) to make by hand (no single-value declaration to patch)`);
+      if (hb.figma) console.log(`   ↳ Figma changes to make (${toFigma.length}): ${hb.figma}`);
       if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
     // Every variant built: each Figma axis value has a counterpart the capture found in code.
