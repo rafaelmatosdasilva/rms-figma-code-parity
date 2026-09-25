@@ -339,7 +339,10 @@ export function compareComponents(code, structure, vars, cfg, maps) {
       const vfor = (label) => {
         const want = axesOf(label);
         const all = Object.entries(f.variants).filter(([v]) => { const a = axesOf(v); return Object.entries(want).every(([k, x]) => a[k] === x); });
-        return (all.find(([v]) => Object.entries(axesOf(v)).every(([k, x]) => k in want || defAxes[k] === x)) ?? all[0])?.[1];
+        // Only a variant whose other axes are the default's: one that also changes another axis (Size=L
+        // for an Icon=True state) is a combination, compared as one (I41), not against a single state.
+        const exact = all.find(([v]) => Object.entries(axesOf(v)).every(([k, x]) => k in want || defAxes[k] === x));
+        return (exact ?? (Object.keys(defAxes).length ? null : all[0]))?.[1];
       };
       const def = f.variants[f.defaultVariant] ?? { paddingPx: f.paddingPx, radiusPx: f.radiusPx, colors: f.colors };
       const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
