@@ -179,6 +179,7 @@ let _figmaAuthFailed = false;
 let _figmaFileVersion = null;
 let _figmaFileModified = null;
 
+let _figmaReason = null;   // the Figma file's latest named version (idea I49), when a token is set
 async function fetchFigmaFileVersion(fileKey, token) {
   if (!token || !fileKey) return;
   try {
@@ -1304,7 +1305,7 @@ function reportFull(label, items, shown) {
       return { pass: false, lines: [C.yellow('🚧 STRUCTURE cannot verify - no compiled component CSS.'), ...guidance] };
     }
     const pass = r.status === 0;
-    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  VARIANTS|⚠️  .*: Figma .*, rendered |⚠️  .* has no counterpart in code|🔗 .* in Figma: /.test(l) && l.trim()).map(l => l.trim());
+    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  VARIANTS|⚠️  .*: Figma .*, rendered |⚠️  .* has no counterpart in code|🔗 .* in Figma: |↳ /.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n')
       .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
       .map(l => '  ' + l.trim()).slice(0, 20);
@@ -2263,6 +2264,7 @@ function reportFull(label, items, shown) {
     const FIGMA_REFRESH_CONCURRENCY = Math.max(1, parseInt(process.env.FIGMA_REFRESH_CONCURRENCY, 10) || 3);
     await runPool([
       () => fetchFigmaFileVersion(figmaFileKey, figmaToken),
+      async () => { const { figmaReason } = await import('./change-reason.mjs'); _figmaReason = await figmaReason(figmaFileKey, figmaToken); },
       () => fetchComponentInventory(figmaFileKey, figmaToken, cfg.figma?.componentsPage ?? cfg.componentsPage),
       () => refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
       () => refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
@@ -3026,7 +3028,13 @@ function reportFull(label, items, shown) {
             if (cap) whereOf = (t) => { const v = colorVarOf(t, spec, maps); return v && cap.tokens?.[v]?.declaredAt ? `${v} · ${cap.tokens[v].declaredAt}` : null; };
           } catch { /* locations are a convenience */ }
           console.log(C.yellow(`\n⚠️  Token contrast: ${all.length} pair(s) below WCAG AA (${provenance}, per mode).`));
-          for (const f of all.slice(0, 20)) { const w = whereOf(f.text); console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}${w ? `  (${w})` : ''}`)); }
+          const { codeReason, reasonLine } = await import('./change-reason.mjs');
+          for (const f of all.slice(0, 20)) {
+            const w = whereOf(f.text);
+            console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}${w ? `  (${w})` : ''}`));
+            const why = w ? reasonLine(codeReason(ROOT, w.split(' · ')[1])) : null;
+            if (why) console.log(C.dim(`        ↳ ${why}`));
+          }
           console.log('   Advisory: pairs are derived from the token-name convention and/or declared in ds-config → a11y.tokenPairs; the engine only surfaces the math.');
         } else if (anyChecked) {
           console.log(`\nℹ️  Token contrast: all pairs meet WCAG AA across ${modes.length} mode(s) (${provenance}).`);
@@ -3050,7 +3058,12 @@ function reportFull(label, items, shown) {
           console.log(C.yellow(`\n⚠️  State contrast: ${findings.length} component state(s) below WCAG AA, as rendered (${checked} checked; disabled states exempt).`));
           const { colorHex } = await import('./css-values.mjs');
           const hex = (v, name) => `${colorHex(v) ?? v}${name ? ` (${name})` : ''}`;
-          for (const f of findings.slice(0, 20)) console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${hex(f.fg, f.fgVar)} on ${hex(f.bg, f.bgVar)}${f.at ? `  (${f.at})` : ''}`));
+          const { codeReason, reasonLine } = await import('./change-reason.mjs');
+          for (const f of findings.slice(0, 20)) {
+            console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${hex(f.fg, f.fgVar)} on ${hex(f.bg, f.bgVar)}${f.at ? `  (${f.at})` : ''}`));
+            const why = f.at ? reasonLine(codeReason(ROOT, f.at)) : null;
+            if (why) console.log(C.dim(`        ↳ ${why}`));
+          }
           if (findings.length > 20) console.log(`     … ${findings.length - 20} more`);
           const { figmaLinker } = await import('./figma-link.mjs');
           const linkFor = figmaLinker(ROOT, cfg);
@@ -3457,6 +3470,13 @@ function reportFull(label, items, shown) {
 
     console.log('\n' + C.bold('  AI-READINESS SCORECARD') + C.dim('  (advisory - a running measure, never blocks)'));
     for (const [st, label, detail] of rows) console.log(`  ${dot(st)} ${label.padEnd(16)} ${C.dim(detail)}`);
+  }
+
+  // ── Why the design changed (Figma side of I49) ─────────────────────────────────
+  // Figma keeps versions per file, not per node: one line with the latest named version.
+  if (_figmaReason) {
+    const { figmaReasonLine } = await import('./change-reason.mjs');
+    console.log(`\nℹ️  ${figmaReasonLine(_figmaReason)}`);
   }
 
   // ── Since the last run ───────────────────────────────────────────────────────

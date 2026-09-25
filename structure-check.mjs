@@ -1839,7 +1839,13 @@ try {
     const mark = strictMeasured ? '❌' : '⚠️ ';
     if (r.differ.length) {
       console.log(`\n${mark} MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma${strictMeasured ? '' : ' - advisory'})`);
-      for (const d of r.differ) console.log(`   ${mark} ${measuredLine(d)}`);
+      // Who last changed the rule's line, and why (git), so the reason travels with the finding.
+      const { codeReason, reasonLine } = await import('./change-reason.mjs');
+      for (const d of r.differ) {
+        console.log(`   ${mark} ${measuredLine(d)}`);
+        const why = d.at ? reasonLine(codeReason(ROOT, d.at)) : null;
+        if (why) console.log(`      ↳ ${why}`);
+      }
       const { figmaLinker } = await import('./figma-link.mjs');
       const linkFor = figmaLinker(ROOT, cfg);
       for (const comp of [...new Set(r.differ.map((d) => d.component))]) { const u = linkFor(comp); if (u) console.log(`   🔗 ${comp} in Figma: ${u}`); }

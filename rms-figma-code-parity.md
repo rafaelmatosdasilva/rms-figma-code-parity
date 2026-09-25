@@ -947,6 +947,11 @@ says `[read from one source]`. Each component with a finding gets a `🔗` line 
 Figma (from `figmaFileKey` and the node ids in the snapshots). Lines that report nothing, such as
 `❌ FAIL 0`, are left out.
 
+**Why it changed.** In a git repository, a finding with a `file:line` (measured differences, state and
+token contrast) gets a `↳` line: who last changed that line, when, and the commit's subject, or that it is
+not committed yet. With `FIGMA_TOKEN`, the report also names the Figma file's latest named version, its
+description, author and date. Figma keeps versions per file, so this is one line per run, not per finding.
+
 ---
 
 ## How to Execute
