@@ -454,7 +454,15 @@ coverage** (flags a token defined in some brands but missing in others). Brands 
 captured **collections manifest** that marks a brand collection (the Enterprise / extended-collections
 enhancement, read as data the any-plan capture wrote — never a plan-gated API call); else it **suggests**
 candidate multi-mode collections but never assumes (modes may be theme/density/locale, not brands). Override paths with
-`ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut}`; the engine ships only the generator.
+`ds-config.json → contracts.{authored,out,tokensOut,schemaOut,llmsOut,propTypesOut}`; the engine ships only the generator.
+
+**Figma prop types.** The same run writes `contracts/figma-props.d.ts`: per component, a `<Name>FigmaProps`
+interface (one union per variant property, `boolean` for a True/False variant or a boolean property,
+`string` for text, `unknown` for an instance slot) and a `<Name>FigmaDefaults` type. Names follow the props
+check (an authored binding, then `componentPropAliases`, then camelCase); interaction states are left out,
+as they are CSS. Type a component's props with it (`const check: ChipFigmaProps = {} as ChipProps`, or use
+it as the props type) and `tsc` shows prop drift in the editor and in CI. `contracts/` stays local, so set
+`contracts.propTypesOut` to a committed path when CI should check it.
 
 #### The code capture (every run, and `--capture-code` on its own)
 

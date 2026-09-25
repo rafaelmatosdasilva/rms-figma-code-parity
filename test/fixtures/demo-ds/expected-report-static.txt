@@ -185,6 +185,7 @@
 ℹ️  Token contrast: all pairs meet WCAG AA across 2 mode(s) (2 derived from token names).
 
 📐 Contracts → contracts  (4 components · 19 DTCG tokens)
+ℹ️  Figma prop types → contracts/figma-props.d.ts: type a component's props with its <Name>FigmaProps so tsc shows prop drift.
 ℹ️  Decision status: 1 experimental  (llms.txt tells agents which one won and why)
 ℹ️  Contract completeness: 4/4 have a description · 4/4 have semantics · 0/4 carry whenNotToUse/useInstead guidance. Advisory only.
 

@@ -707,6 +707,18 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const llmsOut = cc.llmsOut ? resolve(ROOT, cc.llmsOut) : join(outDir, 'llms.txt');
   try { writeFileSync(llmsOut, buildLlms(built, tokens, countLeaves(tokens), catalog) + '\n'); } catch { /* best-effort */ }
 
+  // Figma prop types (I46): the component properties as TypeScript, for a compile-time prop check.
+  let propTypesOut = null;
+  try {
+    const { propTypesDts } = await import('./figma-props.mjs');
+    const dts = propTypesDts(props, { cfg, authored: authoredDoc.components ?? {} });
+    if (/export interface/.test(dts)) {
+      propTypesOut = cc.propTypesOut ? resolve(ROOT, cc.propTypesOut) : join(outDir, 'figma-props.d.ts');
+      ensureDir(dirname(propTypesOut));
+      writeFileSync(propTypesOut, dts);
+    }
+  } catch { /* best-effort */ }
+
   // Prune candidates (I8): a lean-library advisory over what we just built. Surfaced, never enforced.
   const prune = pruneCandidates({ built, usage, tokensDict: tokens });
 
@@ -715,5 +727,5 @@ export async function generateContracts(ROOT, cfg, opts = {}) {
   const statusIssues = statusFindings(built);
   const statusCounts = built.reduce((acc, b) => { const st = b.contract.status?.state; if (st) acc[st] = (acc[st] || 0) + 1; return acc; }, {});
 
-  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, catalogOut: catalog ? join(outDir, 'catalog.json') : null, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens, prune, statusIssues, statusCounts };
+  return { tokensOut, schemaOut, outDir, authoredPath, llmsOut, propTypesOut, catalogOut: catalog ? join(outDir, 'catalog.json') : null, tokenCount: countLeaves(tokens), components: emitted, invalid, authoredIssues, breaking, undefinedRefs, typeMismatches, droppedTokens, prune, statusIssues, statusCounts };
 }

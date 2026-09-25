@@ -142,3 +142,36 @@ test('visual diff: a Figma image from a reference, else the REST API (a componen
   assert.equal((await figmaImage(dir, cfg, 'tag', { nodeId: '1:2', defaultVariant: 'Size=M', version: 'v1', token: 't', fetchImpl })).from, 'figma (cached)');
   assert.equal(calls.length, 3);
 });
+
+test('Figma prop types: one interface per component, states left out, names as the code uses them', async () => {
+  const { propTypesDts, codePropName } = await import('../figma-props.mjs');
+  const props = {
+    _updated: 'x',
+    chip: { nodeId: '1:1', properties: { 'Size': { type: 'VARIANT', defaultValue: 'M', variantOptions: ['M', 'L'] }, 'Icon': { type: 'VARIANT', defaultValue: 'False', variantOptions: ['False', 'True'] },
+      'Show Label#2:0': { type: 'BOOLEAN', defaultValue: true }, 'Label#2:1': { type: 'TEXT', defaultValue: 'Filter' }, 'State': { type: 'VARIANT', defaultValue: 'Default', variantOptions: ['Default', 'Hover'] },
+      'Lead#2:2': { type: 'INSTANCE_SWAP', defaultValue: '9:9' } } },
+    card: { properties: { 'Phase': { type: 'VARIANT', defaultValue: 'Rest', variantOptions: ['Rest', 'Hover'] } } },
+  };
+  const dts = propTypesDts(props, { cfg: { states: { hover: { prop: 'Phase', value: 'Hover' } } }, authored: { chip: { bindings: { Label: { attribute: 'text' }, Lead: { slot: 'leading' } } } } });
+  assert.match(dts, /export interface ChipFigmaProps \{\n  \/\*\* Figma: Size \(variant\) \*\/\n  size\?: "M" \| "L";/);
+  assert.match(dts, /icon\?: boolean;/);
+  assert.match(dts, /showLabel\?: boolean;/);
+  assert.match(dts, /text\?: string;/);                 // the authored binding renames it
+  assert.match(dts, /leading\?: unknown;/);             // a slot
+  assert.doesNotMatch(dts, /state\?|CardFigmaProps/);  // interaction states are CSS, not props (a declared axis too)
+  assert.match(dts, /export interface ChipFigmaDefaults \{\n  size: "M";\n  icon: false;\n  showLabel: true;\n  text: "Filter";\n\}/);
+  assert.equal(codePropName('x', 'Show Label#1:2', { aliases: { x: { 'Show Label': 'labelVisible' } } }), 'labelVisible');
+});
+
+const TSC = spawnSync('which', ['tsc'], { encoding: 'utf8' }).stdout.trim();
+test('Figma prop types: tsc accepts matching props and rejects drifted ones', { skip: TSC ? false : 'no tsc' }, async () => {
+  const { propTypesDts } = await import('../figma-props.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'figma-props-'));
+  writeFileSync(join(dir, 'figma-props.d.ts'), propTypesDts(JSON.parse(readFileSync(join(FIXTURE, 'src', 'figma-component-props.snapshot.json'), 'utf8')), { cfg: JSON.parse(readFileSync(join(FIXTURE, 'ds-config.json'), 'utf8')) }));
+  const file = (name, sizes) => { writeFileSync(join(dir, name), `import type { ChipFigmaProps } from './figma-props';\ntype ChipProps = { label?: string; size?: ${sizes}; icon?: boolean };\nconst p: ChipProps = {};\nexport const check: ChipFigmaProps = p;\n`); return name; };
+  const tsc = (f) => spawnSync(TSC, ['--noEmit', '--strict', f, 'figma-props.d.ts'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(tsc(file('ok.ts', "'M' | 'L'")).status, 0);
+  const drift = tsc(file('drift.ts', "'m' | 'l'"));
+  assert.notEqual(drift.status, 0);
+  assert.match(drift.stdout, /size/);
+});
