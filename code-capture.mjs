@@ -31,7 +31,7 @@ import { loadCssSources, rootTokens, resolveVars, canonValue } from './css-sourc
 import { findChrome, launchChrome, connectCDP, openPage, waitForTrue } from './cdp.mjs';
 import { captureComponents, staticComponentReading } from './component-capture.mjs';
 import { createLocator, loadLocator } from './component-locator.mjs';
-import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles } from './structure-capture.mjs';
+import { apiReaderFor, captureApis, captureIcons, captureMarkup, renderedNesting, sourceNesting, mergeNesting, structureInputFiles, markupInputKey } from './structure-capture.mjs';
 import { conceptOf } from './state-concepts.mjs';
 
 export const CAPTURE_VERSION = 2;
@@ -93,6 +93,7 @@ function hashInputs(ROOT, cfg, files, pages, opts) {
   h.update(`v${CAPTURE_VERSION}|${JSON.stringify(cfg.figma?.modes ?? null)}|${JSON.stringify(cfg.figma?.collections ?? null)}|${JSON.stringify(cfg.codeReading ?? null)}`);
   for (const f of ['code-capture.mjs', 'css-source.mjs', 'component-capture.mjs', 'component-locator.mjs', 'structure-capture.mjs', 'component-api.mjs', 'component-source.mjs', 'icon-source.mjs', 'markup-source.mjs', 'codeconnect-check.mjs', 'state-concepts.mjs', 'css-values.mjs']) { try { h.update(readFileSync(join(ENGINE_DIR, f))); } catch { /* engine file */ } }
   for (const extra of opts.extraFiles ?? []) { try { h.update(extra); h.update(readFileSync(extra)); } catch { /* optional */ } }
+  for (const key of opts.extraKeys ?? []) h.update(`|${key}`);
   for (const abs of [...files.map((f) => f.abs), ...pages.filter((p) => !/^https?:/.test(p.path) && !p.generated).map((p) => resolve(ROOT, p.path))].sort()) {
     try { h.update(abs); h.update(readFileSync(abs)); } catch { /* vanished */ }
   }
@@ -421,7 +422,7 @@ async function prepareCapture(ROOT, cfg) {
   const nodeIds = Object.fromEntries(Object.entries(figmaStructure).filter(([, v]) => v?.nodeId).map(([k, v]) => [k, v.nodeId]));
   const apiReader = apiReaderFor(ROOT, cfg, { classFor: locator.classFor, nodeIds });
   const extraFiles = [...new Set([cfg.paths?.structureContract ?? 'structure-contract.mjs', cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json', cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json', ...(cfg.paths?.pluginCSS ?? [])].map((p) => resolve(ROOT, p)).concat(structureInputFiles(ROOT, cfg, apiReader), styleguide.template ? [resolve(ROOT, styleguide.template)] : []))];
-  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles });
+  const inputHash = hashInputs(ROOT, cfg, files, pages, { extraFiles, extraKeys: [markupInputKey(ROOT, cfg)] });
   return { outPath, modes, themeEntries, pages, styleguide, files, missing, remote, locator, apiReader, inputHash };
 }
 

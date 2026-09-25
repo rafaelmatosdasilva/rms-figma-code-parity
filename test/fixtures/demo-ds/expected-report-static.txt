@@ -88,6 +88,7 @@
 
 ✅  [18] Markup  (ids · component classes · icon references · every DS screen control is built)
        ℹ️  [15] htmlStructureClasses not set in ds-config.json - DS component classes are not part of the fingerprint (ids and icon references still are).
+       ✅ [15] No snapshot found - baseline written (1 plugin(s))
        ⏭  screen elements: no figma-screens.snapshot.json - skipped (capture it to enable)
 
 ✅  [19] Required pieces are in place  (icon slots · component slots · form controls)
