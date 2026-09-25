@@ -682,6 +682,17 @@ Example of one note: `Role: button. aria-label: Close dialog`.
   spacing 0.16em); text that becomes cut off.
 - **Semantics** — each component's rendered role (accessibility tree) against the contract's authored
   `semantics` (`contract.authored.json`).
+- **What a role requires** — for each component with a role (the contract's `semantics`, or a Figma note,
+  which wins), up to 20 rendered instances are checked for what that role needs:
+  - a toggle button has `aria-pressed`, and clicking changes it (clicked back afterwards)
+  - a checkbox, radio or switch has a real control (a native input, or the role with `aria-checked`) and a
+    label; a switch exposes `role="switch"`
+  - a text field has a label; in its error state it has `aria-invalid="true"` and `aria-describedby` to its
+    message; `aria-describedby` points to an element that exists
+  - a tab is `role="tab"` inside a `role="tablist"`, and the selected one has `aria-selected="true"`
+  - anything that looks disabled is `disabled` or `aria-disabled`
+  A state is read from the instance's classes or `data-state` (error or invalid, selected, active or
+  current, disabled). Nothing is checked for a component without a declared role.
 - **Reflow at 320px (1.4.10)** — opt in with `a11y.reflow: true` for real screens (a component catalog is
   not meant to reflow).
 - **State contrast, no browser needed** — from the code capture: each component's text against its own

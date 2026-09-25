@@ -243,6 +243,11 @@ export const A11Y_GUIDE = {
     why: 'A thin focus ring is easy to miss. The enhanced level of WCAG (AAA) asks for at least 2 CSS pixels.',
     fix: 'Draw the focus ring at least 2px thick (outline-width: 2px).',
   },
+  rolecontract: {
+    title: (n) => `${plural(n, 'component does', 'components do')} not expose what its role requires`,
+    why: 'The contract or a Figma note says what the component is (a toggle button, a checkbox, a text field, a tab). Assistive technology needs the matching wiring: the pressed or checked state, a label, the error link, the selected tab.',
+    fix: 'Add what the finding names (aria-pressed that changes on click, a real checkbox input with a label, aria-invalid and aria-describedby on an errored field, aria-selected on the selected tab, disabled or aria-disabled).',
+  },
   annotation: {
     title: (n) => `${plural(n, 'component does', 'components do')} not render what its Figma accessibility note says`,
     why: 'A Figma annotation on the component states its role, name, heading level or alt text; the rendered page says something else.',
@@ -569,6 +574,66 @@ export function annotationMismatches(f, got) {
 }
 // Chrome's accessibility tree names a few roles differently from ARIA.
 export const sameRole = (got, want) => got === want || (want === 'img' && got === 'image') || (want === 'textbox' && got === 'searchbox');
+
+// What a role requires, checked on up to 20 rendered instances of a component (idea I39). Returns the
+// problems as short sentences. A toggle button is clicked to see aria-pressed change, then clicked
+// back. A state is read from the instance's classes and attributes (error or invalid, selected or
+// active, disabled), the same words the capture and the styleguide use.
+export function roleContractExpression(selector, role, { pressed = false } = {}) {
+  return `(() => {
+    let els; try { els = [...document.querySelectorAll(${JSON.stringify(selector)})].slice(0, 20); } catch { return []; }
+    const role = ${JSON.stringify(role)}, pressedRole = ${JSON.stringify(!!pressed)};
+    const out = new Set();
+    const words = (el) => ((el.className && typeof el.className === 'string') ? el.className.toLowerCase() : '').split(/[\\s_-]+/).concat(String(el.getAttribute('data-state') || '').toLowerCase());
+    const has = (el, ...w) => words(el).some((x) => w.includes(x));
+    const named = (el) => !!((el.labels && el.labels.length) || (el.getAttribute('aria-label') || '').trim() || el.getAttribute('aria-labelledby') || (el.getAttribute('title') || '').trim());
+    const idsExist = (v) => String(v || '').trim().split(/\\s+/).filter(Boolean).every((id) => document.getElementById(id));
+    for (const el of els) {
+      if (has(el, 'disabled') && !(el.disabled === true || el.getAttribute('aria-disabled') === 'true' || el.querySelector('[disabled],[aria-disabled="true"]')))
+        out.add('looks disabled but is not disabled or aria-disabled');
+      if (role === 'button' && pressedRole) {
+        if (!el.hasAttribute('aria-pressed')) { out.add('is a toggle button without aria-pressed'); continue; }
+        const before = el.getAttribute('aria-pressed');
+        try { el.click(); } catch (e) {}
+        const after = el.getAttribute('aria-pressed');
+        if (after === before) out.add('aria-pressed does not change when clicked');
+        else { try { el.click(); } catch (e) {} }
+      }
+      if (role === 'checkbox' || role === 'radio' || role === 'switch') {
+        const input = el.matches('input') ? el : el.querySelector('input[type=checkbox],input[type=radio]');
+        const aria = el.matches('[role=' + role + ']') ? el : el.querySelector('[role=' + role + ']');
+        const control = input || aria;
+        if (!control) out.add('has no ' + role + ' control (a native input, or role="' + role + '" with aria-checked)');
+        else {
+          if (!input && !control.hasAttribute('aria-checked')) out.add('role="' + role + '" without aria-checked');
+          if (role === 'switch' && input && input.getAttribute('role') !== 'switch' && !aria) out.add('a switch should expose role="switch"');
+          const labelled = named(control) || (input && input.closest('label')) || (el.matches('label') && el.contains(control));
+          if (!labelled && !(control.textContent || '').trim()) out.add('its ' + role + ' has no label');
+        }
+      }
+      if (role === 'textbox' || role === 'searchbox' || role === 'combobox') {
+        const field = el.matches('input,textarea,select,[role=textbox],[role=searchbox],[role=combobox]') ? el : el.querySelector('input,textarea,select,[role=textbox],[role=searchbox],[role=combobox]');
+        if (!field) { out.add('has no text field'); continue; }
+        if (!named(field)) out.add('its field has no label');
+        if (field.hasAttribute('aria-describedby') && !idsExist(field.getAttribute('aria-describedby'))) out.add('aria-describedby points to an element that does not exist');
+        if (has(el, 'error', 'invalid') || has(field, 'error', 'invalid')) {
+          if (field.getAttribute('aria-invalid') !== 'true') out.add('in its error state the field has no aria-invalid="true"');
+          if (!field.getAttribute('aria-describedby')) out.add('in its error state the field is not linked to its message (aria-describedby)');
+        }
+      }
+      if (role === 'tab' || role === 'tablist') {
+        const tabs = role === 'tab' ? [el] : [...el.querySelectorAll('[role=tab]')];
+        if (role === 'tablist' && !tabs.length) out.add('has no role="tab" items');
+        for (const t of tabs) {
+          if (!t.matches('[role=tab]')) { out.add('is not exposed as role="tab"'); continue; }
+          if (!t.closest('[role=tablist]')) out.add('a tab outside a role="tablist"');
+          if ((has(t, 'selected', 'active', 'current') || t.getAttribute('aria-current')) && t.getAttribute('aria-selected') !== 'true') out.add('the selected tab has no aria-selected="true"');
+        }
+      }
+    }
+    return [...out];
+  })()`;
+}
 
 // Deeper checks measured in the page (pure expression builders; exported for tests).
 //   targets(): interactive controls under 24×24 with another control inside the 24px circle (2.5.8);
@@ -1080,6 +1145,18 @@ async function main() {
       }
     });
     await step(async () => {
+      // Roles as contracts (I39): what each declared role requires, on the rendered instances. The role
+      // comes from the contract's authored semantics, or from a Figma note (which wins when both exist).
+      const roles = Object.fromEntries(Object.entries(contractSemantics(ROOT, cfg)).map(([c, r]) => [c, { role: r }]));
+      for (const [c, { facts: f }] of Object.entries(annotationFactsFor(ROOT, cfg))) if (f.role) roles[c] = { role: f.role, pressed: !!f.pressed };
+      for (const [comp, r] of Object.entries(roles)) {
+        if (components.length && !components.includes(comp)) continue;
+        const sel = selOf(comp);
+        if (!sel) continue;
+        for (const problem of (await evalv(roleContractExpression(sel, r.role, { pressed: r.pressed }))) ?? []) findings.push({ kind: 'rolecontract', plugin: label, desc: `${comp} (${r.pressed ? 'toggle button' : r.role}): ${problem}` });
+      }
+    });
+    await step(async () => {
       // Composite widgets move with the arrow keys.
       for (const g of (await evalv(deepSweepExpression(roots, 'composites'))) ?? []) {
         const started = await evalv(`(() => { const g = document.querySelector('[data-parity-group="${g.i}"]'); if (!g) return false; const items = [...g.querySelectorAll('[role=radio],[role=tab],[role=menuitem],[role=option]')]; const s = items.find((x) => x.tabIndex >= 0) || items[0]; s.focus(); window.__parityStart = s; return document.activeElement === s; })()`);
@@ -1128,7 +1205,7 @@ async function main() {
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'activate', 'arrows', 'obscured', 'zoom', 'motion', 'forcedfocus', 'focusthin', 'spacing', 'reflow', 'semantics', 'annotation'].map((k) => [k, findings.filter((f) => f.kind === k)]);
+  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'activate', 'arrows', 'obscured', 'zoom', 'motion', 'forcedfocus', 'focusthin', 'spacing', 'reflow', 'semantics', 'rolecontract', 'annotation'].map((k) => [k, findings.filter((f) => f.kind === k)]);
   const buckets = [['contrast', contrast], ['hovercontrast', hoverCon], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard], ...more].filter(([, l]) => l.length);
   const total = buckets.reduce((n, [, l]) => n + l.length, 0);
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';

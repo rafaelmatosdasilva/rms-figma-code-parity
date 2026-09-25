@@ -193,3 +193,39 @@ test('annotations in the browser: a toggle button without aria-pressed, and a no
   assert.ok(got.some((x) => /^fav › Icon: Figma says its name is "Favoritar", it is announced as "Salvar"/.test(x)), out);
   assert.ok(got.some((x) => /^fav › Badge: not checked, the contract has no part named "Badge"/.test(x)), out);
 });
+
+test('role contracts: what each role requires, on the rendered component', { skip: HAS_CHROME ? false : 'no Chrome available' }, () => {
+  const page = `<!doctype html><html><body>
+    <button class="fav" aria-label="Favorite" aria-pressed="false" onclick="this.setAttribute('aria-pressed', this.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')">★</button>
+    <button class="pin" aria-label="Pin" aria-pressed="false">📌</button>
+    <button class="star" aria-label="Star">☆</button>
+    <div class="fake-check">Remember me</div>
+    <label class="good-check"><input type="checkbox"> Keep me signed in</label>
+    <div class="field error"><input type="text" aria-label="Email"></div>
+    <div class="field-ok error"><input type="text" aria-label="Name" aria-invalid="true" aria-describedby="nm"><span id="nm">Required</span></div>
+    <div role="tablist"><button role="tab" class="tab selected">One</button><button role="tab" class="tab" aria-selected="false">Two</button></div>
+    <button class="go disabled">Go</button>
+  </body></html>`;
+  const dir = makeFixture({
+    'page.html': page,
+    'contract.authored.json': { components: {
+      pin: { semantics: { element: 'button' } }, fakeCheck: { semantics: { element: 'input[type=checkbox]' } }, goodCheck: { semantics: { element: 'input[type=checkbox]' } },
+      field: { semantics: { aria: { role: 'textbox' } } }, fieldOk: { semantics: { aria: { role: 'textbox' } } }, tab: { semantics: { aria: { role: 'tab' } } }, go: { semantics: { element: 'button' } } } },
+    'figma-component-props.snapshot.json': { fav: { annotations: [{ label: 'role: togglebutton' }] }, pin: { annotations: [{ label: 'role: togglebutton' }] }, star: { annotations: [{ label: 'role: togglebutton' }] } },
+    'ds-config.json': { componentSelectors: { fav: '.fav', pin: '.pin', star: '.star', fakeCheck: '.fake-check', goodCheck: '.good-check', field: '.field', fieldOk: '.field-ok', tab: '.tab', go: '.go' } },
+  });
+  let out = '';
+  try { out = execFileSync(process.execPath, [join(ENGINE, 'a11y-check.mjs'), '--url', pathToFileURL(join(dir, 'page.html')).href, '--json'], { cwd: dir, encoding: 'utf8', timeout: 120000, env: { ...process.env, CHROME_PATH: CHROME } }); }
+  catch (e) { out = e.stdout ?? ''; }
+  const d = JSON.parse(out.slice(out.indexOf('{')));
+  const got = d.issues.filter((i) => i.issue === 'rolecontract').map((i) => i.selector).sort();
+  assert.deepEqual(got, [
+    'fakeCheck (checkbox): has no checkbox control (a native input, or role="checkbox" with aria-checked)',
+    'field (textbox): in its error state the field has no aria-invalid="true"',
+    'field (textbox): in its error state the field is not linked to its message (aria-describedby)',
+    'go (button): looks disabled but is not disabled or aria-disabled',
+    'pin (toggle button): aria-pressed does not change when clicked',
+    'star (toggle button): is a toggle button without aria-pressed',
+    'tab (tab): the selected tab has no aria-selected="true"',
+  ], out);
+});
