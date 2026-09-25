@@ -16,7 +16,7 @@
 // Exit 2 = cannot verify: no compiled component CSS configured (setup gap, not a parity fail).
 
 import { readFileSync, existsSync } from 'fs';
-import { join, resolve as resolvePath } from 'path';
+import { join, dirname, resolve as resolvePath } from 'path';
 import { loadCssSources, walkCss, styleBlocksOf, blankComments } from './css-source.mjs';
 import { rawGapMatches } from './raw-gap.mjs';
 import { resolveNamingSpec, tokenToVar } from './naming-convention.mjs';
@@ -1333,6 +1333,7 @@ for (const [comp, contract] of Object.entries(CONTRACT)) {
 // Every Figma annotation on a component set must be acknowledged in CONTRACT.annotations.
 // Acknowledged annotations with a CSS selector are verified to exist in the codebase.
 const CANN_PASS = [], CANN_FAIL = [], CANN_WARN = [];
+const { annotationFacts } = await import('./a11y-check.mjs');
 
 for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
   if (figmaName === '_updated' || !entry?.annotations?.length) continue;
@@ -1346,6 +1347,12 @@ for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
   const contractAnns = CONTRACT[contractKey]?.annotations ?? {};
   for (const ann of entry.annotations) {
     const annLabel = ann.label ?? ann.name ?? String(ann);
+    // An accessibility note the accessibility check reads as facts (role, name, heading level, alt
+    // text) is verified against the rendered page there; it needs no acknowledgement here.
+    if (!(annLabel in contractAnns) && Object.keys(annotationFacts([ann])).length) {
+      CANN_PASS.push(`${contractKey}: "${annLabel}" is checked by the accessibility check`);
+      continue;
+    }
     if (!(annLabel in contractAnns)) {
       CANN_FAIL.push(`${contractKey}: annotation "${annLabel}" not acknowledged in CONTRACT.annotations`);
       continue;
@@ -1832,10 +1839,31 @@ try {
     const mark = strictMeasured ? '❌' : '⚠️ ';
     if (r.differ.length) {
       console.log(`\n${mark} MEASURED ${r.differ.length}  (rendered in the browser, the component differs from Figma${strictMeasured ? '' : ' - advisory'})`);
-      for (const d of r.differ) console.log(`   ${mark} ${measuredLine(d)}`);
+      // Who last changed the rule's line, and why (git), so the reason travels with the finding.
+      const { codeReason, reasonLine } = await import('./change-reason.mjs');
+      // Which side moved since they last agreed (parity-agreed.json), when there is a record.
+      const { loadAgreed, classify, MOVED_LABEL } = await import('./agreed.mjs');
+      const { factOf } = await import('./capture-compare.mjs');
+      const agreed = loadAgreed(ROOT);
+      const toCode = [], toFigma = [];
+      for (const d of r.differ) {
+        const kind = classify({ ...factOf(d), same: false }, agreed);
+        const moved = MOVED_LABEL[kind];
+        console.log(`   ${mark} ${measuredLine(d, kind)}${moved ? `  [${moved}]` : ''}`);
+        if (kind === 'code-moved' || kind === 'both-moved') toFigma.push({ d, moved: kind }); else toCode.push(d);
+        const why = d.at ? reasonLine(codeReason(ROOT, d.at)) : null;
+        if (why) console.log(`      ↳ ${why}`);
+      }
       const { figmaLinker } = await import('./figma-link.mjs');
       const linkFor = figmaLinker(ROOT, cfg);
       for (const comp of [...new Set(r.differ.map((d) => d.component))]) { const u = linkFor(comp); if (u) console.log(`   🔗 ${comp} in Figma: ${u}`); }
+      // Which way each difference goes back (I48): a patch for the code, a list for Figma. Never applied.
+      const { writeHandback } = await import('./handback.mjs');
+      const outDir = dirname(cfg.codeReading?.out ?? '.parity-out/code.snapshot.json');
+      const hb = writeHandback(ROOT, outDir, { codeDiffs: toCode, figmaItems: toFigma, linkFor });
+      if (hb.code) console.log(`   ↳ code changes proposed (${hb.patched}): ${hb.code}  (review, then git apply it; ${hb.manual.length} more by hand)`);
+      else if (toCode.length) console.log(`   ↳ ${toCode.length} code change(s) to make by hand (no single-value declaration to patch)`);
+      if (hb.figma) console.log(`   ↳ Figma changes to make (${toFigma.length}): ${hb.figma}`);
       if (strictMeasured) measuredFail = true;
     } else console.log(`\n✅ MEASURED  every rendered component value matches Figma (${r.match})`);
     // Every variant built: each Figma axis value has a counterpart the capture found in code.

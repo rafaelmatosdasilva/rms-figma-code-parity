@@ -233,6 +233,31 @@ export function backdropOf(layers = []) {
   return layers?.length ? `rgb(${acc.map((v) => Math.round(v)).join(', ')})` : null;
 }
 
+// Which named parts are visible inside one instance: { partName: true | false }. A part is visible
+// when an element matching its selector sits in the instance (or is it) and renders a box.
+function layersExpression(selector, childParts) {
+  return `(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    const out = {};
+    for (const p of ${JSON.stringify(childParts)}) {
+      let found = [];
+      try { found = [...document.querySelectorAll(p.selector)].filter((x) => x === el || el.contains(x)); } catch (e) { continue; }
+      out[p.name] = found.some((x) => { const s = getComputedStyle(x); const r = x.getBoundingClientRect(); return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0; });
+    }
+    return out;
+  })()`;
+}
+// Several recipes at once, for a variant combination: every class, attribute and forced state.
+function mergeRecipes(list) {
+  const err = list.find((h) => h.error);
+  if (err) return { error: err.error };
+  return {
+    classes: list.flatMap((h) => h.classes), attrs: list.flatMap((h) => h.attrs), force: [...new Set(list.flatMap((h) => h.force))],
+    disabled: list.some((h) => h.disabled), checked: list.some((h) => h.checked), describe: list.map((h) => h.describe).join(' + '),
+  };
+}
+
 // ── Static reading of a component's own base rule ───────────────────────────────
 export function staticComponentReading(sources, selector, rootVars) {
   const out = {};
@@ -398,7 +423,7 @@ export async function captureComponents(ctx) {
     // States, batched: each mode is switched once, and every state is put on and taken off inside it.
     // The winning rules are traced in the first mode, where the state's reported values come from.
     const measureStates = async (jobs) => {
-      const sMode = jobs.map(() => ({})), sTrace = jobs.map(() => ({}));
+      const sMode = jobs.map(() => ({})), sTrace = jobs.map(() => ({})), sLayers = jobs.map(() => null);
       for (const [mi, mode] of modes.entries()) {
         const sw = modeSwitch(mode, { styleguide: !!page.generated });
         if (sw.unsupported) continue;
@@ -410,13 +435,14 @@ export async function captureComponents(ctx) {
             await applyRecipe(send, sessionId, j.i, j.nodeId, j.how, true);
             sMode[ji][mode.snapshotKey] = (await send('Runtime.evaluate', { expression: measureExpression(capSel(j.i)), returnByValue: true }, sessionId)).result?.value;
             if (mi === 0) sTrace[ji] = await trace(j.nodeId);
+            if (mi === 0 && j.childParts?.length) sLayers[ji] = (await send('Runtime.evaluate', { expression: layersExpression(capSel(j.i), j.childParts), returnByValue: true }, sessionId)).result?.value ?? null;
           } finally { await applyRecipe(send, sessionId, j.i, j.nodeId, j.how, false).catch(() => {}); }
         }
         if (sw.undo) await send('Runtime.evaluate', { expression: sw.undo }, sessionId);
         if (sw.viewport) await setWidth(1280);
       }
       await backToFirstMode();
-      return { sMode, sTrace };
+      return { sMode, sTrace, sLayers };
     };
     const setWidth = (width) => send('Emulation.setDeviceMetricsOverride', { width: Math.round(width), height: 900, deviceScaleFactor: ctx.deviceScaleFactor ?? 2, mobile: false }, sessionId);
     // The component at each Figma breakpoint width, in the first mode: the values a responsive token
@@ -506,7 +532,7 @@ export async function captureComponents(ctx) {
     }
     return out;
   };
-  const stateEntry = (st, produced, sMode, sTrace, props) => {
+  const stateEntry = (st, produced, sMode, sTrace, props, layers = null) => {
     const changed = {};
     const sb = sMode[firstMode] ?? {};
     for (const prop of Object.keys(TRACE)) {
@@ -518,7 +544,7 @@ export async function captureComponents(ctx) {
       if (s?.at && c.at && s.at !== c.at) { c.renderedAt = c.at; c.at = s.at; }
     }
     const matched = Object.values(changed).some((c) => c.rule && c.rule.replace(/\s+/g, ' ').includes(st.selector.replace(/\s+/g, ' ')));
-    return { selector: st.selector, produced, changed, colors: colorsOf(sMode), ruleMatched: matched };
+    return { selector: st.selector, produced, changed, colors: colorsOf(sMode), ruleMatched: matched, ...(sb?.rect ? { size: { height: sb.rect.height, width: sb.rect.width } } : {}), ...(layers ? { layers } : {}) };
   };
 
   // Pass 1: every component, and the states that can be produced on its instance.
@@ -547,8 +573,11 @@ export async function captureComponents(ctx) {
     }
     if (stateJobs.length) {
       try {
-        const { sMode, sTrace } = await P.measureStates(stateJobs);
-        stateJobs.forEach((j, ji) => { (j.entry.states ??= {})[j.st.label] = stateEntry(j.st, j.how.describe, sMode[ji], sTrace[ji], j.props); });
+        const { sMode, sTrace, sLayers } = await P.measureStates(stateJobs);
+        stateJobs.forEach((j, ji) => {
+          const e = stateEntry(j.st, j.how.describe, sMode[ji], sTrace[ji], j.props, sLayers[ji]);
+          if (j.combo) (j.entry.combos ??= {})[j.combo] = e; else (j.entry.states ??= {})[j.st.label] = e;
+        });
       } catch (e) { notes.push(`states on ${page.label}: could not be measured (${String(e.message || e).split('\n')[0]})`); }
     }
     await P.close();
@@ -575,6 +604,7 @@ export async function captureComponents(ctx) {
         props, fill: bg && bg[3] > 0 ? 'direct' : beforeBg && beforeBg[3] > 0 ? 'before' : 'none', colors: colorsOf(perMode),
       };
       if (base?.before) entry.before = base.before;
+      if (comp.childParts?.length) { const l = await P.evaluate(layersExpression(capSel(loc.i), comp.childParts)); if (l) entry.layers = l; }
       if (atBreakpoints && Object.keys(atBreakpoints).length) entry.breakpoints = atBreakpoints;
       // Parts: each measured and traced like the instance, keeping only the properties the part is for.
       const PART_PROPS = { font: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], text: ['fontSize', 'fontWeight', 'lineHeight', 'color', 'fontFamily', 'letterSpacing', 'textTransform'], radius: ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'], gap: ['rowGap', 'columnGap'], before: ['borderTopLeftRadius', 'backgroundColor'] };
@@ -592,7 +622,13 @@ export async function captureComponents(ctx) {
       for (const st of comp.states ?? []) {
         const how = stateRecipe(comp.selector, st.selector);
         if (how.error || !nodeId) { deferred.push({ comp: comp.name, st, why: how.error ?? 'instance not addressable' }); continue; }
-        stateJobs.push({ i: loc.i, nodeId, how, st, props, entry });   // measured for the whole page at once
+        stateJobs.push({ i: loc.i, nodeId, how, st, props, entry, childParts: comp.childParts });   // measured for the whole page at once
+      }
+      // Variant combinations (two or more axes at once), each recipe put on together.
+      for (const combo of comp.combos ?? []) {
+        const how = mergeRecipes(combo.parts.map((p) => stateRecipe(comp.selector, p.selector)));
+        if (how.error || !nodeId) { (entry.combosNotProduced ??= []).push({ variant: combo.name, why: how.error ?? 'instance not addressable' }); continue; }
+        stateJobs.push({ i: loc.i, nodeId, how, st: { label: combo.name, selector: combo.parts.map((p) => p.selector).join(' + ') }, props, entry, childParts: comp.childParts, combo: combo.name });
       }
       result[comp.name] = entry;
     }

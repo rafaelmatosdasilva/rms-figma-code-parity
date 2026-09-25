@@ -646,9 +646,34 @@ there, never a failure.
 - **Zoom to 200% (1.4.4)** — text that becomes cut off when the page is shown at twice its size.
 - **Focus ring thickness (2.4.13, AAA, advisory)** — a focus ring thinner than 2 CSS pixels. The browser's
   own ring is not counted.
-- **Figma accessibility annotations** — a note on the component that states a role (`Role: button`), a
-  name (`aria-label: Close`), a heading level (`Heading level 2`, `H2`) or alt text (`Alt: …`) is checked
-  against what the component renders. Other notes stay notes.
+- **Figma accessibility annotations** — a note that states a role, a name, a heading level or alt text is
+  checked against what the component renders (see *Writing accessibility notes in Figma* below). Other notes
+  stay notes.
+
+**Writing accessibility notes in Figma.** Use Figma's annotation tool on the component (the component set or
+a standalone component). A category such as "Accessibility" helps people find them; the skill reads the text.
+One fact per line, or per sentence ending in `. ` or `;`. The keywords are English; the value can be in any
+language.
+
+| Note | Checked against the rendered component |
+|---|---|
+| `Role: button` | The role a screen reader announces (an ARIA role) |
+| `Role: togglebutton` | A button that also exposes `aria-pressed`. Also `textinput` (a text box), `searchinput` (a search box), `iconbutton` (a button) |
+| `aria-label: Close dialog` | The accessible name, ignoring case (also `Accessible name:`, `Screen reader label:`) |
+| `Heading level 2` · `H2` | A heading, at that level |
+| `Alt: Sales chart` | An image whose text alternative is that text |
+
+Example of one note: `Role: button. aria-label: Close dialog`.
+
+- **On an inner layer.** A note on a layer inside the component's default variant (the first one) is checked on
+  the part the contract names the same way: `CONTRACT[component].children` with that `name` and a
+  `cssSelector`. A layer with no such part is listed as not checked, with what to add.
+- **No Gate [10g] entry needed.** A note the accessibility check can verify passes Gate [10g] on its own; only
+  prose notes still need `CONTRACT.annotations`.
+- **Where the notes come from.** The component-props snapshot, refreshed with `FIGMA_TOKEN` or the Plugin API
+  capture below (both record `annotations` on the component and `layerAnnotations` on its inner layers).
+- **A name that changes with content** ("3 items") is compared as written, so it is reported as a difference.
+  Describe such names in prose instead.
 - **Reduced motion (2.3.3)** — under `prefers-reduced-motion: reduce`, anything that still transitions or
   animates.
 - **Forced colours** — under `forced-colors: active` (Windows high contrast), a focus indicator that
@@ -657,6 +682,17 @@ there, never a failure.
   spacing 0.16em); text that becomes cut off.
 - **Semantics** — each component's rendered role (accessibility tree) against the contract's authored
   `semantics` (`contract.authored.json`).
+- **What a role requires** — for each component with a role (the contract's `semantics`, or a Figma note,
+  which wins), up to 20 rendered instances are checked for what that role needs:
+  - a toggle button has `aria-pressed`, and clicking changes it (clicked back afterwards)
+  - a checkbox, radio or switch has a real control (a native input, or the role with `aria-checked`) and a
+    label; a switch exposes `role="switch"`
+  - a text field has a label; in its error state it has `aria-invalid="true"` and `aria-describedby` to its
+    message; `aria-describedby` points to an element that exists
+  - a tab is `role="tab"` inside a `role="tablist"`, and the selected one has `aria-selected="true"`
+  - anything that looks disabled is `disabled` or `aria-disabled`
+  A state is read from the instance's classes or `data-state` (error or invalid, selected, active or
+  current, disabled). Nothing is checked for a component without a declared role.
 - **Reflow at 320px (1.4.10)** — opt in with `a11y.reflow: true` for real screens (a component catalog is
   not meant to reflow).
 - **State contrast, no browser needed** — from the code capture: each component's text against its own
@@ -906,6 +942,24 @@ are far under the cap and are collected in full.
 
 **Audit history** is appended to `parity-history.json` at project root after every run. View trend: `rms-figma-code-parity --trend`.
 
+**Which side moved.** Every run records, for each compared fact that matches (a token in each mode, a
+padding, gap, radius, colour, height, visible layer…), the value on each side in `parity-agreed.json` at
+the project root. Commit it. When a fact later differs, the measured difference says which side changed
+since they last agreed: `[Figma moved, code is behind]`, `[code moved, Figma is behind]` or `[both moved
+since they agreed]`. A fact that never agreed is just a difference, as before. A difference never
+overwrites the record; only a new agreement does. The report ends with a count (`Agreed values: … Of the
+N that differ: … Figma moved · … code moved · … both moved · … with no earlier agreement`). Inside a git
+hook the file is read but never written, so a commit never changes a file it did not stage.
+
+**Sending it back.** Each measured difference says which way it goes, and Gate [13] writes both hand-backs
+under `.parity-out/handback/`. Nothing is applied:
+- **Code is behind** (Figma moved, or no earlier agreement): `code-changes.diff`, a patch that changes the
+  declaration at the rule's `file:line` to the Figma token (or the project's text-style variable from
+  `parity-map.mjs` TYPO, or the value). Review it, then `git apply .parity-out/handback/code-changes.diff`.
+  Only single-value declarations and two-value `padding` are patched; the report counts the rest as by hand.
+- **Figma is behind** (code moved): `figma-changes.md`, per component with a link to it in Figma, the
+  property and the value to set there. When both sides moved, it lists the decision to make.
+
 **A gate that could not run** (its snapshot or input is missing, exit 2) shows `⏭ not verified` with the
 gate's own reason, and `Not run` in the summary. It never fails the run and is never a pass: the verdict
 says `EVERY GATE THAT RAN PASSES ✅ (N not verified)` instead of `ALL GATES PASS`.
@@ -921,6 +975,11 @@ rendered value and its token, the winning rule with its `file:line`, and what to
 says `[read from one source]`. Each component with a finding gets a `🔗` line that opens its node in
 Figma (from `figmaFileKey` and the node ids in the snapshots). Lines that report nothing, such as
 `❌ FAIL 0`, are left out.
+
+**Why it changed.** In a git repository, a finding with a `file:line` (measured differences, state and
+token contrast) gets a `↳` line: who last changed that line, when, and the commit's subject, or that it is
+not committed yet. With `FIGMA_TOKEN`, the report also names the Figma file's latest named version, its
+description, author and date. Figma keeps versions per file, so this is one line per run, not per finding.
 
 ---
 
@@ -1280,8 +1339,11 @@ each one when present:
 - the gap, the stroke width on each side, and opacity
 - the text node's family, line height (px, % or auto), letter spacing and text case
 - the fill, text and stroke colour tokens with their paint opacity, compared in every mode
-- one entry per variant (padding, gap, radius, font size, colours); only what a variant changes from
-  the default is compared, against the state the code capture produced
+- one entry per variant (height, padding, gap, radius, font size, colours, visible layers); only what a
+  variant changes from the default is compared, against the state the code capture produced. A variant
+  that changes two or more axes (Size=L with Icon=True) is produced by putting each axis's propertyMap
+  selector on at once (up to `codeReading.maxCombinations`, default 12, per component). Visible layers are
+  compared by name with the contract's `children` that have a `name` and a `cssSelector`
 - which layers each boolean property shows or hides (`toggles`)
 - each slot's preferred components (`slots`), which the contract uses as the slot's `accepts` list
 
@@ -1315,8 +1377,16 @@ async function deepFacts(node, set) {
       radiusPx: 'topLeftRadius' in x ? [x.topLeftRadius, x.topRightRadius, x.bottomRightRadius, x.bottomLeftRadius].map(n) : null,
       fontSize: t && t.fontSize !== figma.mixed ? n(t.fontSize) : null,
       colors: { fill: await paint(x.fills), text: t ? await paint(t.fills) : null, stroke: await paint(x.strokes) },
+      layers: visibleLayers(x),
     };
   };
+  // Names of the layers actually shown (a layer inside a hidden one is not), at most 80.
+  function visibleLayers(x) {
+    const names = new Set();
+    const walk = (n) => { for (const c of n.children ?? []) { if (c.visible === false || names.size >= 80) continue; names.add(c.name); walk(c); } };
+    walk(x);
+    return [...names];
+  }
   const out = {};
   if ('layoutMode' in node) out.box = { width: n(node.width), height: n(node.height), layout: node.layoutMode,
     sizing: { h: node.layoutSizingHorizontal, v: node.layoutSizingVertical },
@@ -2062,7 +2132,7 @@ Every Figma annotation attached to a component node is a design specification. T
 ### How it works
 
 1. **`audit.mjs` refresh** - `refreshComponentProps()` fetches `doc.annotations[]` alongside `componentPropertyDefinitions` for every component node. Nodes with either properties **or** annotations are included in the snapshot. (`/nodes` works on any plan with a token.)
-2. **Gate [10g] check** - for every component in the snapshot that has annotations, `structure-check.mjs` looks up `CONTRACT[key].annotations` and verifies each annotation label is present. Missing label → `FAIL`. If a CSS selector is provided, it must exist in the CSS - not found → `FAIL`.
+2. **Gate [10g] check** - for every component in the snapshot that has annotations, `structure-check.mjs` looks up `CONTRACT[key].annotations` and verifies each annotation label is present. Missing label → `FAIL`. If a CSS selector is provided, it must exist in the CSS - not found → `FAIL`. An accessibility note the accessibility check verifies (a role, name, heading level or alt text, see *Writing accessibility notes in Figma*) passes without an entry.
 3. **`anyFail`** - annotation failures count the same as property failures; the gate exits non-zero.
 
 ### Plugin API capture (no token, any plan)
@@ -2077,8 +2147,12 @@ for (const node of sets) {
   let props = {};
   try { props = node.componentPropertyDefinitions ?? {}; } catch { /* variant child - skip */ }
   const anns = node.annotations ?? [];
-  if (Object.keys(props).length || anns.length)
-    result[node.name] = { nodeId: node.id, properties: props, annotations: anns };
+  // Notes on inner layers of the default variant (the first one; a standalone component is its own).
+  const base = node.type === 'COMPONENT_SET' ? node.children[0] : node;
+  const layerAnnotations = (base.findAll?.((n) => (n.annotations ?? []).length > 0) ?? []).slice(0, 50)
+    .map((n) => ({ layer: n.name, nodeId: n.id, annotations: n.annotations }));
+  if (Object.keys(props).length || anns.length || layerAnnotations.length)
+    result[node.name] = { nodeId: node.id, properties: props, annotations: anns, ...(layerAnnotations.length ? { layerAnnotations } : {}) };
 }
 return JSON.stringify({ _updated: new Date().toISOString(), ...result }, null, 2);
 ```

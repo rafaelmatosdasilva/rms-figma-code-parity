@@ -174,3 +174,21 @@ test('breakpoints: a responsive token against the value measured at that breakpo
   assert.deepEqual(r.differ.map((d) => `${d.field}: ${d.figmaValue} vs ${d.code}`), ['padding (left) @ Phone (375px): 12px vs 8px']);
   assert.equal(r.match, 1);                                  // gap/m is not responsive: not compared here
 });
+
+test('variant combinations: built from propertyMap selectors; compared with height and visible layers', async () => {
+  const { variantCombos } = await import('../code-capture.mjs');
+  const states = [{ label: 'Size=L', selector: '.chip.chip--l' }, { label: 'Icon=True', selector: '.chip.has-icon' }, { label: 'State=Hover', selector: '.chip:hover' }];
+  const figma = { defaultVariant: 'Size=M, Icon=False, State=Default', variants: { 'Size=M, Icon=False, State=Default': {}, 'Size=L, Icon=True, State=Default': {}, 'Size=L, Icon=False, State=Default': {}, 'Size=S, Icon=True, State=Default': {} } };
+  assert.deepEqual(variantCombos(figma, states), [{ name: 'Size=L, Icon=True, State=Default', parts: [{ label: 'size=l', selector: '.chip.chip--l' }, { label: 'icon=true', selector: '.chip.has-icon' }] }]);   // Size=S has no selector
+  const fact = (value) => ({ value, rule: '.chip', at: 'a.css:1', confidence: 'verified' });
+  const code = { components: { chip: { confidence: 'high', instance: { hasText: true }, props: { height: fact('32px'), paddingLeft: fact('8px') }, layers: { Icon: false, Label: true },
+    combos: { 'Size=L, Icon=True, State=Default': { changed: { paddingLeft: { value: '12px', rule: '.chip--l', at: 'a.css:9' } }, size: { height: 32 }, layers: { Icon: false, Label: true } } } } } };
+  const structure = { chip: { defaultVariant: 'Size=M, Icon=False, State=Default', variants: {
+    'Size=M, Icon=False, State=Default': { h: 32, paddingPx: [4, 8, 4, 8], layers: ['Label'] },
+    'Size=L, Icon=True, State=Default': { h: 40, paddingPx: [4, 12, 4, 12], layers: ['Icon', 'Label'] } } } };
+  const r = compareComponents(code, structure, {}, cfg, maps());
+  assert.deepEqual(r.differ.map((d) => `${d.field}: ${d.figma} vs ${d.code}`), [
+    'height (Size=L, Icon=True, State=Default): 40 vs 32px',
+    'layer "Icon" (Size=L, Icon=True, State=Default): shown vs hidden',
+  ], JSON.stringify(r.differ));
+});

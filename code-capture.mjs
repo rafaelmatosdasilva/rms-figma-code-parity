@@ -246,8 +246,9 @@ export async function componentSpecs(ROOT, cfg) {
   if (existsSync(cp)) { try { contract = await import(pathToFileURL(cp).href); } catch { /* optional */ } }
   const CONTRACT = contract.CONTRACT ?? {}, SELECTORS = contract.COMPONENT_CSS_SELECTORS ?? {};
   const locator = createLocator(cfg, { contractSelectors: SELECTORS });
-  let snapNames = [];
-  try { snapNames = Object.keys(JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {}); } catch { /* optional */ }
+  let snapNames = [], snap = {};
+  try { snap = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json'), 'utf8')).components ?? {}; snapNames = Object.keys(snap); } catch { /* optional */ }
+  const maxCombos = Number.isFinite(cfg.codeReading?.maxCombinations) ? cfg.codeReading.maxCombinations : 12;
   const names = [...new Set([...snapNames, ...Object.keys(CONTRACT), ...Object.keys(SELECTORS), ...Object.keys(cfg.componentSelectors ?? {})])];
   const probes = new Map();
   for (const a of [...(contract.RENDERED_ASSERTIONS ?? []), ...(contract.CROSS_PLUGIN_CONSISTENCY ?? [])]) {
@@ -269,8 +270,31 @@ export async function componentSpecs(ROOT, cfg) {
     const sm = SELECTORS[name] ?? {};
     const parts = Object.fromEntries([['font', sm.fontSel], ['radius', sm.radiusSel], ['gap', sm.gapSel], ['before', sm.beforeSel]]
       .filter(([, v]) => typeof v === 'string' && v.trim() && !/::/.test(v)).map(([k, v]) => [k, v.replace(/\s+/g, ' ').trim()]));
-    return { name, selector, locatedBy: locator.sourceOf(name), probe: probes.get(selector) ?? null, states, children, parts, unbuilt: unbuilt.has(name) };
+    // Named parts (the contract's children with a name and a selector), so the capture can say which
+    // are visible in each state and variant.
+    const childParts = (CONTRACT[name]?.children ?? []).filter((c) => c?.name && typeof c.cssSelector === 'string' && c.cssSelector.trim()).map((c) => ({ name: c.name, selector: c.cssSelector.replace(/\s+/g, ' ').trim() }));
+    return { name, selector, locatedBy: locator.sourceOf(name), probe: probes.get(selector) ?? null, states, children, parts, childParts, combos: variantCombos(snap[name], states, maxCombos), unbuilt: unbuilt.has(name) };
   });
+}
+
+// Figma variants that change two or more axes from the default variant, when every changed axis value
+// has a selector in the contract's propertyMap: the capture puts them on together (idea I41). At most
+// maxCombos per component (codeReading.maxCombinations, default 12).
+export function variantCombos(figma, states, maxCombos = 12) {
+  if (!figma?.variants || !figma.defaultVariant) return [];
+  const axes = (n) => Object.fromEntries(String(n).split(',').map((p) => p.split('=').map((x) => x.trim().toLowerCase())).filter((p) => p.length === 2));
+  const bySel = new Map(states.map((st) => [st.label.replace(/\s+/g, '').toLowerCase(), st.selector]));
+  const def = axes(figma.defaultVariant);
+  const out = [];
+  for (const v of Object.keys(figma.variants)) {
+    const diff = Object.entries(axes(v)).filter(([k, x]) => def[k] !== x);
+    if (diff.length < 2) continue;
+    const parts = diff.map(([k, x]) => ({ label: `${k}=${x}`, selector: bySel.get(`${k}=${x}`) }));
+    if (parts.some((p) => !p.selector)) continue;
+    out.push({ name: v, parts });
+    if (out.length >= maxCombos) break;
+  }
+  return out;
 }
 
 // ── Merge the readings into facts ─────────────────────────────────────────────

@@ -301,3 +301,20 @@ browserTest('breakpoints: each component is measured at every Figma breakpoint w
   const bp = snapshot.components.card.breakpoints;
   assert.deepEqual([bp.Phone.width, bp.Phone.paddingLeft, bp.Desktop.width, bp.Desktop.paddingLeft], [375, '8px', 1024, '16px'], JSON.stringify(bp));
 });
+
+browserTest('variant combinations: two axes put on at once, measured with their visible parts', async () => {
+  const dir = makeFixture({
+    'theme.css': '.chip { display: inline-flex; height: 32px; padding: 0 8px; }\n.chip .chip-icon { display: none; width: 12px; height: 12px; }\n.chip--l { height: 40px; padding: 0 12px; }\n.chip.has-icon .chip-icon { display: inline-block; }\n',
+    'app/ui.html': '<!doctype html><html><head><link rel="stylesheet" href="../theme.css"></head><body><div class="chip"><span class="chip-icon"></span><span class="chip-label">Tag</span></div></body></html>',
+    'structure-contract.mjs': "export const CONTRACT = { chip: { propertyMap: { Size: { M: '.chip', L: '.chip.chip--l' }, Icon: { False: '.chip', True: '.chip.has-icon' } }, children: [{ name: 'Icon', cssSelector: '.chip .chip-icon' }, { name: 'Label', cssSelector: '.chip .chip-label' }] } };",
+    'struct.json': { components: { chip: { defaultVariant: 'Size=M, Icon=False', variants: { 'Size=M, Icon=False': {}, 'Size=L, Icon=True': {} } } } },
+  });
+  const cfg = { paths: { themeCSS: 'theme.css', plugins: ['app'], pluginCSS: [], snapshotStructure: 'struct.json' }, figma: { modes: [LIGHT_DARK[0]] } };
+  const { snapshot } = await captureCode(dir, cfg, { force: true });
+  const chip = snapshot.components.chip;
+  assert.deepEqual(chip.layers, { Icon: false, Label: true });
+  const combo = chip.combos?.['Size=L, Icon=True'];
+  assert.ok(combo, JSON.stringify(Object.keys(chip)));
+  assert.deepEqual([combo.size.height, combo.layers, combo.changed.paddingLeft?.value], [40, { Icon: true, Label: true }, '12px']);
+  assert.equal(chip.states['Size=L'].size.height, 40);
+});

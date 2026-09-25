@@ -243,6 +243,11 @@ export const A11Y_GUIDE = {
     why: 'A thin focus ring is easy to miss. The enhanced level of WCAG (AAA) asks for at least 2 CSS pixels.',
     fix: 'Draw the focus ring at least 2px thick (outline-width: 2px).',
   },
+  rolecontract: {
+    title: (n) => `${plural(n, 'component does', 'components do')} not expose what its role requires`,
+    why: 'The contract or a Figma note says what the component is (a toggle button, a checkbox, a text field, a tab). Assistive technology needs the matching wiring: the pressed or checked state, a label, the error link, the selected tab.',
+    fix: 'Add what the finding names (aria-pressed that changes on click, a real checkbox input with a label, aria-invalid and aria-describedby on an errored field, aria-selected on the selected tab, disabled or aria-disabled).',
+  },
   annotation: {
     title: (n) => `${plural(n, 'component does', 'components do')} not render what its Figma accessibility note says`,
     why: 'A Figma annotation on the component states its role, name, heading level or alt text; the rendered page says something else.',
@@ -516,32 +521,45 @@ export function contractSemantics(ROOT, cfg = {}) {
   return out;
 }
 // Figma accessibility annotations as checkable facts. An annotation is free text; the facts it states
-// in a recognisable form are kept: role: button · aria-label: Close · heading level 2 (or H2) ·
-// alt: A red chart. Anything else stays a note for people.
+// in a recognisable form are kept, one per clause (a line, or a sentence ending in ". " or ";"):
+//   role: button              the role a screen reader announces
+//   aria-label: Close         the accessible name (also "accessible name", "screen reader label")
+//   heading level 2 · H2      a heading and its level
+//   alt: A red chart          an image's text alternative
+// Composite roles from spec tooling are read as what they mean: togglebutton is a button with
+// aria-pressed, textinput a text box. Anything else stays a note for people.
+const ROLE_WORDS = { textinput: 'textbox', searchinput: 'searchbox', iconbutton: 'button' };
+export function roleOf(word) {
+  const w = String(word ?? '').trim().toLowerCase().replace(/["'“”]/g, '');
+  if (w === 'togglebutton') return { role: 'button', pressed: true };
+  return { role: ROLE_WORDS[w] ?? w };
+}
 export function annotationFacts(annotations = []) {
   const f = {};
-  for (const a of annotations ?? []) {
-    const t = String(a?.label ?? a?.labelMarkdown ?? '').replace(/[*_`]/g, '');
-    const role = t.match(/\brole\s*[:=]\s*["'“]?([a-z]+)/i);
-    if (role) f.role = role[1].toLowerCase();
-    const name = t.match(/\b(?:aria-label|accessible name|screen reader label)\s*[:=]\s*["'“]?([^"'”\n]+?)["'”]?\s*(?:$|\.\s)/i);
-    if (name) f.name = name[1].trim();
-    const heading = t.match(/\bheading(?:\s+level)?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? t.match(/\b[Hh]([1-6])\b/);
+  const clauses = (annotations ?? []).flatMap((a) => String(a?.label ?? a?.labelMarkdown ?? '').replace(/[*_`]/g, '').split(/\n|;|\.\s+/));
+  const value = (v) => v.trim().replace(/^["'“]|["'”.]$/g, '').trim();
+  for (const c of clauses) {
+    const kv = c.match(/^\s*([^:=]+?)\s*[:=]\s*(.+)$/);
+    const key = kv ? kv[1].trim().toLowerCase() : '';
+    if (key === 'role') { const r = roleOf(value(kv[2])); if (r.role) f.role = r.role; if (r.pressed) f.pressed = true; continue; }
+    if (/^(aria-label|accessible name|screen reader label)$/.test(key)) { f.name = value(kv[2]); continue; }
+    if (/^(alt|alt text)$/.test(key)) { f.name ??= value(kv[2]); f.role ??= 'img'; continue; }
+    const heading = c.match(/\bheading(?:\s+level)?\s*[:=]?\s*(?:h)?([1-6])\b/i) ?? c.match(/(?:^|\s)[Hh]([1-6])\b/);
     if (heading) { f.level = Number(heading[1]); f.role ??= 'heading'; }
-    const alt = t.match(/\balt(?:\s+text)?\s*[:=]\s*["'“]?([^"'”\n]+?)["'”]?\s*(?:$|\.\s)/i);
-    if (alt) { f.name ??= alt[1].trim(); f.role ??= 'img'; }
   }
   return f;
 }
-// { component: facts } from the component-props snapshot's annotations.
+// From the component-props snapshot: { component: { facts, layers: [{ layer, facts }] } }. Facts on
+// the component node, and on its inner layers (layerAnnotations) when the capture recorded them.
 export function annotationFactsFor(ROOT, cfg = {}) {
   let snap = {};
   try { snap = JSON.parse(readFileSync(resolve(ROOT, cfg.paths?.compPropsSnapshot ?? 'figma-component-props.snapshot.json'), 'utf8')); } catch { return {}; }
   const out = {};
   for (const [name, v] of Object.entries(snap)) {
-    if (name.startsWith('_') || !Array.isArray(v?.annotations)) continue;
-    const f = annotationFacts(v.annotations);
-    if (Object.keys(f).length) out[name] = f;
+    if (name.startsWith('_') || !v || typeof v !== 'object') continue;
+    const facts = annotationFacts(v.annotations ?? []);
+    const layers = (v.layerAnnotations ?? []).map((l) => ({ layer: l.layer, facts: annotationFacts(l.annotations ?? []) })).filter((l) => Object.keys(l.facts).length);
+    if (Object.keys(facts).length || layers.length) out[name] = { facts, layers };
   }
   return out;
 }
@@ -549,12 +567,73 @@ export function annotationFactsFor(ROOT, cfg = {}) {
 export function annotationMismatches(f, got) {
   const out = [];
   if (f.role && got.role && !sameRole(got.role, f.role)) out.push(`Figma says role "${f.role}", it renders as "${got.role}"`);
+  if (f.pressed && got.pressed == null) out.push('Figma says it is a toggle button, it has no aria-pressed');
   if (f.name && String(got.name ?? '').trim().toLowerCase() !== f.name.toLowerCase()) out.push(`Figma says its name is "${f.name}", it is announced as "${got.name ?? ''}"`);
   if (f.level && got.level != null && Number(got.level) !== f.level) out.push(`Figma says heading level ${f.level}, it renders as level ${got.level}`);
   return out;
 }
 // Chrome's accessibility tree names a few roles differently from ARIA.
 export const sameRole = (got, want) => got === want || (want === 'img' && got === 'image') || (want === 'textbox' && got === 'searchbox');
+
+// What a role requires, checked on up to 20 rendered instances of a component (idea I39). Returns the
+// problems as short sentences. A toggle button is clicked to see aria-pressed change, then clicked
+// back. A state is read from the instance's classes and attributes (error or invalid, selected or
+// active, disabled), the same words the capture and the styleguide use.
+export function roleContractExpression(selector, role, { pressed = false } = {}) {
+  return `(() => {
+    let els; try { els = [...document.querySelectorAll(${JSON.stringify(selector)})].slice(0, 20); } catch { return []; }
+    const role = ${JSON.stringify(role)}, pressedRole = ${JSON.stringify(!!pressed)};
+    const out = new Set();
+    const words = (el) => ((el.className && typeof el.className === 'string') ? el.className.toLowerCase() : '').split(/[\\s_-]+/).concat(String(el.getAttribute('data-state') || '').toLowerCase());
+    const has = (el, ...w) => words(el).some((x) => w.includes(x));
+    const named = (el) => !!((el.labels && el.labels.length) || (el.getAttribute('aria-label') || '').trim() || el.getAttribute('aria-labelledby') || (el.getAttribute('title') || '').trim());
+    const idsExist = (v) => String(v || '').trim().split(/\\s+/).filter(Boolean).every((id) => document.getElementById(id));
+    for (const el of els) {
+      if (has(el, 'disabled') && !(el.disabled === true || el.getAttribute('aria-disabled') === 'true' || el.querySelector('[disabled],[aria-disabled="true"]')))
+        out.add('looks disabled but is not disabled or aria-disabled');
+      if (role === 'button' && pressedRole) {
+        if (!el.hasAttribute('aria-pressed')) { out.add('is a toggle button without aria-pressed'); continue; }
+        const before = el.getAttribute('aria-pressed');
+        try { el.click(); } catch (e) {}
+        const after = el.getAttribute('aria-pressed');
+        if (after === before) out.add('aria-pressed does not change when clicked');
+        else { try { el.click(); } catch (e) {} }
+      }
+      if (role === 'checkbox' || role === 'radio' || role === 'switch') {
+        const input = el.matches('input') ? el : el.querySelector('input[type=checkbox],input[type=radio]');
+        const aria = el.matches('[role=' + role + ']') ? el : el.querySelector('[role=' + role + ']');
+        const control = input || aria;
+        if (!control) out.add('has no ' + role + ' control (a native input, or role="' + role + '" with aria-checked)');
+        else {
+          if (!input && !control.hasAttribute('aria-checked')) out.add('role="' + role + '" without aria-checked');
+          if (role === 'switch' && input && input.getAttribute('role') !== 'switch' && !aria) out.add('a switch should expose role="switch"');
+          const labelled = named(control) || (input && input.closest('label')) || (el.matches('label') && el.contains(control));
+          if (!labelled && !(control.textContent || '').trim()) out.add('its ' + role + ' has no label');
+        }
+      }
+      if (role === 'textbox' || role === 'searchbox' || role === 'combobox') {
+        const field = el.matches('input,textarea,select,[role=textbox],[role=searchbox],[role=combobox]') ? el : el.querySelector('input,textarea,select,[role=textbox],[role=searchbox],[role=combobox]');
+        if (!field) { out.add('has no text field'); continue; }
+        if (!named(field)) out.add('its field has no label');
+        if (field.hasAttribute('aria-describedby') && !idsExist(field.getAttribute('aria-describedby'))) out.add('aria-describedby points to an element that does not exist');
+        if (has(el, 'error', 'invalid') || has(field, 'error', 'invalid')) {
+          if (field.getAttribute('aria-invalid') !== 'true') out.add('in its error state the field has no aria-invalid="true"');
+          if (!field.getAttribute('aria-describedby')) out.add('in its error state the field is not linked to its message (aria-describedby)');
+        }
+      }
+      if (role === 'tab' || role === 'tablist') {
+        const tabs = role === 'tab' ? [el] : [...el.querySelectorAll('[role=tab]')];
+        if (role === 'tablist' && !tabs.length) out.add('has no role="tab" items');
+        for (const t of tabs) {
+          if (!t.matches('[role=tab]')) { out.add('is not exposed as role="tab"'); continue; }
+          if (!t.closest('[role=tablist]')) out.add('a tab outside a role="tablist"');
+          if ((has(t, 'selected', 'active', 'current') || t.getAttribute('aria-current')) && t.getAttribute('aria-selected') !== 'true') out.add('the selected tab has no aria-selected="true"');
+        }
+      }
+    }
+    return [...out];
+  })()`;
+}
 
 // Deeper checks measured in the page (pure expression builders; exported for tests).
 //   targets(): interactive controls under 24×24 with another control inside the 24px circle (2.5.8);
@@ -1034,21 +1113,47 @@ async function main() {
     });
     await step(async () => {
       // Figma accessibility annotations as facts: the role, name, heading level or alt text a note
-      // states, against what the component renders.
+      // states, against what the component (or the named inner part) renders.
       const facts = annotationFactsFor(ROOT, cfg);
       if (!Object.keys(facts).length) return;
+      let contract = {};
+      try { contract = (await import(pathToFileURL(resolve(ROOT, cfg.paths?.structureContract ?? 'structure-contract.mjs')).href)).CONTRACT ?? {}; } catch { /* parts are optional */ }
       await send('DOM.enable', {}, sessionId);
       const doc = await send('DOM.getDocument', { depth: 0 }, sessionId);
-      for (const [comp, f] of Object.entries(facts)) {
-        if (components.length && !components.includes(comp)) continue;
+      const axOf = async (selector) => {
         let q;
-        try { q = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selector: selOf(comp) }, sessionId); } catch { continue; }
-        if (!q?.nodeId) continue;
+        try { q = await send('DOM.querySelector', { nodeId: doc.root.nodeId, selector }, sessionId); } catch { return null; }
+        if (!q?.nodeId) return null;
         const ax = (await send('Accessibility.getPartialAXTree', { nodeId: q.nodeId, fetchRelatives: false }, sessionId))?.nodes?.[0];
-        if (!ax) continue;
-        const role = String(ax.role?.value ?? '').toLowerCase(), name = String(ax.name?.value ?? '');
-        const level = ax.properties?.find((p) => p.name === 'level')?.value?.value;
-        for (const d of annotationMismatches(f, { role, name, level })) findings.push({ kind: 'annotation', plugin: label, desc: `${comp}: ${d}` });
+        if (!ax) return null;
+        const prop = (n) => ax.properties?.find((p) => p.name === n)?.value?.value;
+        return { role: String(ax.role?.value ?? '').toLowerCase(), name: String(ax.name?.value ?? ''), level: prop('level'), pressed: prop('pressed') };
+      };
+      for (const [comp, { facts: f, layers }] of Object.entries(facts)) {
+        if (components.length && !components.includes(comp)) continue;
+        if (Object.keys(f).length) {
+          const got = await axOf(selOf(comp));
+          if (got) for (const d of annotationMismatches(f, got)) findings.push({ kind: 'annotation', plugin: label, desc: `${comp}: ${d}` });
+        }
+        // A note on an inner layer is checked on the part the contract names the same way.
+        for (const { layer, facts: lf } of layers) {
+          const part = (contract[comp]?.children ?? []).find((c) => String(c.name ?? '').toLowerCase() === String(layer).toLowerCase());
+          if (!part?.cssSelector) { findings.push({ kind: 'annotation', plugin: label, desc: `${comp} › ${layer}: not checked, the contract has no part named "${layer}" (add it to children with its cssSelector)` }); continue; }
+          const got = await axOf(part.cssSelector);
+          if (got) for (const d of annotationMismatches(lf, got)) findings.push({ kind: 'annotation', plugin: label, desc: `${comp} › ${layer}: ${d}` });
+        }
+      }
+    });
+    await step(async () => {
+      // Roles as contracts (I39): what each declared role requires, on the rendered instances. The role
+      // comes from the contract's authored semantics, or from a Figma note (which wins when both exist).
+      const roles = Object.fromEntries(Object.entries(contractSemantics(ROOT, cfg)).map(([c, r]) => [c, { role: r }]));
+      for (const [c, { facts: f }] of Object.entries(annotationFactsFor(ROOT, cfg))) if (f.role) roles[c] = { role: f.role, pressed: !!f.pressed };
+      for (const [comp, r] of Object.entries(roles)) {
+        if (components.length && !components.includes(comp)) continue;
+        const sel = selOf(comp);
+        if (!sel) continue;
+        for (const problem of (await evalv(roleContractExpression(sel, r.role, { pressed: r.pressed }))) ?? []) findings.push({ kind: 'rolecontract', plugin: label, desc: `${comp} (${r.pressed ? 'toggle button' : r.role}): ${problem}` });
       }
     });
     await step(async () => {
@@ -1100,7 +1205,7 @@ async function main() {
   const keyboard = findings.filter((f) => f.kind === 'keyboard');
   const themes   = [...new Set(modes.map((m) => m.name))];
 
-  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'activate', 'arrows', 'obscured', 'zoom', 'motion', 'forcedfocus', 'focusthin', 'spacing', 'reflow', 'semantics', 'annotation'].map((k) => [k, findings.filter((f) => f.kind === k)]);
+  const more = ['target', 'tabtrap', 'tabindex', 'escape', 'activate', 'arrows', 'obscured', 'zoom', 'motion', 'forcedfocus', 'focusthin', 'spacing', 'reflow', 'semantics', 'rolecontract', 'annotation'].map((k) => [k, findings.filter((f) => f.kind === k)]);
   const buckets = [['contrast', contrast], ['hovercontrast', hoverCon], ['name', names], ['focus', focus], ['focuscontrast', focusCon], ['ariastate', state], ['keyboard', keyboard], ...more].filter(([, l]) => l.length);
   const total = buckets.reduce((n, [, l]) => n + l.length, 0);
   const inThemes = themes.length > 1 ? ` (checked in ${themes.length} themes)` : '';

@@ -179,6 +179,7 @@ let _figmaAuthFailed = false;
 let _figmaFileVersion = null;
 let _figmaFileModified = null;
 
+let _figmaReason = null;   // the Figma file's latest named version (idea I49), when a token is set
 async function fetchFigmaFileVersion(fileKey, token) {
   if (!token || !fileKey) return;
   try {
@@ -395,6 +396,21 @@ async function analyseCollections() {
 // FIGMA_TOKEN is set. Queries /component_sets (names + nodeIds) then
 // /nodes?ids=... (componentPropertyDefinitions). Safe to skip: gate [3g]
 // falls back to reading an existing snapshot and warns if it's missing.
+// Notes on a component's inner layers ("this layer is the label"), from its default variant (the first
+// one; a standalone component is its own). [{ layer, nodeId, annotations }], at most 50.
+function layerAnnotationsOf(doc) {
+  const root = doc?.type === 'COMPONENT_SET' ? doc.children?.[0] : doc;
+  const out = [];
+  const walk = (n, depth) => {
+    for (const c of n?.children ?? []) {
+      if (out.length >= 50) return;
+      if (c.annotations?.length) out.push({ layer: c.name, nodeId: c.id, annotations: c.annotations });
+      if (depth < 8) walk(c, depth + 1);
+    }
+  };
+  walk(root, 0);
+  return out;
+}
 async function refreshComponentProps(fileKey, token, outPath) {
   try {
     const h = { 'X-Figma-Token': token };
@@ -444,8 +460,9 @@ async function refreshComponentProps(fileKey, token, outPath) {
         const doc   = data?.document;
         const props = doc?.componentPropertyDefinitions ?? {};
         const anns  = doc?.annotations ?? [];
-        if (Object.keys(props).length || anns.length) {
-          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props, annotations: anns };
+        const layerAnns = layerAnnotationsOf(doc);
+        if (Object.keys(props).length || anns.length || layerAnns.length) {
+          result[names[nodeId] ?? doc?.name ?? nodeId] = { nodeId, properties: props, annotations: anns, ...(layerAnns.length ? { layerAnnotations: layerAnns } : {}) };
         }
       }
     }
@@ -1288,7 +1305,7 @@ function reportFull(label, items, shown) {
       return { pass: false, lines: [C.yellow('🚧 STRUCTURE cannot verify - no compiled component CSS.'), ...guidance] };
     }
     const pass = r.status === 0;
-    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  VARIANTS|⚠️  .*: Figma .*, rendered |⚠️  .* has no counterpart in code|🔗 .* in Figma: /.test(l) && l.trim()).map(l => l.trim());
+    const summary    = out.split('\n').filter(l => /✅|❌|⚠️  MEASURED|⚠️  VARIANTS|⚠️  .*: Figma .*, rendered |⚠️  .* has no counterpart in code|🔗 .* in Figma: |↳ /.test(l) && l.trim()).map(l => l.trim());
     const failDetails = pass ? [] : out.split('\n')
       .filter(l => l.trim().startsWith('❌') && !l.includes('FAIL  0'))
       .map(l => '  ' + l.trim()).slice(0, 20);
@@ -2247,6 +2264,7 @@ function reportFull(label, items, shown) {
     const FIGMA_REFRESH_CONCURRENCY = Math.max(1, parseInt(process.env.FIGMA_REFRESH_CONCURRENCY, 10) || 3);
     await runPool([
       () => fetchFigmaFileVersion(figmaFileKey, figmaToken),
+      async () => { const { figmaReason } = await import('./change-reason.mjs'); _figmaReason = await figmaReason(figmaFileKey, figmaToken); },
       () => fetchComponentInventory(figmaFileKey, figmaToken, cfg.figma?.componentsPage ?? cfg.componentsPage),
       () => refreshComponentProps(figmaFileKey, figmaToken, join(ROOT, SNAP_COMP_PROPS)),
       () => refreshComponentValues(figmaFileKey, figmaToken, join(ROOT, 'component-values.snapshot.json')),
@@ -3010,7 +3028,13 @@ function reportFull(label, items, shown) {
             if (cap) whereOf = (t) => { const v = colorVarOf(t, spec, maps); return v && cap.tokens?.[v]?.declaredAt ? `${v} · ${cap.tokens[v].declaredAt}` : null; };
           } catch { /* locations are a convenience */ }
           console.log(C.yellow(`\n⚠️  Token contrast: ${all.length} pair(s) below WCAG AA (${provenance}, per mode).`));
-          for (const f of all.slice(0, 20)) { const w = whereOf(f.text); console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}${w ? `  (${w})` : ''}`)); }
+          const { codeReason, reasonLine } = await import('./change-reason.mjs');
+          for (const f of all.slice(0, 20)) {
+            const w = whereOf(f.text);
+            console.log(C.yellow(`     [${f.mode}] ${f.name}: ${f.ratio}:1 (needs ${f.threshold}:1)  ${f.textHex} on ${f.bgHex}${w ? `  (${w})` : ''}`));
+            const why = w ? reasonLine(codeReason(ROOT, w.split(' · ')[1])) : null;
+            if (why) console.log(C.dim(`        ↳ ${why}`));
+          }
           console.log('   Advisory: pairs are derived from the token-name convention and/or declared in ds-config → a11y.tokenPairs; the engine only surfaces the math.');
         } else if (anyChecked) {
           console.log(`\nℹ️  Token contrast: all pairs meet WCAG AA across ${modes.length} mode(s) (${provenance}).`);
@@ -3034,7 +3058,12 @@ function reportFull(label, items, shown) {
           console.log(C.yellow(`\n⚠️  State contrast: ${findings.length} component state(s) below WCAG AA, as rendered (${checked} checked; disabled states exempt).`));
           const { colorHex } = await import('./css-values.mjs');
           const hex = (v, name) => `${colorHex(v) ?? v}${name ? ` (${name})` : ''}`;
-          for (const f of findings.slice(0, 20)) console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${hex(f.fg, f.fgVar)} on ${hex(f.bg, f.bgVar)}${f.at ? `  (${f.at})` : ''}`));
+          const { codeReason, reasonLine } = await import('./change-reason.mjs');
+          for (const f of findings.slice(0, 20)) {
+            console.log(C.yellow(`     ${f.component} [${f.state} · ${f.mode}]: ${f.ratio}:1 (needs ${f.threshold}:1)  ${hex(f.fg, f.fgVar)} on ${hex(f.bg, f.bgVar)}${f.at ? `  (${f.at})` : ''}`));
+            const why = f.at ? reasonLine(codeReason(ROOT, f.at)) : null;
+            if (why) console.log(C.dim(`        ↳ ${why}`));
+          }
           if (findings.length > 20) console.log(`     … ${findings.length - 20} more`);
           const { figmaLinker } = await import('./figma-link.mjs');
           const linkFor = figmaLinker(ROOT, cfg);
@@ -3441,6 +3470,45 @@ function reportFull(label, items, shown) {
 
     console.log('\n' + C.bold('  AI-READINESS SCORECARD') + C.dim('  (advisory - a running measure, never blocks)'));
     for (const [st, label, detail] of rows) console.log(`  ${dot(st)} ${label.padEnd(16)} ${C.dim(detail)}`);
+  }
+
+  // ── What both sides last agreed on (I47) ────────────────────────────────────────
+  // Every fact that matches this run is recorded in parity-agreed.json (committed), so a later
+  // difference can say which side moved. Never written inside a git hook: a commit must not change a
+  // file it did not stage.
+  try {
+    const { readFreshSnapshot } = await import('./code-capture.mjs');
+    const cap = await readFreshSnapshot(ROOT, cfg);
+    if (cap) {
+      const cc = await import('./capture-compare.mjs');
+      const { loadAgreed, classify, recordAgreed, AGREED_FILE } = await import('./agreed.mjs');
+      const readJ = (p) => { try { return JSON.parse(readFileSync(join(ROOT, p), 'utf8')); } catch { return {}; } };
+      const vars = readJ(cfg.paths?.snapshotVars ?? 'src/figma-vars.snapshot.json');
+      const structure = readJ(SNAP_STRUCT).components ?? {};
+      const maps = await cc.loadParityMaps(ROOT, cfg);
+      const facts = [
+        ...(cc.compareTokens(cap, vars, cfg, maps).facts ?? []),
+        ...(cap._sources?.browser ? (cc.compareComponents(cap, structure, vars, cfg, maps).facts ?? []) : []),
+        ...(cc.compareBreakpoints(cap, structure, vars).facts ?? []),
+      ];
+      const agreed = loadAgreed(ROOT);
+      const moved = { 'figma-moved': 0, 'code-moved': 0, 'both-moved': 0, unknown: 0 };
+      for (const f of facts) if (!f.same) moved[classify(f, agreed)]++;
+      const inHook = !!process.env.GIT_INDEX_FILE || process.argv.includes('--hook');
+      const rec = inHook ? { recorded: facts.filter((f) => f.same).length, changed: false } : recordAgreed(ROOT, facts);
+      const diff = facts.length - rec.recorded;
+      if (facts.length) {
+        console.log(`\nℹ️  Agreed values: ${rec.recorded} of ${facts.length} compared facts agree${inHook ? '' : ` (recorded in ${AGREED_FILE}${rec.changed ? ', updated' : ''})`}.` +
+          (diff ? ` Of the ${diff} that differ: ${moved['figma-moved']} Figma moved · ${moved['code-moved']} code moved · ${moved['both-moved']} both moved · ${moved.unknown} with no earlier agreement.` : ''));
+      }
+    }
+  } catch { /* the record is a convenience: it never breaks the run */ }
+
+  // ── Why the design changed (Figma side of I49) ─────────────────────────────────
+  // Figma keeps versions per file, not per node: one line with the latest named version.
+  if (_figmaReason) {
+    const { figmaReasonLine } = await import('./change-reason.mjs');
+    console.log(`\nℹ️  ${figmaReasonLine(_figmaReason)}`);
   }
 
   // ── Since the last run ───────────────────────────────────────────────────────
