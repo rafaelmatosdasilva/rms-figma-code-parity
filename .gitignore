@@ -33,3 +33,5 @@ test/skill-evals/results/build/smoke/
 # Result rows while a measurement runs; added with git add -f once it is recorded in RESULTS.md.
 test/skill-evals/results/*.jsonl
 test/skill-evals/results/build/*.jsonl
+test/skill-evals/results/prototype/*.jsonl
+test/skill-evals/results/prototype/transcripts/

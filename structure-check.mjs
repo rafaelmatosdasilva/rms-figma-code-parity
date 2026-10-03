@@ -592,6 +592,19 @@ function variantToModifier(props) {
   return mods.join('');
 }
 
+// The colour a part of the component sets: a rule for .base__part, .base-part or .base .x, read the way the base
+// rule is read.
+function partColor(css, base) {
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const part = new RegExp(`^${esc}(__|-)[\\w-]+$|^${esc}\\s+[^,]+$`);
+  for (const m of String(css).replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+    if (!m[1].split(',').map((x) => x.trim()).some((sel) => part.test(sel))) continue;
+    const v = extractPropVarWithFallback(m[2], 'color');
+    if (v) return v;
+  }
+  return null;
+}
+
 const autoAssertions = [];
 if (Object.keys(stateBindings).length) {
   for (const [compSetName, variants] of Object.entries(stateBindings)) {
@@ -632,7 +645,9 @@ if (lightCSS) {
   for (const rule of ALL_ASSERTIONS) {
     const block = findBlock(lightCSS, rule.selector, lightIndex);
     if (!block) { VAR_FAIL.push(`${rule.key}: selector "${rule.selector}" not found`); continue; }
-    const usedVar = extractPropVarWithFallback(block, rule.prop);
+    let usedVar = extractPropVarWithFallback(block, rule.prop);
+    // A text colour set on the component's own text part (.field__input inside .field) is the component's text colour.
+    if (!usedVar && rule.prop === 'color') usedVar = partColor(allRulesCSS, rule.selector);
     if (!usedVar) VAR_FAIL.push(`${rule.key}: "${rule.prop}" not set in "${rule.selector}"`);
     else if (usedVar !== rule.expectedVar) VAR_FAIL.push(`${rule.key}: "${rule.selector}" ${rule.prop} uses ${usedVar} - expected ${rule.expectedVar}`);
     else VAR_PASS.push(rule.key);

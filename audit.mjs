@@ -437,6 +437,29 @@ if (process.argv.includes('--query')) {
   process.exit(r.status ?? 1);
 }
 
+// ── --from-figma-cli [design.json] · --refresh-figma: read Figma the best way there is (figma-source.mjs) ──
+if (process.argv.includes('--from-figma-cli') || process.argv.includes('--refresh-figma')) {
+  let fcConfig = {};
+  try { fcConfig = JSON.parse(readFileSync(join(ROOT, 'ds-config.json'), 'utf8')); } catch { console.error('❌ ds-config.json not found at project root.'); process.exit(1); }
+  const src = await import('./figma-source.mjs');
+  try {
+    if (process.argv.includes('--from-figma-cli')) {
+      const i = process.argv.indexOf('--from-figma-cli'), file = process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : src.designJsonPath(fcConfig);
+      console.log(`✅ ${src.importLine(await src.importDesign(ROOT, fcConfig, file))}`);
+      console.log('NEXT: rms-design-system-engine (the audit, on the refreshed snapshots)');
+      process.exit(0);
+    }
+    const route = await src.chooseFigmaSource(ROOT, fcConfig);
+    console.log(`Figma source: ${route.route} (${route.why})`);
+    if (route.route === 'design-json') console.log(`✅ ${src.importLine(await src.importDesign(ROOT, fcConfig, route.file))}`);
+    else if (route.route === 'figma-cli') console.log(`✅ ${src.importLine(await src.refreshFromFigmaCli(ROOT, fcConfig))}`);
+    else if (route.route === 'rest') { console.log('NEXT: rms-design-system-engine (it refreshes from the Figma API as it runs)'); process.exit(0); }
+    else { console.log('NEXT: rms-design-system-engine --recipe refresh-figma (read the variables and components with the Figma tool of this session)'); process.exit(0); }
+    console.log('NEXT: rms-design-system-engine (the audit, on the refreshed snapshots)');
+    process.exit(0);
+  } catch (e) { console.error(`❌ Figma not read: ${e.message}`); process.exit(1); }
+}
+
 // ── --styleguide: the style guide of what Figma and the code agree on (styleguide-gen.mjs) ──
 if (process.argv.includes('--styleguide')) {
   let sgConfig = {};
@@ -2500,6 +2523,14 @@ function reportFull(label, items, shown) {
     };
   }
 
+  // ── A design.json newer than the snapshots: the person ran `figma-cli snapshot`, so read it first (I84) ──
+  let _figmaCliRead = null;
+  try {
+    const src = await import('./figma-source.mjs');
+    const route = await src.chooseFigmaSource(ROOT, cfg, { which: () => null });   // only the file here: figma-cli itself runs on --refresh-figma
+    if (route.route === 'design-json') { _figmaCliRead = await src.importDesign(ROOT, cfg, route.file); console.log(C.dim(`ℹ️  ${src.importLine(_figmaCliRead)}`)); }
+  } catch (e) { console.log(C.yellow(`⚠️  design.json not read: ${e.message}`)); }
+
   // ── Refresh Figma snapshots (requires FIGMA_TOKEN) ───────────────────────────
   const figmaToken   = process.env.FIGMA_TOKEN;
   const figmaFileKey = cfg.figmaFileKey;
@@ -4129,7 +4160,7 @@ function reportFull(label, items, shown) {
     const verdict = written ? 'baseline' : anyFail ? 'failed' : baselineInfo?.mode === 'enforce' && baselineInfo.debt.length ? 'debt' : 'pass';
     const { dataStateLine } = await import('./next-step.mjs');
     const ageOf = (file) => { try { const u = JSON.parse(readFileSync(join(ROOT, file), 'utf8'))._updated; return u ? Math.floor((Date.now() - new Date(u).getTime()) / 3_600_000) : null; } catch { return null; } };
-    const data = dataStateLine({ refreshedFromApi: !!(process.env.FIGMA_TOKEN && cfg.figmaFileKey), snapshots: [SNAP_VARS, SNAP_STRUCT].map((file) => ({ file, ageHours: ageOf(file) })) });
+    const data = dataStateLine({ refreshedFromApi: !!(process.env.FIGMA_TOKEN && cfg.figmaFileKey), fromFigmaCli: _figmaCliRead, snapshots: [SNAP_VARS, SNAP_STRUCT].map((file) => ({ file, ageHours: ageOf(file) })) });
     let a11yIssues = null;
     try { a11yIssues = (JSON.parse(readFileSync(A11Y_JSON, 'utf8')).issues ?? []).length; } catch { /* no browser this run */ }
     const only = ONLY ? { words: onlyWords(ONLY, ONLY_LABELS), a11y: ONLY.a11y ? { static: _a11yCount.static, browser: a11yIssues } : null } : null;

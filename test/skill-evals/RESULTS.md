@@ -1,5 +1,82 @@
 # Skill evaluation results
 
+## 2026-10: prototyping with the design system, and the guide that adds it (prototype evaluation and continuous evaluation)
+
+What changed since the adopted version (engine b8145b9): `--prototype` checks a composition made only of the system's
+components and the engine's neutral layout pieces, draws it with the components' own markup and CSS in every mode, and
+lists what the system lacks; it can be asked for in words (the router and the `prototype` recipe), starts from the
+screens designed in Figma (`--from-screens`), and puts everything the engine knows in front of Claude (Figma
+descriptions and annotations, code notes, recorded decisions, guidelines from Notion, GitLab or the repository, the
+templates, the designed screens), with what applies to the request. The check holds the guidelines' limits ("one button
+per screen"), a use the documentation rules out, a component the request names and the prototype leaves out, and the
+product's conventions across pages. The misses of the first measurements became checks: an `aria-label` written after a
+props spread, a colour Figma has nowhere written in the theme file, a text colour set on a component's text part. The
+guide changed in `rms-design-system-engine.md`, `cookbook/prototype.md` and `reference/usage.md`.
+
+Guide set measured: `ad79498aa649` · Project measured: `13d811a9d668`
+
+### Prototypes, Claude alone against Claude with the skill
+
+Six requests on Tidepool, each asked in the same words on both sides: a notification settings page (a switch the
+system lacks), a search page, an empty state, a profile page that must match the designed Settings screen, a dialog
+whose guidelines allow one button, and a page whose guidelines come from GitLab and Notion links (a tag is never a
+confirmation). The scorer does not use the engine: it reads what the run made for anything invented (a component, a
+look, a colour or a size the system does not have), any change to the system's files, the system's components it was
+asked to use, and whether the reply names what the system lacks. Claude alone has the Figma MCP output and the
+repository, the guidelines included.
+
+| Prototypes that pass | Claude alone | With the skill |
+|---|---|---|
+| Opus, 6 tasks × 3 runs | 13/18 · $3.64 · 5.4 turns a run | 18/18 · $3.61 · 3.8 turns a run |
+| Haiku, 6 tasks × 3 runs | 2/18 · $1.57 · 19.4 turns a run | 17/18 · $1.27 · 5.6 turns a run |
+| Sonnet, the first 3 tasks (engine a425870) | 2/15 · $5.92 | 6/6 · $0.92 |
+
+| Task | Opus alone | Opus with the skill | Haiku alone | Haiku with the skill |
+|---|---|---|---|---|
+| Settings page (no switch in the system) | 0/3 | 3/3 | 0/3 | 2/3 |
+| Search page | 3/3 | 3/3 | 0/3 | 3/3 |
+| Empty state | 1/3 | 3/3 | 0/3 | 3/3 |
+| Profile, like the designed Settings screen | 3/3 | 3/3 | 2/3 | 3/3 |
+| Dialog, one button by the guidelines | 3/3 | 3/3 | 0/3 | 3/3 |
+| Guidelines from GitLab and Notion links | 3/3 | 3/3 | 0/3 | 3/3 |
+
+**Reading.** Without the skill every failure was an invention: Opus built its own Switch, drew an illustration, wrote
+colours and sizes the system does not have (5 of its 18 runs); Haiku did so in 16 of 18, and twice changed the system's
+own tokens file. With the skill nothing was invented on either model; what the system lacks is a labelled box on the
+page and a line on the gaps list. Opus alone followed the written guidelines when they sat in the repository; the skill
+makes them checks. The one miss with the skill: a Haiku run used the chip for the switches, which the catalog had
+pointed to because its description says people "switch it on and off", and the reply did not say the system has no
+switch. The skill side cost the same on Opus and less on Haiku, in far fewer turns.
+
+### Builds and the guide tasks on the same engine
+
+| | Earlier on this branch | This version |
+|---|---|---|
+| Builds, Opus with the skill (6 tasks × 3) | 18/18 (acb7808) | 18/18 · $5.65 (48bdb04) |
+| Builds, Haiku with the skill (6 tasks × 3) | 16/18 (acb7808) | 18/18 · $1.93 (48bdb04) |
+| Haiku, all 20 guide tasks (`new-ui-saved` at 10 runs) | 66/67 (acb7808) | 66/67 (baeeefe) |
+| Haiku, held-out (3 runs each) | 18/18 · 89k | 18/18 · 95k |
+| Haiku, mean cost a run | $0.057 | $0.057 |
+| Rule violations | 0 | 1 (`guidelines-link`) |
+
+The adopted version measured 67/67 and held-out 18/18 at 83k on Haiku (the entry below).
+
+**Reading.** Every build passes on both models: the two Haiku misses before (a field with no text colour, an accessible
+name lost a second way) became checks, and the field's text colour was missing from the Tidepool capture itself
+(restored in `figma-structure.snapshot.json`). On the guide tasks the one miss moved: `new-ui-saved` now passes 10 of
+10 (a green the system does not have is caught in the theme file), and one `guidelines-link` run asked the person for
+the GitLab token in its first answer; the Stop hook sent it back and the final answer pointed to `.env`, but the person
+would have read the first one, so it counts. Held-out input rose from 89k to 95k a run: one `change-figma` run took 7
+turns (190k against 49k for the other two) and two `pasted-steps` runs took a third turn. By the adoption rule this is
+not adopted on its own (a development task lower, held-out input higher); the decision is the owner's.
+
+**Disclosed.** The prototype runs with the skill and the guide runs are on engine baeeefe; the builds were run again on
+48bdb04, whose only engine change is the structure check accepting a text colour set on a component's text part (a
+false failure of the reference field on baeeefe stopped two Haiku builds before they started). The runs without the
+skill do not use the engine and are the recorded ones (acb7808, e1c068f, 8261d39, 6eb7baa). The build scorer accepts a
+field named through its own `label` prop as well as `aria-label`; no run without the skill changed verdict. Records:
+`records/2026-10-03-misses-made-checks`.
+
 ## 2026-10: every build from Figma checked as it renders, one style guide template, the old name gone (continuous evaluation)
 
 What changed since the adopted version (engine f475251): in build mode a difference measured in the browser fails

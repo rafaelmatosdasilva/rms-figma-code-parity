@@ -1,0 +1,64 @@
+{
+  "$note": "Starting point read from the screen \"Settings\" in Figma (3:28). Edit it freely: only the system's components and the engine's layout pieces.",
+  "prototype": {
+    "component": "Page",
+    "props": {
+      "gap": "padding/m",
+      "padding": "padding/m",
+      "width": "360"
+    },
+    "children": [
+      {
+        "component": "Text",
+        "props": {
+          "text": "Settings",
+          "style": "m",
+          "as": "h1"
+        }
+      },
+      {
+        "component": "field",
+        "props": {}
+      },
+      {
+        "component": "Row",
+        "props": {
+          "gap": "padding/s"
+        },
+        "children": [
+          {
+            "component": "chip",
+            "props": {
+              "Label": "Filter",
+              "Size": "M",
+              "Icon": "False"
+            }
+          },
+          {
+            "component": "chip",
+            "props": {
+              "Label": "Filter",
+              "Size": "L",
+              "Icon": "True"
+            }
+          },
+          {
+            "component": "tag",
+            "props": {
+              "Label": "New",
+              "Tone": "Positive"
+            }
+          }
+        ]
+      },
+      {
+        "component": "button",
+        "props": {
+          "Label": "Save",
+          "Disabled": "False"
+        }
+      }
+    ]
+  },
+  "gaps": []
+}

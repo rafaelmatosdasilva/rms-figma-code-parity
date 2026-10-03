@@ -420,6 +420,7 @@ body.sg-page { height: auto; min-height: 100vh; overflow: visible; display: bloc
     while (leaf.firstElementChild) { var next = Array.prototype.find.call(leaf.children, function (k) { return k.tagName.toLowerCase() !== 'svg' && k.textContent.trim(); }); if (!next) break; leaf = next; }
     return leaf;
   }
+  function hasPart(c, sel) { var e = baseElement(c); return partsOf(e, sel).some(function (k) { return k !== e; }); }
   function usageBadges(c) {
     var u = c.usage || [];
     if (!u.length) return '';
@@ -490,7 +491,7 @@ body.sg-page { height: auto; min-height: 100vh; overflow: visible; display: bloc
         field.addEventListener('input', function () { state[p.label] = field.value; refresh(); });
       } else {
         var opts = p.type === 'VARIANT' ? (p.options || []).map(function (o) { return { v: o.label, off: o.live && !(o.add || []).length && !Object.keys(o.attrs || {}).length }; })
-          : [{ v: 'false' }, { v: 'true', off: !p.on && !p.part }];
+          : [{ v: 'false' }, { v: 'true', off: !p.on && !(p.part && hasPart(c, p.part)) }];   // a part the markup does not hold cannot be shown
         ctl.innerHTML = label + '<div class="sg-seg">' + opts.map(function (o) { return '<button type="button" data-v="' + esc(o.v) + '"' + (o.off ? ' disabled title="Shown live, not as a style the page can set"' : '') + '>' + esc(o.v) + '</button>'; }).join('') + '</div>';
         var sync = function () { ctl.querySelectorAll('button').forEach(function (b) { b.classList.toggle('selected', b.dataset.v === String(state[p.label])); }); };
         ctl.querySelectorAll('button').forEach(function (b) { b.addEventListener('click', function () { state[p.label] = p.type === 'VARIANT' ? b.dataset.v : b.dataset.v === 'true'; sync(); refresh(); }); });

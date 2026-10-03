@@ -162,3 +162,36 @@ test('a height the rule already sets but the drawn box does not keep says why: i
   assert.equal(r.status, 1);
   assert.match(r.stdout, /field height: Figma 36, rendered \d+ .*→ the rule sets 36px, but padding and border add to it: set box-sizing: border-box/);
 });
+
+test('the code names recorded for Figma names are the person\'s decision: an edit of contract.authored.json asks', async () => {
+  const { judge } = await import('../guard.mjs');
+  const edit = (f, t = 'Edit') => ({ tool_name: t, tool_input: { file_path: f } });
+  assert.equal(judge(edit('/p/contract.authored.json'), { userText: 'build the chip from our Figma design system' })?.decision, 'ask');
+  assert.match(judge(edit('/p/contract.authored.json'), { userText: 'build the tag' }).reason, /records which code name stands for each Figma name/);
+  assert.equal(judge(edit('/p/contract.authored.json'), { userText: 'record that the code calls the Figma prop State "variant"' }), null);
+  assert.equal(judge(edit('/p/docs/contract.json', 'Write'), { cfg: { contracts: { authored: 'docs/contract.json' } }, userText: 'fix the chip' })?.decision, 'ask');
+  assert.equal(judge({ tool_name: 'Bash', tool_input: { command: 'echo {} > contract.authored.json' } }, { userText: 'build the tag' })?.decision, 'ask');
+  assert.equal(judge(edit('/p/contract.authored.json'))?.decision, 'ask', 'no transcript: it asks, as the other decision files do');
+});
+
+test('a role is a set of obligations: the element first, then what it owes; a name the source cannot hold is owed, never invented (I85)', async () => {
+  const { roleObligations, roleMarkupFindings, roleSheetLines, roleMarkup } = await import('../role-markup.mjs');
+  // An icon-only toggle: a button with aria-pressed, and no name of its own.
+  assert.deepEqual(roleObligations('return <button type="button" aria-pressed={on}><svg /></button>', 'togglebutton'), { missing: [], owed: ['a spoken name (its text, or aria-label when it shows only an icon)'] });
+  assert.match(roleMarkupFindings('return <button type="button" aria-pressed={on}><svg /></button>', 'togglebutton')[0], /owed: Figma's annotation or the person says what/);
+  // Named by its text, by a prop after another child, by aria-label, or by whoever uses it through {...rest}.
+  for (const named of ['<button aria-pressed={on}>Filter</button>', '<button aria-pressed={on}>{icon && <Icon />}{Label}</button>', '<button aria-pressed={on} aria-label={label}><svg /></button>', '<button aria-pressed={on} {...rest}><svg /></button>'])
+    assert.deepEqual(roleObligations(`return ${named}`, 'togglebutton').owed, [], named);
+  // A wrong element fails on its element, not on what it owes.
+  assert.deepEqual(roleObligations('return <div className="chip"><svg /></div>', 'togglebutton'), { missing: ['a <button> (or role="button")', 'aria-pressed, written even when it is false'], owed: [] });
+  assert.deepEqual(roleObligations('return <button onClick={go}>More</button>', 'disclosure').missing, ['aria-expanded, written even when it is false', 'aria-controls naming the panel']);
+  assert.deepEqual(roleObligations('return <input type="text" />', 'textfield').owed, ['a label (a <label>, aria-label or aria-labelledby)'], 'another word for the same role');
+  assert.equal(roleMarkup('iconbutton'), 'a <button type="button">');
+  assert.deepEqual(roleSheetLines('textbox'), ['a label (a <label>, aria-label or aria-labelledby)', 'an error message, while it shows, linked to the field with aria-describedby (and aria-invalid="true")']);
+});
+
+test('the build sheet lists every obligation of the role Figma annotates', () => {
+  const dir = fixtureProject(join(ENGINE, 'test', 'fixtures', 'tidepool-figma'), 'tp-roles-');
+  const r = spawnSync(process.execPath, [join(ENGINE, 'audit.mjs'), '--query', 'field'], { cwd: dir, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } });
+  assert.match(r.stdout, /role: textbox, so write it as an <input> or <textarea> with a label\n\s+and a label \(a <label>, aria-label or aria-labelledby\)\n\s+and an error message, while it shows, linked to the field with aria-describedby/);
+});

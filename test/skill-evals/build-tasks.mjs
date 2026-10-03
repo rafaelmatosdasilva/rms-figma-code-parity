@@ -115,7 +115,8 @@ export const BUILD = [
     id: 'build-field', mayChangeAll: true, setup: withTokens,
     prompt: `build the field from our Figma design system as a React component, exported as Field from src/components/Field.jsx, styled with CSS that uses the design tokens in src/styles/tokens.css. ${MCP('field')}`,
     score: (ctx) => componentChecks(ctx, 'src/components/Field.jsx', 'Field', null, [
-      { id: 'default', props: { ...propsOf({}), value: 'Ada', defaultValue: 'Ada', 'aria-label': 'Name' }, expect: { height: 36, paddingTop: 8, paddingLeft: 8, radius: 6, borderWidth: 1, borderColor: L['field/border'], color: L['text/primary'], ...font(14, 20) } },
+      // Named the two usual ways: aria-label passed through, or the component's own label prop.
+      { id: 'default', props: { ...propsOf({}), value: 'Ada', defaultValue: 'Ada', 'aria-label': 'Name', label: 'Name' }, expect: { height: 36, paddingTop: 8, paddingLeft: 8, radius: 6, borderWidth: 1, borderColor: L['field/border'], color: L['text/primary'], ...font(14, 20) } },
       { id: 'state Error', props: { ...propsOf({ State: 'Error' }), error: true, invalid: true, value: 'Ada', defaultValue: 'Ada', 'aria-label': 'Name' }, expect: { borderColor: L['field/border/error'] } },
       { id: 'dark', props: { value: 'Ada', defaultValue: 'Ada', 'aria-label': 'Name' }, dark: true, expectDark: (m) => sameColor(m, 'borderColor', D['field/border']), expect: { borderColor: D['field/border'], color: D['text/primary'] } },
       { id: 'dark error', props: { ...propsOf({ State: 'Error' }), error: true, invalid: true, value: 'Ada', 'aria-label': 'Name' }, dark: true, expectDark: (m) => sameColor(m, 'borderColor', D['field/border/error']), expect: { borderColor: D['field/border/error'] } },

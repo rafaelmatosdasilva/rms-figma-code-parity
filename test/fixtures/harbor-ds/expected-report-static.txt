@@ -73,9 +73,11 @@
        ✅ OK        4
        ❌ NAME      1   (the code names a Figma property differently: letter case, spaces)
        ❌ VALUE     2   (wrong default, or a Figma variant the code doesn't accept)
+         ❌ ROLE      1   (the markup does not hold what Figma's role annotation asks for)
          ❌ badge/Tone: the code names it "tone" (letter case T → t)  (components/HbBadge.vue)
          ❌ badge/Tone: default differs - Figma "Neutral" vs code "tone=neutral" (the code writes it "neutral")  (components/HbBadge.vue)
          ❌ badge/Tone: code prop "tone" is missing Figma variant option(s) "Neutral" (the code writes it "neutral"), "Success" (the code writes it "success"), "Danger" (the code writes it "danger")  (components/HbBadge.vue)
+         ❌ iconButton: Figma's annotation says role button; the code needs a spoken name (its text, or aria-label when it shows only an icon) (owed: Figma's annotation or the person says what)  (components/HbIconButton.vue)
 
 ⏭   [16] Sub-components match Figma  (the sub-components Figma nests are the ones the code uses)
        ⏭ SKIPPED - snapshot not captured (opt-in). Run the Plugin API capture and commit it to enable.
@@ -212,7 +214,7 @@
 
 ℹ️  Since the last run: this is the first recorded run; the next one lists what is new, gone or changed.
 
-📉 Burndown, open findings per component: badge 4 · iconButton 2 · 7 not tied to a component
+📉 Burndown, open findings per component: badge 4 · iconButton 3 · 7 not tied to a component
    next up: badge. Run with --component badge, fix, run again.
 
 ─── SUMMARY (relay this in the chat as is; also in .design-system-engine-out/summary.md) ───
@@ -231,8 +233,9 @@
   - badge/Tone: the code names it "tone" (letter case T → t)  (components/HbBadge.vue)
   - badge/Tone: default differs - Figma "Neutral" vs code "tone=neutral" (the code writes it "neutral")  (components/HbBadge.vue)
   - badge/Tone: code prop "tone" is missing Figma variant option(s) "Neutral" (the code writes it "neutral"), "Success" (the code writes it "success"), "Danger" (the code writes it "danger")  (components/HbBadge.vue)
+  - iconButton: Figma's annotation says role button; the code needs a spoken name (its text, or aria-label when it shows only an icon) (owed: Figma's annotation or the person says what)  (components/HbIconButton.vue)
 
-Burndown, open findings per component: badge 4 · iconButton 2 · 7 not tied to a component
+Burndown, open findings per component: badge 4 · iconButton 3 · 7 not tied to a component
 Fix first: badge. Run with --component badge, fix, run again.
 
 NEXT: tell the user what fails under "Token values" (and 1 more failing gate) and the fix it names. Change the code only when they ask for that fix, then run rms-design-system-engine. To accept a known difference instead: rms-design-system-engine --baseline --findings (only when they ask).

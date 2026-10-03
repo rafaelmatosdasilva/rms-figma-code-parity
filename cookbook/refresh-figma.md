@@ -4,9 +4,10 @@
 
 ## Steps
 
-1. Refresh only with a capture faithful to the steps below (the Plugin API capture works on any plan). Never hand-edit a snapshot: the project's hooks refuse it.
-2. When no refresh path is available (no token, no Figma MCP, no Plugin API), say so and audit the committed snapshots.
-3. After a refresh, run the audit (`--recipe full-audit` or `--recipe audit-component`).
+1. Run `rms-design-system-engine --refresh-figma` first. It picks the best way to read Figma: a `design.json` newer than the snapshots, else figma-cli when Figma Desktop is connected to it (it runs `figma-cli snapshot` and reads the result), else it says the Figma tool of this session reads it (the steps below), or the API with FIGMA_TOKEN. A design.json read this way keeps what it does not hold (text styles, other variants, descriptions, annotations) from the snapshots already there.
+2. Otherwise refresh only with a capture faithful to the steps below (the Plugin API capture works on any plan). Never hand-edit a snapshot: the project's hooks refuse it.
+3. When no refresh path is available (no figma-cli, no token, no Figma MCP, no Plugin API), say so and audit the committed snapshots.
+4. After a refresh, run the audit (`--recipe full-audit` or `--recipe audit-component`).
 
 Always: relay the SUMMARY block as it is, then follow its `NEXT:` line. Change code, config or snapshots only when the person asks for that change.
 

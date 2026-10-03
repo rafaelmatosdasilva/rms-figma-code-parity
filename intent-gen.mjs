@@ -233,9 +233,11 @@ export async function generateIntent(ROOT, cfg, opts = {}) {
     intent.guidelines = { _sources: GL.sources, _hash: GL.hash, general: general || null };
   }
 
-  writeFileSync(outPath, JSON.stringify(intent, null, 2) + '\n');
+  // opts.write false: the intent is only read (a prototype reads it without writing a file into the project).
+  if (opts.write !== false) writeFileSync(outPath, JSON.stringify(intent, null, 2) + '\n');
   const names = Object.keys(intent.components);
   return {
+    intent,
     out: outPath,
     components: names.length,
     withDesign: names.filter(n => intent.components[n].design.annotations.length || intent.components[n].design.description).length,

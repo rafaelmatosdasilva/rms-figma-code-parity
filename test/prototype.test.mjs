@@ -71,7 +71,7 @@ test('a system component with the same name as an engine piece always wins', () 
 test('a prop Figma and the code do not agree on is drawn with its default, and said', () => {
   const r = checkPrototype({ component: 'button', props: { Label: 'Go', Disabled: 'True' } }, { catalog, view, scales });
   assert.equal(r.ok, true);
-  assert.ok(r.findings.some((f) => f.level === 'warning' && /button\.Disabled is not agreed between Figma and the code yet/.test(f.message)));
+  assert.ok(r.findings.some((f) => f.level === 'warning' && /button\.Disabled has no part of that name in the code yet: drawn without it/.test(f.message)));
 });
 
 test('gaps from every prototype merge by need, the most needed first', () => {
@@ -219,4 +219,64 @@ test('--prototype --from-screens turns each designed screen into a drawn startin
   writeFileSync(join(dir, 'prototypes', 'settings.json'), JSON.stringify({ prototype: { component: 'Page', children: [] } }));
   const again = run(dir, '--prototype', '--from-screens', 'src/figma/figma-screen-layout.snapshot.json');
   assert.match(again.stdout, /kept as it was; --force replaces it/);
+});
+
+// ── Asking for a prototype in words ──────────────────────────────────────────────────────────────────────────────
+test('a prototype request routes to the prototype recipe and its catalog, in English and Portuguese', async () => {
+  const { route } = await import('../route.mjs');
+  const s = { components: ['button', 'chip', 'field', 'tag'], build: true };
+  for (const p of ['prototype a notification settings page with our components', 'mock up a checkout screen', 'faz um protótipo do ecrã de perfil', 'create a wireframe for the login']) {
+    const r = route(p, s);
+    assert.equal(r.recipe, 'prototype', p);
+    assert.deepEqual(r.run, ['rms-design-system-engine --prototype --catalog'], p);
+  }
+  assert.equal(route('how do I prototype with the engine?', s).run.length, 0, 'a how-to question runs nothing');
+  assert.deepEqual(route('are our prototype pages consistent?', s).run, ['rms-design-system-engine --prototype --consistency']);
+  assert.deepEqual(route('prototype a settings page that matches the others', s).run, ['rms-design-system-engine --prototype --catalog'], 'making a page reads the catalog, which holds the product\'s arrangement');
+  assert.notEqual(route('change the prototype frame in figma to 8px', s).recipe, 'prototype');
+});
+
+test('while prototyping, an edit outside prototypes/ asks first; the composition itself passes', async () => {
+  const { judge } = await import('../guard.mjs');
+  const ask = (file) => judge({ tool_name: 'Write', tool_input: { file_path: file } }, { userText: 'prototype a settings page with our components' });
+  assert.equal(ask('prototypes/settings.json'), null);
+  assert.equal(ask('src/components/Toggle.jsx')?.decision, 'ask');
+  assert.match(ask('src/styles/tokens.css').reason, /made only of the design system's components/);
+});
+
+test('the reply owes the gaps of the prototype just drawn, once', async () => {
+  const { prototypeGapsOwed } = await import('../guard.mjs');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(join(tmpdir(), 'proto-owed-'));
+  mkdirSync(join(root, '.design-system-engine-out', 'prototypes'), { recursive: true });
+  const write = () => writeFileSync(join(root, '.design-system-engine-out', 'prototypes', 'last.json'), JSON.stringify({ at: new Date().toISOString(), pending: true, gaps: [{ need: 'a toggle switch for each channel', kind: 'component', line: 'component: a toggle switch for each channel' }, { need: 'a Row layout component', kind: 'layout', line: 'layout: a Row layout component' }] }));
+  write();
+  const owed = prototypeGapsOwed(root, 'Here is your prototype. The system has no toggle switch for each channel.');
+  assert.deepEqual(owed.map((g) => g.need), ['a Row layout component']);
+  assert.deepEqual(prototypeGapsOwed(root, ''), [], 'checked once only');
+  write();
+  assert.deepEqual(prototypeGapsOwed(root, 'It needs a toggle switch per channel and a row layout component.'), []);
+});
+
+test('a page that differs from the product\'s other pages owes that too, named as a difference', async () => {
+  const { stopCheck } = await import('../guard.mjs');
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(join(tmpdir(), 'proto-differs-'));
+  mkdirSync(join(root, '.design-system-engine-out', 'prototypes'), { recursive: true });
+  writeFileSync(join(root, '.design-system-engine-out', 'prototypes', 'last.json'), JSON.stringify({ at: new Date().toISOString(), pending: true, gaps: [{ need: 'page padding padding/m', kind: 'consistency', line: "page padding: padding/s here, padding/m on the product's other pages (settings)" }] }));
+  const reason = stopCheck({ last_assistant_message: 'The prototype is drawn.' }, { root, cfg: {} });
+  assert.match(reason, /where the prototype differs from the product's other pages/);
+  assert.match(reason, /- page padding: padding\/s here, padding\/m on the product's other pages \(settings\)/);
+});
+
+test('--prototype --catalog lists the system\'s components, the engine\'s pieces with their tokens, and the format', { timeout: 600000 }, () => {
+  const dir = builtTidepool('tp-catalog-');
+  const r = run(dir, '--prototype', '--catalog');
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /chip\s+Size=M\|L/);
+  assert.match(r.stdout, /Stack\s+gap=none\|gap\/s\|padding\/xs\|padding\/s\|padding\/m/);
+  assert.match(r.stdout, /Text\s+text=<text>\s+style=m\|s/);
+  assert.match(r.stdout, /NEXT: write prototypes\/<name>\.json with only the parts above/);
 });

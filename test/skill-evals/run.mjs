@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // test/skill-evals/run.mjs - run the skill evaluation (idea I55). Spends model tokens; not in `node --test`.
 //
-//   node test/skill-evals/run.mjs --variant baseline|cookbook|skill|bare|mcp --model <id> --runs 5 --set dev|heldout|all|build
+//   node test/skill-evals/run.mjs --variant baseline|cookbook|skill|bare|mcp --model <id> --runs 5 --set dev|heldout|all|build|prototype
 //        [--only <task-id>] [--jobs 2] [--budget 3] [--ref <git ref for baseline>] [--resume] [--dry]
 //
 // A run the API refused (a usage limit, a 429) is not a result: nothing is written for it, the pool stops, and
@@ -21,6 +21,7 @@ import { globalChecks } from './rules.mjs';
 import { DEV } from './tasks.mjs';
 import { HELDOUT } from './heldout.mjs';
 import { BUILD, TIDEPOOL } from './build-tasks.mjs';
+import { PROTO } from './proto-tasks.mjs';
 import { variant } from './variants.mjs';
 import { envVar } from '../../names.mjs';
 
@@ -34,17 +35,17 @@ const PRIVATE_TASKS = envVar(process.env, 'EVAL_PRIVATE_TASKS');
 if (PRIVATE_TASKS && (SET === 'heldout' || SET === 'all' || SET === 'private')) {
   privateTasks = (await import(PRIVATE_TASKS)).PRIVATE.map((t) => ({ ...t, private: true }));
 }
-const sets = { dev: DEV, heldout: [...HELDOUT, ...privateTasks], private: privateTasks, all: [...DEV, ...HELDOUT, ...privateTasks], build: BUILD };
-const tasks = (sets[SET] ?? []).filter((t) => !ONLY || t.id === ONLY).map((t) => ({ ...t, set: BUILD.includes(t) ? 'build' : DEV.includes(t) ? 'dev' : 'heldout', source: BUILD.includes(t) ? TIDEPOOL : t.source }));
+const sets = { dev: DEV, heldout: [...HELDOUT, ...privateTasks], private: privateTasks, all: [...DEV, ...HELDOUT, ...privateTasks], build: BUILD, prototype: PROTO };
+const tasks = (sets[SET] ?? []).filter((t) => !ONLY || t.id === ONLY).map((t) => ({ ...t, set: BUILD.includes(t) ? 'build' : PROTO.includes(t) ? 'prototype' : DEV.includes(t) ? 'dev' : 'heldout', source: BUILD.includes(t) || PROTO.includes(t) ? TIDEPOOL : t.source }));
 const vr = variant(V, { ref: arg('ref', undefined) });
 const sha = (s) => createHash('sha256').update(s).digest('hex').slice(0, 12);
 const engineHash = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ENGINE, encoding: 'utf8' }).trim() + (execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { cwd: ENGINE, encoding: 'utf8' }).trim() ? '+dirty' : '');
 const cliVersion = execFileSync('claude', ['--version'], { encoding: 'utf8' }).trim();
-const meta = { variant: V, ref: vr.ref, guideHash: sha(vr.text), guideBytes: Buffer.byteLength(vr.text), engineHash, project: SET === 'build' ? `${projectHash(TIDEPOOL)}+${projectHash(join(HERE, 'build-reference'))}` : projectHash(DEMO), model: MODEL, cliVersion };
+const meta = { variant: V, ref: vr.ref, guideHash: sha(vr.text), guideBytes: Buffer.byteLength(vr.text), engineHash, project: SET === 'build' || SET === 'prototype' ? `${projectHash(TIDEPOOL)}+${projectHash(join(HERE, 'build-reference'))}` : projectHash(DEMO), model: MODEL, cliVersion };
 console.log(`${V} (${vr.ref}, guide ${meta.guideHash}, ${meta.guideBytes} bytes) · ${MODEL} · ${tasks.length} tasks × ${RUNS} runs · engine ${engineHash} · project ${meta.project} · ${cliVersion}`);
 if (DRY) { for (const t of tasks) console.log(`  ${t.set.padEnd(8)} ${t.id}`); process.exit(0); }
 
-const outFor = (t) => (t.private ? envVar(process.env, 'EVAL_PRIVATE_OUT') : t.set === 'build' ? join(HERE, 'results', 'build') : join(HERE, 'results'));
+const outFor = (t) => (t.private ? envVar(process.env, 'EVAL_PRIVATE_OUT') : t.set === 'build' ? join(HERE, 'results', 'build') : t.set === 'prototype' ? join(HERE, 'results', 'prototype') : join(HERE, 'results'));
 const resultsFile = (t) => join(outFor(t), `${V}.${MODEL}.jsonl`);
 
 // What is already measured, per results file. Rows from another guide or engine never mix with this one.
@@ -67,7 +68,7 @@ async function one({ t, run }) {
   const out = outFor(t);
   if (!out) throw new Error('private tasks need DESIGN_SYSTEM_ENGINE_EVAL_PRIVATE_OUT');
   mkdirSync(join(out, 'transcripts'), { recursive: true });
-  const dir = makeProject(t.source ?? DEMO, t.setup, { engine: vr.engine !== false });
+  const dir = makeProject(t.source ?? DEMO, t.setup, { engine: vr.engine !== false, skillFiles: t.skillFiles ?? [] });
   const { home, path } = makeHome(vr, { cliOnPath: t.cliOnPath !== false });
   const events = [];
   let sessionId = null, error = null;

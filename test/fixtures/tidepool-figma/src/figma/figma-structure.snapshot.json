@@ -98,6 +98,9 @@
       "colors": {
         "stroke": {
           "token": "field/border/color"
+        },
+        "text": {
+          "token": "text/primary/color"
         }
       },
       "defaultVariant": "State=Default",

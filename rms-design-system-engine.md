@@ -86,6 +86,7 @@ reference it points to say, never from memory or from this table alone.
 | components compared with their Figma images | `visual-diff` |
 | to know what to fix first, or to work a library down | `burndown` |
 | something in Figma built in code: the tokens, a component, the whole design system, or a screen from them | `build-from-figma` |
+| a prototype, mock-up or wireframe made with the design system | `prototype` |
 | a component's props and values, or a token's variable and value, asked or needed to write UI | `ask-the-system` |
 | CI, webhooks, git hooks or the project's Claude hooks | `ci-and-hooks` |
 
@@ -117,8 +118,8 @@ refreshed anything and how old the snapshots are: repeat it as it is.
 **The project's hooks.** `--init` installs Claude Code hooks in the project (`.claude/settings.local.json`;
 `--install-hooks` adds them to an existing project, `--remove-hooks` or `"hooks": false` turns them off). They
 refuse a hand edit of a Figma snapshot, and ask the person before a `ds-config.json` edit, a commit, a push,
-applying the hand-back, accepting a difference (`--baseline` or the baseline file), an exception, replacing an
-approved reference picture, or a code edit, unless the person's latest message asked for that change. After a UI
+applying the hand-back, accepting a difference (`--baseline` or the baseline file), an exception, a code name
+recorded for a Figma name (`contract.authored.json`), replacing an approved reference picture, or a code edit, unless the person's latest message asked for that change. After a UI
 edit they hand back what it added that the design system does not have (a colour or size written by hand, a
 variable declared nowhere, a prop value a component does not take), an accessibility problem it added, and any
 comment that switches a check off: fix it in that file before going on. A request made with

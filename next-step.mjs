@@ -58,7 +58,8 @@ export function nextStep({ failing = [], scope = [], handback = {}, burndownNext
 // The state of the Figma data, said once, so no one has to infer it (idea I56): whether this run refreshed anything
 // from the Figma API, and how old the committed snapshots it used are. An agent relays it; it never claims a
 // refresh the engine did not make. snapshots: [{ file, ageHours }] (ageHours null when unreadable).
-export function dataStateLine({ refreshedFromApi = false, snapshots = [], cmd = 'rms-design-system-engine' } = {}) {
+export function dataStateLine({ refreshedFromApi = false, fromFigmaCli = null, snapshots = [], cmd = 'rms-design-system-engine' } = {}) {
+  if (fromFigmaCli) return `**Figma data.** Variables, component props and structure were read from ${fromFigmaCli.file}${fromFigmaCli.source ? ` (${fromFigmaCli.source})` : ''}, written by figma-cli, in this run.`;
   const known = snapshots.filter((s) => Number.isFinite(s.ageHours));
   const age = (h) => (h < 24 ? 'updated today' : `${Math.floor(h / 24)} day${Math.floor(h / 24) === 1 ? '' : 's'} old`);
   const oldest = known.length ? known.reduce((a, b) => (b.ageHours > a.ageHours ? b : a)) : null;

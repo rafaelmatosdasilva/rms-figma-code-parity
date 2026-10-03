@@ -99,8 +99,9 @@ You can mix them. `rms-design-system-engine --component button --only accessibil
 `rms-design-system-engine --styleguide` builds a living style guide of what Figma and the code agree on, in `.design-system-engine-out/styleguide/index.html`. Every project fills the same template, the one in the engine (`templates/styleguide.template.html`), with its own data, so an improvement made there reaches every design system on its next run.
 
 - **Foundations.** Colours, typography, spacing, radii and icons, each the CSS variable itself, shown only when the token check finds it equal to Figma in every mode.
-- **Components.** Each one drawn from your own markup (the first instance in your pages, or the contract's probe) with your own CSS. Its controls are the props both sides have, labelled with Figma's names; an option applies what your contract's propertyMap says it adds. Below it, the tokens behind what is drawn and its size.
+- **Components.** Each one drawn from your own markup (the contract's probe, the first instance in your pages, or what its React source returns) with your own CSS. Its controls are the props both sides have, labelled with Figma's names; an option applies what your contract's propertyMap says it adds. Below it, the tokens behind what is drawn and its size.
 - **Modes.** A switch for each of your mode collections, for the whole page or one component.
+- **In use.** The approved pictures of your Figma frames (the ones the frame check compares against), when there are any.
 - **Not agreed yet.** A prop only one side has, another default, a token that differs or a component not built yet is left out and counted in one line at the top, so you decide each one before it appears.
 
 A project can still use a template of its own (`ds-config.json` → `styleguide.template`).
@@ -118,19 +119,25 @@ Open an empty project, set it up with your Figma link, and ask for what to build
 
 Claude writes the code; the engine gives it Figma's exact names and values first and checks every piece after.
 
-Measured on a small design system in Figma (tokens, four components and a screen), Claude with the Figma MCP alone built 16 of 30 pieces right with Sonnet and 4 of 18 with Haiku. With the engine it built all of them, on both models. The full results are in [test/skill-evals/RESULTS.md](test/skill-evals/RESULTS.md).
+Measured on a small design system in Figma (tokens, four components and a screen), Claude with the Figma MCP alone built 8 of 18 pieces right with Opus, 16 of 30 with Sonnet and 4 of 18 with Haiku. With the engine all three built all of them. The [case study](CASE-STUDY.md) gathers every measurement in a few pages; the full log is in [test/skill-evals/RESULTS.md](test/skill-evals/RESULTS.md).
 
 ## Prototype with your design system
 
 A prototype here is made only of your design system's own components, with their own options. Nothing is invented and nothing in the system changes. When a screen needs something the system does not have, the prototype shows a labelled box and you get a list of what the system would need, for your design team to decide.
 
-| You want to | In the terminal |
-|---|---|
-| Draw a prototype | `rms-design-system-engine --prototype prototypes/settings.json` |
-| Start from the screens you designed in Figma | `rms-design-system-engine --prototype --from-screens <screen capture>` |
+Measured on six prototype requests, Claude alone made 13 of 18 right with Opus and 2 of 18 with Haiku; with the skill, 18 of 18 and 17 of 18 ([case study](CASE-STUDY.md)).
+
+| You want to | Type in Claude Code | Or in the terminal |
+|---|---|---|
+| Make a prototype | `/rms-design-system-engine prototype a notification settings page with our components` | `rms-design-system-engine --prototype prototypes/settings.json` |
+| See what a prototype may use | `/rms-design-system-engine what can a prototype use?` | `rms-design-system-engine --prototype --catalog` |
+| Start from the screens you designed in Figma | `/rms-design-system-engine make prototypes from our Figma screens` | `rms-design-system-engine --prototype --from-screens <screen capture>` |
+| Check that the product's pages match | `/rms-design-system-engine are our prototype pages consistent?` | `rms-design-system-engine --prototype --consistency` |
 
 - **What a prototype is.** A short file listing which components go where, with which options (`prototypes/<name>.json`). The engine checks it first; one that uses a component or an option the system lacks is not drawn, and each line says why.
 - **What you see.** One page with your real components and tokens, in light and dark, under `.design-system-engine-out/prototypes/`.
+- **Everything the engine knows goes into it.** Before Claude writes a prototype it is shown what was read (Figma, the code, your recorded decisions, your guidelines from Notion, GitLab or the project, each with its age) and, for what you asked, the guidelines that apply, the components your words point to and the screen to start from. Each component comes with what it is for: Figma descriptions and annotations, option notes, code notes, when not to use it and what instead. A retired component is never used, a rule like "one button per screen" in your guidelines is held by the check, a component your documentation says never to use for something is not used for it, and after drawing each component is listed beside what the prototype uses it for, so a use your documentation rules out stands out.
+- **Pages that match.** A new page is compared with the product's other pages: page padding, space between sections, screen width, heading style, where the actions sit, and the answer given to each need the system lacks. Each difference is listed with the pages it differs from. A screen your designers made counts on its own; your team can also write its decisions down in `prototypes/conventions.json`.
 - **Layout.** Where your system has no layout components, the engine lends neutral ones (a page, a stack, a row, columns) that only take your spacing tokens and your text styles, and puts layout components on the list.
 - **Your screens as starting points.** Each screen designed in Figma becomes a prototype with the same arrangement and your components in place. The capture is read from Figma and never changes it. What a screen uses that the system does not own (a local component, a container with its own look, a typed number) goes on the list too.
 - **The list.** Every prototype's gaps are kept in `.design-system-engine-out/prototypes/gaps.json`, the most needed first.
@@ -175,6 +182,7 @@ Accessibility is checked beside the gates. Part of it reads the code directly, a
 
 - **Share the results with your team.** Commit the files it creates in your project, so everyone, and your automated builds, check against the same design.
 - **Figma stays as it is.** It only reads Figma. It tells you what to change there, and a person makes that change.
+- **Reading Figma, the best way available.** `rms-design-system-engine --refresh-figma` picks it for you: a `design.json` newer than the saved data, then [figma-cli](https://github.com/silships/figma-cli) when Figma Desktop is connected to it (no API key, no rate limit, every mode), then the Figma tool of your Claude session, then the Figma API with a token. After you run `figma-cli snapshot`, the next check reads its `design.json` on its own; `--from-figma-cli` reads one directly.
 - **More detail.** Everything for developers, every option and how each check works, is in [docs/details.md](docs/details.md).
 
 ## License

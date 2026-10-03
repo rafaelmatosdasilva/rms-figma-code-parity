@@ -100,8 +100,12 @@ const STEP_LIST = /(^|\s)1[.)]\s[\s\S]*\s2[.)]\s/;
 // Each rule: [recipe, test, what to run, a note]. First match wins; the order is part of the contract (tested).
 const BUILD_VERB = /\b(build|create|implement|generate|code|constr[oó]i\w*|cria\w*|implementa\w*|gera\w*)\b/i;
 const TO_CODE = /\b(turn|convert|transforma\w*|converte\w*)\b[\s\S]{0,60}\b(into|in|em)\s+(real\s+)?(code|components?|c[oó]digo|componentes)\b/i;
+// A prototype ("prototype a settings page", "mock up a checkout with our components"): made only of the system's
+// components, checked and drawn by the engine; what the system lacks is listed, never invented.
+export const PROTOTYPE = /\b(prototyp\w*|mock[\s-]?ups?|wireframes?|prot[oó]tipos?|maquet\w*)\b/i;
 const RULES = [
   ['guidelines-links', (t) => LINK.test(t)],
+  ['prototype', (t) => PROTOTYPE.test(t) && !/\b(in|no|na)\s+figma(?![-\w/.])/i.test(t)],
   // Building from Figma (a project that has only Figma, or a component Figma has and the code does not yet):
   // the engine lists what to build and checks each piece; the agent writes it with the names and values it prints.
   ['build-from-figma', (t, s) => (TO_CODE.test(t) || BUILD_VERB.test(t) && (/\bfrom (the )?(figma|design)\b|\bdo figma\b|design system|sistema de design|\btokens?\b|\b(components?|componentes?)\b|\binto code\b|em c[oó]digo/i.test(t) || (s.build && s.named.length > 0))) && !/\b(in|no|na)\s+figma(?![-\w/.])/i.test(t)],
@@ -171,6 +175,14 @@ function routeOnly(text, { hasConfig, components, cmd, build = false, pages = []
       return { recipe, question, run: question ? [] : named.length ? [`${cmd} --query ${named.join(' ')}`] : [cmd], notes };
     }
     if (recipe === 'guidelines-links') return { recipe, question, run: [`${cmd} --guidelines ${links(t).join(' ')}`], notes };
+    if (recipe === 'prototype') {
+      notes.push('A prototype is made only of the design system\'s components with their own options, and the engine\'s layout pieces; never write HTML, CSS or a component for it, and never change the system\'s files. Write it as a composition in prototypes/<name>.json, run --prototype on it, and fix each ❌ line until it is drawn. A need nothing fits is a Missing box; tell the person every gap it lists, as written.');
+      // "What can a prototype use?" is answered by the catalog itself; only a how-to is answered from the recipe alone.
+      if (question && /^\s*(how|why|como|porqu)/i.test(t)) return { recipe, question, run: [], notes };
+      // "Are our prototype pages consistent?": every page against the others.
+      if (/\b(consisten\w*|coeren\w*|match(es|ing)?|same as|alinhad\w*|iguais)\b/i.test(t) && (question || /\b(check|compare|verif\w*|compar\w*)\b/i.test(t))) return { recipe, question, run: [`${cmd} --prototype --consistency`], notes };
+      return { recipe, question, run: [`${cmd} --prototype --catalog`], notes };
+    }
     if (kind === 'figma') {
       notes.push('Nothing is ever changed in Figma by the skill, and it never offers to. Run the audit, then tell the person what to change in Figma.');
       return { recipe, question, run: [scoped], notes, kind };

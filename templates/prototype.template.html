@@ -86,6 +86,44 @@ html, body { margin: 0; }
     return leaf;
   }
   function truthy(v) { return v === true || /^true$/i.test(String(v)); }
+  // An option Figma and the code do not share by name is drawn on the part its name points to: TitleContent writes the
+  // element whose class says title, "Show Description" off removes the one that says description, a label goes where
+  // the component's text is. A page instance's own state (hidden, placed absolutely on its page) is taken off.
+  function keyWord(prop) { return String(prop).replace(/^show[\s_-]*/i, '').replace(/[\s_-]*content$/i, '').replace(/[\s_-]+/g, '').toLowerCase(); }
+  function partFor(e, word) {
+    if (!word) return null;
+    var all = Array.prototype.slice.call(e.querySelectorAll('[class]'));
+    var hit = all.find(function (k) { return (k.getAttribute('class') || '').toLowerCase().split(/[\s_-]+/).some(function (c) { return c === word || (c.length >= 4 && word.indexOf(c) === 0) || (word.length >= 4 && c.indexOf(word) === 0); }); });
+    if (hit) return hit;
+    if (word === 'icon') return e.querySelector('svg');
+    return null;
+  }
+  function setText(el, v) {
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') { el.value = v; return; }
+    if (!el.querySelector('svg')) { el.textContent = v; return; }
+    var tn = Array.prototype.find.call(el.childNodes, function (n) { return n.nodeType === 3 && n.textContent.trim(); });
+    var span = Array.prototype.find.call(el.children, function (k) { return k.tagName !== 'svg' && !k.querySelector('svg'); });
+    if (tn) tn.textContent = v; else if (span) span.textContent = v; else { var t = document.createElement('span'); t.textContent = v; el.appendChild(t); }
+  }
+  function cleanInstance(e) {
+    Array.prototype.slice.call(e.classList).forEach(function (k) { if (/^(hidden|is-hidden|d-none|invisible)$/.test(k)) e.classList.remove(k); });
+    e.removeAttribute('hidden');
+    ['position', 'inset', 'top', 'left', 'right', 'bottom'].forEach(function (k) { e.style[k] = ''; });
+    if (e.style.display === 'none') e.style.display = '';
+  }
+  function byName(e, c, p, done) {
+    Object.keys(p).forEach(function (k) {
+      if (done[k] || k === 'standInFor') return;
+      var word = keyWord(k);
+      if ((c.boolProps || {})[k]) { if (!truthy(p[k])) { var gone = partFor(e, word); if (gone && gone !== e) gone.remove(); } return; }
+      if (!Object.prototype.hasOwnProperty.call(c.textProps || {}, k) || p[k] == null || p[k] === '') return;
+      var dflt = String(c.textProps[k] || '').trim().toLowerCase();
+      var target = partFor(e, word);
+      if (!target && dflt) target = Array.prototype.slice.call(e.querySelectorAll('*')).find(function (x) { return !x.children.length && x.textContent.trim().toLowerCase() === dflt; }) || null;
+      if (!target && (word === 'label' || word === 'title' || word === 'text')) target = e;
+      if (target) setText(target, String(p[k]));
+    });
+  }
   function systemComponent(node) {
     var c = COMP[node.component];
     if (!c) {
@@ -93,8 +131,11 @@ html, body { margin: 0; }
       if ((node.children || []).length) { var box = document.createElement('div'); box.className = 'pt-missing pt-missing-box'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', node.component + ' (not built in the code yet)'); var cap = document.createElement('div'); cap.className = 'pt-missing-cap'; cap.textContent = node.component + ' (not built in the code yet)'; box.appendChild(cap); return box; }
       return missing(node.component + ' (not built in the code yet)');
     }
-    var e = baseElement(c), p = node.props || {};
+    var e = baseElement(c), p = node.props || {}, done = {};
+    if (c.markup) cleanInstance(e);
+    else { var words = Object.keys(c.textProps || {}).map(function (k) { return p[k]; }).filter(function (v) { return v != null && v !== ''; }); if (words.length) e.textContent = words.join(' · '); }
     (c.controls || []).forEach(function (ctl) {
+      done[ctl.label] = 1; done[ctl.prop] = 1;
       var has = Object.prototype.hasOwnProperty.call(p, ctl.label) ? p[ctl.label] : (Object.prototype.hasOwnProperty.call(p, ctl.prop) ? p[ctl.prop] : undefined);
       var v = has === undefined ? ctl.default : has;
       if (ctl.type === 'VARIANT') (ctl.options || []).forEach(function (o) { applyEffect(e, o, o.label === String(v)); });
@@ -103,6 +144,7 @@ html, body { margin: 0; }
         else if (ctl.part && !truthy(v)) partsOf(e, ctl.part).forEach(function (k) { if (k !== e) k.remove(); });
       } else if (ctl.type === 'TEXT' && v != null && v !== '') { var leaf = textLeaf(e, ctl.part); if (leaf.tagName === 'INPUT' || leaf.tagName === 'TEXTAREA') leaf.placeholder = v; else leaf.textContent = v; }
     });
+    if (c.markup) byName(e, c, p, done);
     if (p.standInFor) { e.setAttribute('data-pt-standin', ''); e.title = 'Stand-in for ' + p.standInFor; }
     return e;
   }

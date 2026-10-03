@@ -26,7 +26,7 @@
 import { readFileSync, existsSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, basename, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { route, routeText, projectState, SAY } from './route.mjs';
+import { route, routeText, projectState, SAY, PROTOTYPE } from './route.mjs';
 import { readDoc } from './skill-files.mjs';
 import { editCheck, editHookOutput, sessionLeftovers } from './edit-check.mjs';
 import { PROJECT, OUT_DIR } from './names.mjs';
@@ -134,6 +134,9 @@ export function stopCheck(event, { root, cfg = null }) {
     return reason;
   };
   const missing = forThisPrompt ? said.say.filter((s) => SAID[s.check] && !SAID[s.check].test.test(reply) && !SAID[s.check].unless?.(event.transcript_path)) : [];
+  // A prototype drawn for this request owes the person its gaps: each one the reply does not name is sent back, once.
+  const owed = prototypeGapsOwed(root, reply);
+  if (owed.length) missing.push(...owed.map((g) => ({ text: `- ${g.line}`, check: g.kind === 'consistency' ? 'differs' : g.kind === 'request' ? 'asked' : 'gap' })));
   // What the session's edits left in place that the system does not have (the edit check, run once more over the files).
   let left = [];
   try { const c = cfg ?? readCfg(root); if (c) left = sessionLeftovers(root, c); } catch { /* the check is a help, never a blocker */ }
@@ -143,20 +146,39 @@ export function stopCheck(event, { root, cfg = null }) {
   if (secret && !missing.length) return counted(`rms-design-system-engine: your reply asks the person for a secret in the chat. Reply again without asking for it. ${SECRET_LINE}`);
   if (!missing.length) return null;
   const lines = [...missing.map((s) => s.text), ...(secret ? [SECRET_LINE] : [])];
-  return counted(`rms-design-system-engine: your reply leaves out ${missing.map((s) => SAID[s.check].what).join(' and ')}${secret ? ', and asks the person for a secret in the chat' : ''}. Reply again with your whole answer${secret ? ', asking for no secret,' : ''} and ${lines.length > 1 ? 'these lines' : 'this line'} in it, word for word:\n${lines.join('\n')}`);
+  const what = [...new Set(missing.map((s) => (s.check === 'gap' ? 'what the design system would need for the prototype (its gaps)' : s.check === 'differs' ? 'where the prototype differs from the product\'s other pages' : s.check === 'asked' ? 'what the request asked for that the prototype leaves out' : SAID[s.check].what)))];
+  return counted(`rms-design-system-engine: your reply leaves out ${what.join(' and ')}${secret ? ', and asks the person for a secret in the chat' : ''}. Reply again with your whole answer${secret ? ', asking for no secret,' : ''} and ${lines.length > 1 ? 'these lines' : 'this line'} in it, word for word:\n${lines.join('\n')}`);
 }
+// The gaps of the prototype the engine drew in the last half hour, not yet checked, that the reply does not name. A gap
+// is named when most of its words are in the reply. Checked once: the record is marked done either way.
+export function prototypeGapsOwed(root, reply, { now = Date.now() } = {}) {
+  const file = join(root, OUT_DIR, 'prototypes', 'last.json');
+  let last; try { last = JSON.parse(readFileSync(file, 'utf8')); } catch { return []; }
+  if (!last?.pending || !(now - Date.parse(last.at) < 30 * 60 * 1000)) return [];
+  try { writeFileSync(file, JSON.stringify({ ...last, pending: false }, null, 2) + '\n'); } catch { /* a help, never a blocker */ }
+  const text = String(reply ?? '').toLowerCase();
+  const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'from', 'each', 'some', 'like', 'used', 'component', 'system']);
+  return (last.gaps ?? []).filter((g) => {
+    const words = (String(g.need).toLowerCase().match(/[a-z][a-z0-9-]{2,}/g) ?? []).filter((w) => !STOP.has(w));
+    if (!words.length) return false;
+    return words.filter((w) => text.includes(w.replace(/s$/, ''))).length < Math.ceil(words.length / 2);
+  });
+}
+
 export const stopOutput = (reason) => (reason ? JSON.stringify({ decision: 'block', reason }) : '');
 
 // The files where the system's decisions are recorded (I73). 'agreed' is
 // written by the engine only; the others change when the person asks.
 const ACCEPT_ASKED = /\baccept|known (debt|difference)|as debt|d[ií]vida|aceit|\bbaseline|ratchet|lock (it |them )?in/i;   // the router's accept-debt words, or the baseline named
 const EXCEPTION_ASKED = /\b(exception|exempt|ignore|skip|mapping|map|exce[çc][õoã]|isen[çc]|ignor|mapa|mapeamento|set ?up|configur|install|init)\w*/i;   // setting the project up writes the map too
+const NAMES_ASKED = /\b(renam|name|bind|alias|record|contract|map)\w*|\b(renome|nome|v[ií]ncul|regist|contrat|mape)\w*/i;   // the person asks to record or rename a binding
 const PICTURE_ASKED = /\b(approve|accept|update|aprov|aceit|atualiz)\w*\b[\s\S]{0,60}\b(pictures?|images?|screenshots?|references?|imagem|imagens|refer[eê]ncias?|capturas?)\b|\b(pictures?|images?|screenshots?|references?|imagem|imagens|refer[eê]ncias?|capturas?)\b[\s\S]{0,60}\b(approve|accept|update|aprov|aceit|atualiz)\w*/i;
 export function decisionFile(path, cfg = {}) {
   const p = String(path ?? '').replace(/\\/g, '/'), b = basename(p);
   if ([PROJECT.baseline.now, cfg.baseline?.path && basename(cfg.baseline.path)].includes(b)) return 'debt';
   if (b === PROJECT.agreed.now) return 'agreed';
   if (b === PROJECT.map.now) return 'exceptions';
+  if (b === basename(cfg.contracts?.authored ?? 'contract.authored.json')) return 'names';
   const refs = [cfg.visualRefs, PROJECT.refs.now].filter(Boolean).map((d) => String(d).replace(/^\.?\/+|\/+$/g, ''));
   if (refs.some((d) => p === d || p.endsWith(`/${d}`) || p.startsWith(`${d}/`) || p.includes(`/${d}/`))) return 'pictures';   // the folder itself too
   return null;
@@ -164,6 +186,7 @@ export function decisionFile(path, cfg = {}) {
 const DECISION = {
   debt: { asked: ACCEPT_ASKED, reason: (f) => `${f} is what the person accepted as debt: an agent never accepts its own differences. When the person asks to accept one, run rms-design-system-engine --baseline --findings --match <what they named>; otherwise report the difference and leave it failing.` },
   exceptions: { asked: EXCEPTION_ASKED, reason: (f) => `${f} holds the names the audit cannot work out and the system's exceptions: an entry added there can hide a finding instead of fixing it. Confirm the person asked for this change to it, or fix what the audit reports.` },
+  names: { asked: NAMES_ASKED, reason: (f) => `${f} records which code name stands for each Figma name: a binding added there makes a differently named prop pass instead of fixing it. Confirm the person asked for this binding, or name the prop the way Figma does.` },
   pictures: { asked: PICTURE_ASKED, reason: (f) => `${f} is an approved reference picture: it changes only when a person approves the new one. Report the difference, or confirm the person approved it.` },
 };
 const decisionVerdict = (kind, file, userText) => {
@@ -201,6 +224,10 @@ export function judge(event, { cfg = {}, userText = null } = {}) {
     if (basename(String(file ?? '')) === 'ds-config.json') return { decision: 'ask', reason: 'ds-config.json is the project\'s parity setup. Confirm this edit is what you asked for (guidelines links go through rms-design-system-engine --guidelines, never a hand edit).' };
     const kind = decisionFile(file, cfg);
     if (kind && !(kind === 'pictures' && !existsSync(resolve(event.cwd ?? process.cwd(), String(file))))) return decisionVerdict(kind, file, userText);   // a new picture is not an approved one
+    // A prototype changes nothing in the system: it is a composition under prototypes/, drawn by the engine.
+    if (userText !== null && PROTOTYPE.test(userText) && !ASKING_HOW.test(userText) && !/(^|\/)prototypes\/[^/]+\.json$/.test(String(file ?? '').split('\\').join('/'))) {
+      return { decision: 'ask', reason: `The person asked for a prototype: it is made only of the design system's components, as a composition in prototypes/<name>.json that the engine draws (rms-design-system-engine --recipe prototype). Writing ${basename(String(file ?? ''))} would build or change something outside it; confirm the person asked for that.` };
+    }
     if (userText !== null && CODE.test(String(file ?? '')) && !asksForChange(userText)) return { decision: 'ask', reason: `The person's last message does not ask for a change to ${basename(file)}. Report the fix the audit names instead of making it, or confirm they asked for it.` };
     return null;
   }
@@ -236,6 +263,8 @@ export function routePrompt(event, { root, engineDir = ENGINE, cfg = {}, env = p
   const state = projectState(root, { engineDir, env });
   const r = route(text, state);
   rememberSay(root, event, r.say);
+  // A prototype request is kept for the catalog, which puts what the person asked for against everything it knows.
+  if (r.recipe === 'prototype') { try { const f = join(root, OUT_DIR, 'prototypes', 'request.json'); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, JSON.stringify({ at: new Date().toISOString(), text }, null, 2) + '\n'); } catch { /* a help, never a blocker */ } }
   let recipe = '';
   try { recipe = readDoc(engineDir, 'recipe', r.recipe) ?? ''; } catch { /* the pointer line still names it */ }
   return `The engine already routed this request (rms-design-system-engine's project hook); follow it and do not run --route again.\n${routeText(r, recipe, state.cmd, { maxRecipe: MAX_RECIPE })}`;

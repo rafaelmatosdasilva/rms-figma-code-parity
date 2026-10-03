@@ -32,10 +32,14 @@ test('flags a colour written by hand, with the token that has it, and one the sy
   assert.deepEqual(find(['<rect fill="#e8eef9" />']), ['#e8eef9 is written by hand; use var(--chip-background)']);
 });
 
+test('in the theme file, a colour Figma has nowhere is flagged (a page rule written there)', () => {
+  assert.deepEqual(find(['.saved { color: #22c55e; }'], { sheet: true, isTheme: true }), ['#22c55e is not a design-system colour; use one of its colour tokens']);
+});
+
 test('silent on colours that are not styling: token definitions, the theme, comments, links, data, a canvas', () => {
   assert.deepEqual(find(['  --brand: #ff00aa;'], { sheet: true }), []);
   assert.deepEqual(find([':root{--a: #ff00aa;--b: #00ff00}'], { sheet: true }), []);
-  assert.deepEqual(find(['.card { color: #ff00aa; }'], { sheet: true, isTheme: true }), []);
+  assert.deepEqual(find(['.card { color: #1b2433; }'], { sheet: true, isTheme: true }), [], 'the theme writes the system\'s own values');
   assert.deepEqual(find(['// matches #ff00aa in dark mode'], { sheet: true }), []);
   assert.deepEqual(find(['<a href="#add">Add</a>', '<Link to="#faded">x</Link>']), []);
   assert.deepEqual(find(["  '100': '#f4ed7c', '101': '#f4ed47',"]), []);

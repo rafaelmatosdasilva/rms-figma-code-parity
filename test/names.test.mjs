@@ -37,7 +37,7 @@ const OLD = /rms-figma-code-parity|rms-parity\b|\.parity-out|\.parity-refs|parit
 test('the old names appear nowhere', () => {
   const ROOT = join(import.meta.dirname, '..');
   const files = spawnSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' }).stdout.split('\n').filter(Boolean)
-    .filter((f) => f !== 'test/names.test.mjs' && !f.startsWith('test/skill-evals/results/') && !/\.(png|jpe?g|gif|webp|ico)$/.test(f) && existsSync(join(ROOT, f)));
+    .filter((f) => f !== 'test/names.test.mjs' && !f.startsWith('test/skill-evals/results/') && !f.startsWith('test/skill-evals/records/') && !/\.(png|jpe?g|gif|webp|ico)$/.test(f) && existsSync(join(ROOT, f)));
   const stray = files.filter((f) => OLD.test(readFileSync(join(ROOT, f), 'utf8')));
   assert.deepEqual(stray, []);
 });

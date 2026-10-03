@@ -230,7 +230,7 @@ export function editFindings(added, fullText, { truth, tokenByValue, figmaRaw = 
         push(line, `${name} is a new token Figma has no variable for; use one of the system's tokens, or tell the person the system has no such value (rms-design-system-engine --query <name>)`);
       }
     }
-    if (isTheme || /^\s*--[\w-]+\s*:/.test(l) || COMMENT.test(l)) continue;   // a token being defined, the theme's own values, a comment
+    if (/^\s*--[\w-]+\s*:/.test(l) || COMMENT.test(l)) continue;   // a token being defined, a comment
     // A custom-property declaration anywhere on the line (a minified :root{--x: #fff;…}) defines a token.
     const scan = l.replace(/--[\w-]+\s*:[^;}]*/g, ' ').replace(/var\([^)]*\)/g, ' ').replace(/&#x?[0-9a-fA-F]+;/g, ' ');
     for (const m of scan.matchAll(HEX)) {
@@ -240,11 +240,13 @@ export function editFindings(added, fullText, { truth, tokenByValue, figmaRaw = 
       if (/\.(fill|stroke|shadow)(Style|Color)\s*=\s*[^;]*$/.test(scan.slice(0, m.index))) continue;   // a canvas being painted, not the page
       const tokens = tokenByValue.get(normHex(m[0])) ?? [];
       if (!tokens.length && figmaRaw.has(normHex(m[0]))) continue;   // Figma paints it raw: reported, not invented
+      // The theme file holds the system's own values: one Figma has is its to write; one Figma has nowhere is not.
+      if (isTheme && (tokens.length || figmaValues.has(normHex(m[0])))) continue;
       push(line, tokens.length
         ? `${m[0]} is written by hand; use var(${tokens[0]})${tokens.length > 1 ? ` (or ${tokens.slice(1, 3).map((t) => `var(${t})`).join(', ')})` : ''}`
         : `${m[0]} is not a design-system colour; use one of its colour tokens`);
     }
-    if (sizes) for (const f of sizeFindings(scan, sizes, { styled: /\bstyle\s*=/.test(l) })) push(line, f);   // MUI's sx={{ padding: 2 }} is a theme step, not 2px
+    if (sizes && !isTheme) for (const f of sizeFindings(scan, sizes, { styled: /\bstyle\s*=/.test(l) })) push(line, f);   // MUI's sx={{ padding: 2 }} is a theme step, not 2px
   }
   // A plain element the edit added that is styled as a primitive the owner declared (I42).
   if (primitives.length && !sheet) {

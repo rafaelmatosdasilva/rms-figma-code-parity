@@ -116,8 +116,37 @@ export function markupFindings(text) {
     if (/user-scalable\s*=\s*(no|0)\b|maximum-scale\s*=\s*1(\.0+)?\b(?!\.\d*[1-9])/i.test(content))
       out.push({ line: lineAt(src, m.index), kind: 'zoom', desc: `the viewport blocks zoom (${content.trim()}): people who need larger text cannot zoom in`, fix: 'take out user-scalable=no and maximum-scale=1' });
   }
+  // A name written after a spread replaces the one the caller passes: <input {...props} aria-label={label} /> gives
+  // <Field aria-label="Name" /> no name at all when label is not set.
+  for (const tag of jsxOpenTags(src)) {
+    const spreadAt = [...tag.attrs.matchAll(/\{\s*\.\.\.\s*([\w$.]+)\s*\}/g)];
+    if (!spreadAt.length) continue;
+    const last = spreadAt.at(-1);
+    for (const a of tag.attrs.slice(last.index + last[0].length).matchAll(/(?:^|\s)(aria-label|aria-labelledby)\s*=\s*\{([^}]*)\}/g)) {
+      if (a[2].includes(last[1].split('.')[0]) || /\?\?|\|\|/.test(a[2])) continue;   // it falls back to what the caller passed
+      out.push({ line: lineAt(src, tag.index), kind: 'name', desc: `${a[1]}={${a[2].trim()}} after {...${last[1]}} replaces the ${a[1]} the caller passes (with nothing when ${a[2].trim()} is not set)`, fix: `put ${a[1]} before the spread, or write ${a[1]}={${a[2].trim()} ?? ${last[1]}['${a[1]}']}` });
+    }
+  }
   for (const m of src.matchAll(/\baria-([a-z]+)\s*=/g))
     if (!ARIA.has(m[1])) { const near = closestAria(m[1]); out.push({ line: lineAt(src, m.index), kind: 'aria', desc: `aria-${m[1]} is not an ARIA attribute`, ...(near ? { fix: `write aria-${near}` } : {}) }); }
+  return out;
+}
+
+// The opening tags of JSX elements, with their attributes read past braces (an arrow's => is not the tag's end).
+function jsxOpenTags(src) {
+  const out = [];
+  for (const m of src.matchAll(/<([A-Za-z][\w.-]*)\b/g)) {
+    let i = m.index + m[0].length, depth = 0, quote = null;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (quote) { if (c === quote) quote = null; continue; }
+      if (c === '"' || c === "'" || c === '`') { if (depth || /=\s*$/.test(src.slice(Math.max(0, i - 3), i))) quote = c; continue; }
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === '>' && depth === 0) break;
+    }
+    if (i - m.index < 4000) out.push({ tag: m[1], attrs: src.slice(m.index + m[0].length, i), index: m.index });
+  }
   return out;
 }
 

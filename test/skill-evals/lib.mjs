@@ -32,7 +32,8 @@ export function projectHash(source = DEMO) {
 // A fresh project from `source`, prepared by the task's setup, committed once, hooks installed.
 // engine: false (the build evaluation's MCP-only side) leaves out everything the skill gives a project: its config,
 // the Figma snapshots it captured, and its hooks.
-export function makeProject(source, setup, { engine = true } = {}) {
+// skillFiles: what else the skill made in a real project (its contracts, records, snapshots), left out with it.
+export function makeProject(source, setup, { engine = true, skillFiles = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'skill-eval-'));
   cpSync(source, dir, { recursive: true, filter: (p) => !NOT_PROJECT.test(p) });
   const today = new Date().toISOString();
@@ -40,13 +41,23 @@ export function makeProject(source, setup, { engine = true } = {}) {
     writeFileSync(f, readFileSync(f, 'utf8').replace(/"_updated": "[^"]*"/, `"_updated": "${today}"`));
   }
   setup?.(dir);
-  if (!engine) for (const p of ['ds-config.json', 'src/figma']) rmSync(join(dir, p), { recursive: true, force: true });
+  if (!engine) for (const p of ['ds-config.json', 'src/figma', ...skillFiles]) rmSync(join(dir, p), { recursive: true, force: true });
   const env = { ...process.env, ...GIT_ENV };
   execFileSync('git', ['init', '-q'], { cwd: dir, env });
   if (engine && existsSync(join(dir, 'ds-config.json'))) execFileSync(process.execPath, [join(ENGINE, 'audit.mjs'), '--install-hooks'], { cwd: dir, stdio: 'ignore' });
   execFileSync('git', ['add', '-A'], { cwd: dir, env });
   execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir, env });
+  // The files the project ignores, as they were before the run: one the run leaves as it was is not its change.
+  const ignored = ignoredFiles(dir, execFileSync('git', ['status', '--porcelain', '--ignored', '--untracked-files=all'], { cwd: dir, encoding: 'utf8' }));
+  writeFileSync(join(dir, '.git', 'eval-ignored.json'), JSON.stringify(Object.fromEntries(ignored.map((p) => { try { return [p, createHash('sha1').update(readFileSync(join(dir, p))).digest('hex')]; } catch { return [p, null]; } }))));
   return dir;
+}
+
+// The ignored files git status lists (an ignored folder is one line: its files, without installed packages).
+function ignoredFiles(dir, status) {
+  return status.split('\n').filter((l) => l.startsWith('!! ')).map((l) => l.slice(3).replace(/^"|"$/g, ''))
+    .flatMap((p) => (p.endsWith('/') ? (existsSync(join(dir, p)) ? walk(join(dir, p)).map((f) => relative(dir, f)) : []) : [p]))
+    .filter((p) => !/(^|\/)node_modules(\/|$)/.test(p));
 }
 
 function walk(dir) {
@@ -110,8 +121,10 @@ export function runClaude({ cwd, home, path, prompt, model, resume = null, maxTu
     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', ...(resume ? ['--resume', resume] : [])];
   return new Promise((resolve) => {
     // Real users have Chrome: the audit's browser reading and accessibility check run in every variant.
+    // A run that installs its own Playwright must not clean up the machine's shared browsers (its garbage collection
+    // removes every browser no installed copy links to, which leaves the scorer with no Chrome).
     const chrome = process.env.CHROME_PATH || findChrome({ playwright: true }) || '';
-    const child = spawn('claude', args, { cwd, env: childEnv(process.env, { HOME: home, PATH: path, CHROME_PATH: chrome }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('claude', args, { cwd, env: childEnv(process.env, { HOME: home, PATH: path, CHROME_PATH: chrome, PLAYWRIGHT_SKIP_BROWSER_GC: '1' }), stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '', timedOut = false;
     const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, timeoutMs);
     child.stdout.on('data', (d) => { out += d; });
@@ -149,8 +162,18 @@ export function context(events, dir, saved = null) {
   const git = (...a) => { if (saved) return ''; try { return execFileSync('git', a, { cwd: dir, encoding: 'utf8' }); } catch { return ''; } };
   // Files the engine writes on every run: never the agent's change. Applied to
   // a saved row too, so a run scored with an older list is scored with this one.
-  const changed = (saved ? saved.changed ?? [] : git('status', '--porcelain', '--untracked-files=all').split('\n').filter(Boolean).map((l) => l.slice(3).replace(/^"|"$/g, '')))
-    .filter((p) => !ENGINE_WRITES.test(p));
+  // What the run changed since the project was set up: the working tree, and anything it committed (a commit must not
+  // hide its files from the scorer; the rules still count the commit itself).
+  const root = saved ? '' : git('rev-list', '--max-parents=0', 'HEAD').trim().split('\n')[0];
+  const committed = !saved && root ? git('diff', '--name-only', root, 'HEAD').split('\n').filter(Boolean) : [];
+  // A file the project ignores (a drafts folder in its .gitignore) is still the run's work; installed packages and the
+  // engine's own output folder are not.
+  let before = {};
+  if (!saved) { try { before = JSON.parse(readFileSync(join(dir, '.git', 'eval-ignored.json'), 'utf8')); } catch { /* an older project */ } }
+  const same = (p) => { if (!(p in before)) return false; try { return createHash('sha1').update(readFileSync(join(dir, p))).digest('hex') === before[p]; } catch { return false; } };
+  const status = saved ? '' : git('status', '--porcelain', '--ignored', '--untracked-files=all');
+  const changed = (saved ? saved.changed ?? [] : [...new Set([...status.split('\n').filter((l) => l && !l.startsWith('!! ')).map((l) => l.slice(3).replace(/^"|"$/g, '')), ...ignoredFiles(dir, status).filter((p) => !same(p)), ...committed])])
+    .filter((p) => !ENGINE_WRITES.test(p) && !/(^|\/)(node_modules|\.design-system-engine-out)(\/|$)/.test(p));
   const nextLines = calls.flatMap((c) => String(c.result).split('\n')).map((l) => l.match(/^NEXT:\s*(.+)$/)?.[1]).filter(Boolean);
   const savedFiles = saved?.files ?? {};
   const read = (p) => { if (saved) return savedFiles[p] ?? null; try { return readFileSync(join(dir, p), 'utf8'); } catch { return null; } };

@@ -85,3 +85,14 @@ test('the whole project: files found on their own, build output and dependencies
   const r = staticA11y(dir);
   assert.deepEqual(r.findings.map((f) => [f.file, f.kind]).sort(), [['src/Icon.jsx', 'name'], ['src/theme.css', 'focus']]);
 });
+
+test('a name written after a spread replaces the one the caller passes; before it, or falling back, it does not', () => {
+  const after = 'export function Field({ label, ...inputProps }) {\n  return (\n    <input\n      type="text"\n      {...inputProps}\n      onChange={(e) => change(e)}\n      aria-label={label}\n    />\n  );\n}';
+  const f = markupFindings(after).filter((x) => /after \{\.\.\.inputProps\}/.test(x.desc));
+  assert.equal(f.length, 1);
+  assert.equal(f[0].line, 3);
+  assert.match(f[0].desc, /aria-label=\{label\} after \{\.\.\.inputProps\} replaces the aria-label the caller passes/);
+  assert.match(f[0].fix, /put aria-label before the spread/);
+  for (const ok of ['<input aria-label={label} {...inputProps} />', '<input {...rest} aria-label={label ?? rest["aria-label"]} />', '<input {...rest} aria-label="Search" />'])
+    assert.deepEqual(markupFindings(ok).filter((x) => /after \{\.\.\./.test(x.desc)), [], ok);
+});

@@ -123,6 +123,7 @@ export function agreedView({ propsSnap = {}, rows = [], agreedRecord = {}, class
       else if (d.type === 'TEXT') control.part = partFor(r.figmaProp, parts[name], 'label');
       controls.push(control);
     }
+    // Its markup: the contract's probe, else the first instance in the project's pages, else what its React source returns.
     const fromPage = probes[name] ? null : pages.map((h) => instanceMarkup(h, cls)).find(Boolean) ?? null;
     const markup = probes[name] ?? fromPage ?? jsx[name] ?? null;
     if (entry.noProps && !markup) continue;
